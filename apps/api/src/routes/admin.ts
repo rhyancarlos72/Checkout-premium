@@ -76,23 +76,31 @@ const couponSchema = z.object({
 crud('coupons', 'coupons', couponSchema, '*, checkout:checkouts(name)');
 
 // ------------------------------------------------------------------ checkouts (com bumps)
+const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Cor inválida (use #RRGGBB)');
 const themeSchema = z
   .object({
-    primaryColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#0f766e'),
-    backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#f5f6f8'),
-    buttonText: z.string().max(40).default('Pagar com PIX'),
-    headline: z.string().max(120).optional(),
+    mode: z.enum(['light', 'dark']).default('light'),
+    primaryColor: hex.default('#059669'),
+    backgroundColor: hex.default('#f4f5f7'),
+    radius: z.enum(['sharp', 'soft', 'round']).default('soft'),
+    headline: z.string().max(140).optional(),
+    subheadline: z.string().max(400).optional(),
+    buttonText: z.string().max(40).default('Finalizar compra'),
     logoUrl: urlOrEmpty,
     bannerUrl: urlOrEmpty,
     mockupUrl: urlOrEmpty,
     guaranteeDays: z.number().int().min(0).max(365).default(7),
     guaranteeText: z.string().max(400).optional(),
+    testimonials: z.array(z.object({ name: z.string().max(60), text: z.string().max(400), avatarUrl: urlOrEmpty })).max(6).default([]),
+    footerText: z.string().max(600).optional(),
+    announcement: z.string().max(120).optional(),
     showTimer: z.boolean().default(false),
     timerMinutes: z.number().int().min(1).max(120).default(15),
-    testimonials: z.array(z.object({ name: z.string().max(60), text: z.string().max(300), avatarUrl: urlOrEmpty })).max(6).default([]),
-    footerText: z.string().max(300).optional(),
+    timerText: z.string().max(60).optional(),
+    showSeals: z.boolean().default(true),
+    stickyMobileCta: z.boolean().default(true),
   })
-  .passthrough();
+  .strip();
 
 const checkoutSchema = z.object({
   slug: z.string().trim().toLowerCase().regex(/^[a-z0-9-]{3,60}$/, 'Use letras minúsculas, números e hífen'),

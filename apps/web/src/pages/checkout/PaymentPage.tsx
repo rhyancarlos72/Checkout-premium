@@ -1,12 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Clock, Copy, CopyCheck, ExternalLink, Loader2, Lock, RefreshCw, Smartphone } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Check, CheckCircle2, Clock, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Button, PageLoader } from '@/components/ui';
+import { cn } from '@/components/ui';
 import { publicApi } from '@/lib/api';
 import { brl } from '@/lib/format';
 import { initMetaPixel, pixel, track } from '@/lib/tracking';
-import { PixIcon, themeStyle, type Theme } from './CheckoutPage';
+import { PixIcon } from './CheckoutView';
+import { themeDefaults, themeStyle, type Theme } from './theme';
 
 interface PublicOrder {
   number: number;
@@ -17,6 +18,7 @@ interface PublicOrder {
   pix_code: string | null;
   pix_qr_image: string | null;
   expires_at: string | null;
+  created_at: string;
   items: { kind: string; name: string; price_cents: number }[];
   customer: { name: string; email: string } | null;
   checkout: { slug: string; name: string; theme: Theme; metaPixelId: string | null } | null;
@@ -24,20 +26,79 @@ interface PublicOrder {
   delivery: { name: string; url: string | null; note: string | null }[];
 }
 
-function useCountdown(iso: string | null) {
+function useNow() {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
-  if (!iso) return null;
-  const left = Math.max(0, Math.floor((new Date(iso).getTime() - now) / 1000));
-  return { left, label: `${String(Math.floor(left / 60)).padStart(2, '0')}:${String(left % 60).padStart(2, '0')}` };
+  return now;
+}
+
+function Steps({ current }: { current: 1 | 2 | 3 }) {
+  const steps = ['Dados', 'Pagamento', 'Acesso'];
+  return (
+    <ol className="mx-auto mb-6 flex max-w-sm items-center">
+      {steps.map((s, i) => {
+        const n = (i + 1) as 1 | 2 | 3;
+        const done = n < current || current === 3;
+        const active = n === current && current !== 3;
+        return (
+          <li key={s} className={cn('flex items-center', i < steps.length - 1 && 'flex-1')}>
+            <div className="flex flex-col items-center gap-1.5">
+              <span className={cn('flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold transition', done ? 'bg-brand text-brand-fg' : active ? 'animate-pulse-ring border-2 border-brand bg-ck-surface text-brand' : 'border-2 border-ck-border bg-ck-surface text-ck-muted')}>
+                {done ? <Check className="h-4 w-4" strokeWidth={3} /> : n}
+              </span>
+              <span className={cn('text-[11px] font-semibold', done || active ? 'text-ck-text' : 'text-ck-muted')}>{s}</span>
+            </div>
+            {i < steps.length - 1 && <span className={cn('mx-2 mb-5 h-0.5 flex-1 rounded-full', n < current || current === 3 ? 'bg-brand' : 'bg-ck-border')} />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function Confetti() {
+  const pieces = useMemo(
+    () =>
+      Array.from({ length: 42 }, (_, i) => ({
+        left: Math.random() * 100,
+        delay: Math.random() * 0.8,
+        dur: 2.4 + Math.random() * 1.8,
+        color: ['var(--brand)', '#fbbf24', '#34d399', '#60a5fa', '#f472b6'][i % 5],
+        size: 6 + Math.random() * 6,
+      })),
+    [],
+  );
+  return (
+    <div className="pointer-events-none fixed inset-0 z-50 overflow-hidden motion-reduce:hidden" aria-hidden>
+      {pieces.map((p, i) => (
+        <span key={i} className="absolute top-0 rounded-sm" style={{ left: `${p.left}%`, width: p.size, height: p.size * 0.5, background: p.color, animation: `ck-confetti ${p.dur}s ${p.delay}s ease-in forwards` }} />
+      ))}
+    </div>
+  );
+}
+
+function Shell({ theme, children }: { theme: Theme; children: ReactNode }) {
+  const t = { ...themeDefaults, ...theme };
+  return (
+    <div style={themeStyle(t)} className="min-h-screen bg-ck-bg font-sans text-ck-text antialiased">
+      <header className="border-b border-ck-border bg-ck-surface/80 backdrop-blur-md">
+        <div className="mx-auto flex h-16 max-w-2xl items-center justify-between px-4">
+          {t.logoUrl ? <img src={t.logoUrl} alt="" className="h-8 w-auto max-w-[150px] object-contain" /> : <span className="text-[15px] font-bold tracking-tight">Pagamento</span>}
+          <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-600"><Lock className="h-3.5 w-3.5" /> Ambiente seguro</span>
+        </div>
+      </header>
+      <main className="mx-auto max-w-2xl px-4 py-6 sm:py-10">{children}</main>
+    </div>
+  );
 }
 
 export default function PaymentPage() {
   const { token = '' } = useParams();
   const qc = useQueryClient();
+  const now = useNow();
   const { data: order, isLoading, error } = useQuery({
     queryKey: ['order', token],
     queryFn: () => publicApi.get<PublicOrder>(`/orders/${token}`),
@@ -50,7 +111,6 @@ export default function PaymentPage() {
   });
   const [copied, setCopied] = useState(false);
   const firedRef = useRef(false);
-  const countdown = useCountdown(order?.expires_at ?? null);
 
   useEffect(() => {
     if (!order?.checkout) return;
@@ -62,8 +122,8 @@ export default function PaymentPage() {
   useEffect(() => {
     if (order?.status !== 'paid' || firedRef.current) return;
     firedRef.current = true;
-    const key = `ck_purchase_${token}`;
     try {
+      const key = `ck_purchase_${token}`;
       if (localStorage.getItem(key)) return;
       localStorage.setItem(key, '1');
     } catch {
@@ -88,152 +148,181 @@ export default function PaymentPage() {
     if (order.checkout) track(order.checkout.slug, 'pix_copied');
   }
 
-  if (isLoading) return <PageLoader />;
-  if (error || !order)
-    return <div className="flex min-h-screen items-center justify-center p-6 text-center text-gray-600">Pedido não encontrado.</div>;
+  if (isLoading)
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#f4f5f7]">
+        <span className="h-8 w-8 animate-spin rounded-full border-[3px] border-zinc-300 border-t-zinc-800" />
+      </div>
+    );
+  if (error || !order) return <div className="flex min-h-screen items-center justify-center p-6 text-center text-zinc-600">Pedido não encontrado.</div>;
 
   const theme = order.checkout?.theme ?? {};
-  const expired = order.status === 'expired' || (order.status === 'pending' && countdown?.left === 0);
+  const expiresAt = order.expires_at ? new Date(order.expires_at).getTime() : null;
+  const createdAt = new Date(order.created_at).getTime();
+  const left = expiresAt ? Math.max(0, Math.floor((expiresAt - now) / 1000)) : null;
+  const totalWindow = expiresAt ? Math.max(1, (expiresAt - createdAt) / 1000) : 1;
+  const expired = order.status === 'expired' || (order.status === 'pending' && left === 0);
+  const firstName = order.customer?.name.split(' ')[0];
 
-  return (
-    <div style={themeStyle(theme)} className="min-h-screen">
-      <header className="border-b border-black/5 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-xl items-center justify-between px-4">
-          {theme.logoUrl ? <img src={theme.logoUrl} alt="" className="h-8 w-auto max-w-[160px] object-contain" /> : <span className="font-semibold">Pedido #{order.number}</span>}
-          <span className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
-            <Lock className="h-3.5 w-3.5 text-emerald-600" /> Ambiente seguro
-          </span>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-xl px-4 py-6 sm:py-10">
-        {order.status === 'paid' ? (
-          <section className="animate-fade-in rounded-2xl border border-gray-200 bg-white p-6 text-center shadow-sm sm:p-8">
-            <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50">
-              <CheckCircle2 className="h-9 w-9 text-emerald-600" />
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">Pagamento aprovado!</h1>
-            <p className="mt-2 text-gray-600">
-              Obrigado{order.customer ? `, ${order.customer.name.split(' ')[0]}` : ''}! Enviamos o acesso para <b>{order.customer?.email}</b>.
-            </p>
-            <div className="mt-6 space-y-3 text-left">
-              {order.delivery.map((d, i) => (
-                <div key={i} className="rounded-xl border border-gray-200 p-4">
-                  <p className="font-semibold">{d.name}</p>
-                  {d.note && <p className="mt-1 text-sm text-gray-600">{d.note}</p>}
-                  {d.url ? (
-                    <a href={d.url} target="_blank" rel="noopener noreferrer" className="mt-3 inline-flex h-11 items-center gap-2 rounded-xl bg-brand px-4 text-sm font-semibold text-brand-fg">
-                      Acessar agora <ExternalLink className="h-4 w-4" />
-                    </a>
-                  ) : (
-                    <p className="mt-2 text-sm text-gray-500">O acesso será enviado por e-mail.</p>
-                  )}
-                </div>
-              ))}
-            </div>
-            <p className="mt-6 text-xs text-gray-500">Não recebeu? Verifique a caixa de spam ou promoções.</p>
-          </section>
-        ) : expired ? (
-          <section className="rounded-2xl border border-gray-200 bg-white p-6 text-center shadow-sm sm:p-8">
-            <Clock className="mx-auto mb-3 h-10 w-10 text-gray-400" />
-            <h1 className="text-xl font-bold">Este PIX expirou</h1>
-            <p className="mt-2 text-gray-600">Sem problemas — gere um novo código em segundos.</p>
-            {order.checkout && (
-              <Link to={`/c/${order.checkout.slug}?recover=${token}`} className="mt-5 inline-flex h-12 items-center rounded-xl bg-brand px-6 font-semibold text-brand-fg">
-                Gerar novo PIX
-              </Link>
-            )}
-          </section>
-        ) : order.status === 'pending' ? (
-          <section className="animate-fade-in rounded-2xl border border-gray-200 bg-white shadow-sm">
-            <div className="border-b border-gray-100 p-5 text-center sm:p-6">
-              <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Aguardando pagamento
-              </div>
-              <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Pague {brl(order.total_cents)} com PIX</h1>
-              {countdown && (
-                <p className="mt-1 text-sm text-gray-600">
-                  O código expira em <span className="font-semibold tabular-nums text-gray-900">{countdown.label}</span>
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-5 p-5 sm:p-6">
-              <div>
-                <p className="mb-2 text-sm font-medium text-gray-700">PIX Copia e Cola</p>
-                <div className="break-all rounded-xl border border-gray-200 bg-gray-50 p-3 font-mono text-xs leading-relaxed text-gray-700">{order.pix_code}</div>
-                <Button variant="brand" size="lg" className="mt-3 w-full" onClick={copy}>
-                  {copied ? (
-                    <>
-                      <CopyCheck className="h-5 w-5" /> Código copiado!
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-5 w-5" /> Copiar código PIX
-                    </>
-                  )}
-                </Button>
-              </div>
-
-              {order.pix_qr_image && (
-                <div className="flex flex-col items-center">
-                  <p className="mb-2 text-sm font-medium text-gray-700">ou escaneie o QR Code</p>
-                  <img src={order.pix_qr_image} alt="QR Code PIX" className="h-56 w-56 rounded-xl border border-gray-200 p-2" />
-                </div>
-              )}
-
-              <ol className="space-y-3 rounded-xl bg-gray-50 p-4 text-sm text-gray-700">
-                {[
-                  ['Abra o app do seu banco', Smartphone],
-                  ['Escolha pagar com PIX “Copia e Cola” ou QR Code', PixIcon],
-                  ['Cole o código e confirme. A liberação é automática.', CheckCircle2],
-                ].map(([text, Icon]: any, i) => (
-                  <li key={i} className="flex items-center gap-3">
-                    <Icon className="h-5 w-5 shrink-0 text-brand" />
-                    {text}
-                  </li>
-                ))}
-              </ol>
-
-              <Button variant="secondary" className="w-full" loading={refresh.isPending} onClick={() => refresh.mutate()}>
-                <RefreshCw className="h-4 w-4" /> Já paguei
-              </Button>
-            </div>
-          </section>
-        ) : (
-          <section className="rounded-2xl border border-gray-200 bg-white p-6 text-center shadow-sm">
-            <h1 className="text-xl font-bold">Pedido indisponível</h1>
-            <p className="mt-2 text-gray-600">Não foi possível concluir este pedido. Tente novamente.</p>
-            {order.checkout && (
-              <Link to={`/c/${order.checkout.slug}`} className="mt-5 inline-flex h-12 items-center rounded-xl bg-brand px-6 font-semibold text-brand-fg">
-                Voltar ao checkout
-              </Link>
-            )}
-          </section>
+  const summary = (
+    <section className="ck-card mt-5 p-5 text-sm">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="font-semibold">Pedido #{order.number}</p>
+        <p className="text-xs text-ck-muted">{new Date(order.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</p>
+      </div>
+      <div className="space-y-2">
+        {order.items.map((it, i) => (
+          <div key={i} className="flex justify-between gap-3">
+            <span className="text-ck-muted">{it.name}</span>
+            <span className="shrink-0 tabular-nums">{brl(it.price_cents)}</span>
+          </div>
+        ))}
+        {order.discount_cents > 0 && (
+          <div className="flex justify-between font-medium text-emerald-600"><span>Desconto</span><span className="tabular-nums">−{brl(order.discount_cents)}</span></div>
         )}
+        <div className="flex justify-between border-t border-ck-border pt-2.5 text-base font-bold"><span>Total</span><span className="tabular-nums">{brl(order.total_cents)}</span></div>
+      </div>
+    </section>
+  );
 
-        <section className="mt-5 rounded-2xl border border-gray-200 bg-white p-5 text-sm shadow-sm">
-          <p className="mb-3 font-semibold">Pedido #{order.number}</p>
-          <div className="space-y-1.5">
-            {order.items.map((it, i) => (
-              <div key={i} className="flex justify-between gap-3 text-gray-700">
-                <span>{it.name}</span>
-                <span className="tabular-nums">{brl(it.price_cents)}</span>
+  if (order.status === 'paid')
+    return (
+      <Shell theme={theme}>
+        <Confetti />
+        <Steps current={3} />
+        <section className="ck-card overflow-hidden text-center">
+          <div className="relative bg-gradient-to-b from-emerald-500/10 to-transparent px-6 pb-6 pt-10">
+            <div className="animate-pop mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 shadow-xl shadow-emerald-500/30">
+              <Check className="h-10 w-10 text-white" strokeWidth={3} />
+            </div>
+            <h1 className="mt-5 text-[26px] font-bold tracking-tight">Pagamento aprovado!</h1>
+            <p className="mx-auto mt-2 max-w-md text-ck-muted">
+              Obrigado{firstName ? `, ${firstName}` : ''}! Enviamos os dados de acesso para <b className="text-ck-text">{order.customer?.email}</b>.
+            </p>
+          </div>
+          <div className="space-y-3 px-5 pb-6 text-left sm:px-8">
+            {order.delivery.map((d, i) => (
+              <div key={i} className="flex flex-col gap-3 rounded-[calc(var(--ck-r)*.8)] border border-ck-border bg-ck-surface-2 p-4 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold">{d.name}</p>
+                  {d.note && <p className="mt-1 text-sm text-ck-muted">{d.note}</p>}
+                  {!d.url && <p className="mt-1 text-sm text-ck-muted">O acesso será enviado por e-mail.</p>}
+                </div>
+                {d.url && (
+                  <a href={d.url} target="_blank" rel="noopener noreferrer" className="ck-cta inline-flex h-11 shrink-0 items-center justify-center gap-2 px-5 text-sm font-bold">
+                    Acessar agora <ExternalLink className="h-4 w-4" />
+                  </a>
+                )}
               </div>
             ))}
-            {order.discount_cents > 0 && (
-              <div className="flex justify-between text-emerald-700">
-                <span>Desconto</span>
-                <span className="tabular-nums">−{brl(order.discount_cents)}</span>
-              </div>
-            )}
-            <div className="flex justify-between border-t border-gray-100 pt-2 font-semibold">
-              <span>Total</span>
-              <span className="tabular-nums">{brl(order.total_cents)}</span>
-            </div>
+            <p className="flex items-center justify-center gap-1.5 pt-2 text-xs text-ck-muted"><Mail className="h-3.5 w-3.5" /> Não recebeu? Confira o spam ou a aba promoções.</p>
           </div>
         </section>
-      </main>
-    </div>
+        {summary}
+      </Shell>
+    );
+
+  if (expired)
+    return (
+      <Shell theme={theme}>
+        <section className="ck-card p-8 text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10 text-amber-500"><Clock className="h-8 w-8" /></div>
+          <h1 className="mt-4 text-xl font-bold">Este PIX expirou</h1>
+          <p className="mt-2 text-ck-muted">Sem problemas: seu pedido continua salvo. Gere um novo código em segundos.</p>
+          {order.checkout && (
+            <Link to={`/c/${order.checkout.slug}?recover=${token}`} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">
+              Gerar novo PIX
+            </Link>
+          )}
+        </section>
+        {summary}
+      </Shell>
+    );
+
+  if (order.status !== 'pending')
+    return (
+      <Shell theme={theme}>
+        <section className="ck-card p-8 text-center">
+          <h1 className="text-xl font-bold">Pedido indisponível</h1>
+          <p className="mt-2 text-ck-muted">Não foi possível concluir este pedido.</p>
+          {order.checkout && <Link to={`/c/${order.checkout.slug}`} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">Voltar ao checkout</Link>}
+        </section>
+      </Shell>
+    );
+
+  const mm = left !== null ? String(Math.floor(left / 60)).padStart(2, '0') : '--';
+  const ss = left !== null ? String(left % 60).padStart(2, '0') : '--';
+  const pctLeft = left !== null ? Math.min(100, (left / totalWindow) * 100) : 100;
+
+  return (
+    <Shell theme={theme}>
+      <Steps current={2} />
+      <section className="ck-card overflow-hidden">
+        <div className="border-b border-ck-border p-5 text-center sm:p-7">
+          <span className="inline-flex items-center gap-2 rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-600">
+            <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" /></span>
+            Aguardando pagamento
+          </span>
+          <p className="mt-3 text-sm text-ck-muted">Valor a pagar</p>
+          <p className="text-[34px] font-bold leading-tight tracking-tight tabular-nums">{brl(order.total_cents)}</p>
+          {left !== null && (
+            <div className="mx-auto mt-4 max-w-xs">
+              <div className="flex items-center justify-between text-xs text-ck-muted">
+                <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> Expira em</span>
+                <span className={cn('font-mono text-sm font-bold tabular-nums', left < 120 ? 'text-red-500' : 'text-ck-text')}>{mm}:{ss}</span>
+              </div>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-ck-surface-2">
+                <div className={cn('h-full rounded-full transition-[width] duration-1000 ease-linear', left < 120 ? 'bg-red-500' : 'bg-brand')} style={{ width: `${pctLeft}%` }} />
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="grid gap-6 p-5 sm:p-7 md:grid-cols-[1fr_auto] md:items-start">
+          <div className="space-y-4">
+            <div>
+              <p className="mb-2 flex items-center gap-2 text-sm font-semibold"><PixIcon className="h-4 w-4" /> PIX Copia e Cola</p>
+              <div className="max-h-24 overflow-y-auto break-all rounded-[calc(var(--ck-r)*.7)] border border-dashed border-ck-border bg-ck-surface-2 p-3 font-mono text-[12px] leading-relaxed text-ck-muted">{order.pix_code}</div>
+            </div>
+            <button onClick={copy} className={cn('ck-cta flex h-14 w-full items-center justify-center gap-2.5 text-base font-bold', copied && 'bg-emerald-600! text-white!')}>
+              {copied ? <><CopyCheck className="h-5 w-5" /> Código copiado!</> : <><Copy className="h-5 w-5" /> Copiar código PIX</>}
+            </button>
+            <ol className="space-y-3 pt-1 text-sm">
+              {[
+                [Smartphone, 'Abra o app do seu banco e entre na área PIX'],
+                [Copy, 'Escolha “PIX Copia e Cola” e cole o código'],
+                [CheckCircle2, 'Confirme o pagamento. A liberação é automática'],
+              ].map(([Icon, text]: any, i) => (
+                <li key={i} className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand"><Icon className="h-4 w-4" /></span>
+                  <span className="text-ck-muted">{text}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+
+          {order.pix_qr_image && (
+            <div className="flex flex-col items-center md:border-l md:border-ck-border md:pl-6">
+              <p className="mb-3 flex items-center gap-2 text-sm font-semibold"><QrCode className="h-4 w-4 text-brand" /> Ou escaneie</p>
+              <div className="relative rounded-2xl bg-white p-3 shadow-sm ring-1 ring-black/5">
+                {(['left-0 top-0 border-l-[3px] border-t-[3px] rounded-tl-xl', 'right-0 top-0 border-r-[3px] border-t-[3px] rounded-tr-xl', 'left-0 bottom-0 border-l-[3px] border-b-[3px] rounded-bl-xl', 'right-0 bottom-0 border-r-[3px] border-b-[3px] rounded-br-xl'] as const).map((c) => (
+                  <span key={c} className={cn('absolute h-6 w-6 border-brand', c)} />
+                ))}
+                <img src={order.pix_qr_image} alt="QR Code PIX" className="h-48 w-48 sm:h-52 sm:w-52" />
+              </div>
+              <p className="mt-2 text-center text-xs text-ck-muted">Use a câmera do app do banco</p>
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-col items-center gap-3 border-t border-ck-border bg-ck-surface-2 px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
+          <p className="flex items-center gap-2 text-xs text-ck-muted"><ShieldCheck className="h-4 w-4 text-emerald-500" /> A confirmação aparece aqui automaticamente.</p>
+          <button onClick={() => refresh.mutate()} disabled={refresh.isPending} className="flex items-center gap-2 rounded-full border border-ck-border bg-ck-surface px-4 py-2 text-sm font-semibold transition hover:border-brand hover:text-brand disabled:opacity-60">
+            <RefreshCw className={cn('h-4 w-4', refresh.isPending && 'animate-spin')} /> Já paguei
+          </button>
+        </div>
+      </section>
+      {summary}
+    </Shell>
   );
 }

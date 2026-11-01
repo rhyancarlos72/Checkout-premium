@@ -1,5 +1,6 @@
 import clsx from 'clsx';
 import { Loader2, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { forwardRef, useEffect, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 
 export const cn = clsx;
@@ -163,7 +164,8 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
     };
   }, [open, onClose]);
   if (!open) return null;
-  return (
+  // Portal no <body>: evita que ancestrais com transform/animação prendam o position:fixed
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-900/40 backdrop-blur-[2px] sm:items-center sm:p-4" onMouseDown={onClose}>
       <div
         role="dialog"
@@ -180,7 +182,8 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
         </header>
         <div className="p-5">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
