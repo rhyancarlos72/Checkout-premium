@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { env, features } from '../config/env.js';
 import { HttpError, must, supabase } from '../lib/core.js';
 import { requireAdmin } from '../middleware/auth.js';
-import { efi, providerStatus } from '../providers/index.js';
+import { efi, providerStatus, woovi } from '../providers/index.js';
 import { testEmail } from '../services/email.js';
 import { runJobs } from '../services/jobs.js';
 import { dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
@@ -50,7 +50,33 @@ const productSchema = z.object({
   delivery_note: z.string().max(1000).nullable().optional(),
   active: z.boolean().default(true),
 });
-crud('products', 'products', productSchema);
+// Cada produto tem seu link de checkout: criado automaticamente junto com o produto
+async function createDefaultCheckout(product: { id: string; name: string }) {
+  const base = product.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'produto';
+  const provider = woovi.isConfigured() ? 'woovi' : efi.isConfigured() ? 'efi' : 'woovi';
+  for (let i = 0; i < 6; i++) {
+    const slug = (i === 0 ? base : `${base}-${Math.random().toString(36).slice(2, 6)}`).padEnd(3, '0');
+    const r = await supabase
+      .from('checkouts')
+      .insert({ slug, name: product.name, product_id: product.id, provider, fields: { phone: true, document: false }, theme: {} })
+      .select('id, slug')
+      .single();
+    if (!r.error) return r.data;
+    if (r.error.code !== '23505') throw new HttpError(500, r.error.message);
+  }
+  throw new HttpError(500, 'Não foi possível gerar um link único');
+}
+
+adminRouter.post('/products', async (req, res) => {
+  const product = must(await supabase.from('products').insert(productSchema.parse(req.body)).select().single()) as any;
+  const checkout = await createDefaultCheckout(product);
+  res.status(201).json({ ...product, checkout });
+});
+adminRouter.post('/products/:id/checkout', async (req, res) => {
+  const product = must(await supabase.from('products').select('id, name').eq('id', uuid.parse(req.params.id)).maybeSingle(), 'Produto não encontrado') as any;
+  res.status(201).json(await createDefaultCheckout(product));
+});
+crud('products', 'products', productSchema, '*, checkouts(id, slug, name, active)');
 
 const bumpSchema = z.object({
   product_id: uuid,
@@ -109,7 +135,7 @@ const checkoutSchema = z.object({
   provider: z.enum(['woovi', 'efi']),
   price_cents: z.number().int().min(1).nullable().optional(),
   theme: themeSchema.default({} as any),
-  fields: z.object({ phone: z.boolean().default(true), document: z.boolean().default(true) }).default({ phone: true, document: true }),
+  fields: z.object({ phone: z.boolean().default(true), document: z.boolean().default(false) }).default({ phone: true, document: false }),
   tracking: z.object({ metaPixelId: z.string().regex(/^\d{5,20}$/).or(z.literal('')).optional() }).default({}),
   pix_expires_minutes: z.number().int().min(5).max(1440).default(30),
   active: z.boolean().default(true),

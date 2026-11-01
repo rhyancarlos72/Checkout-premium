@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { HttpError, isValidCnpj, isValidCpf, logger, must, onlyDigits, supabase } from '../lib/core.js';
+import { HttpError, logger, must, onlyDigits, supabase } from '../lib/core.js';
 import { getProvider, type ProviderName } from '../providers/index.js';
 import { sendDeliveryEmail, type DeliveryItem } from './email.js';
 import { checkCoupon, computeTotals, type CouponRow, type PriceLine } from './pricing.js';
@@ -103,7 +103,7 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
 
   const fields = checkout.fields ?? {};
   const doc = onlyDigits(input.customer.document);
-  if (fields.document && !(isValidCpf(doc) || isValidCnpj(doc))) throw new HttpError(400, 'CPF/CNPJ inválido');
+  // CPF não é pedido no checkout; se vier (API), só é usado quando válido
   if (fields.phone && onlyDigits(input.customer.phone).length < 10) throw new HttpError(400, 'Telefone inválido');
 
   const provider = getProvider(checkout.provider as ProviderName);

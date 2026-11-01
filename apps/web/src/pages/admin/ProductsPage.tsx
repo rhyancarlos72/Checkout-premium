@@ -1,11 +1,13 @@
 import { ImageUpload } from '@/components/ImageUpload';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Boxes, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { Boxes, Check, Copy, ExternalLink, Link2, Palette, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageLoader, Select, Switch, Textarea, useToast } from '@/components/ui';
-import { ApiError } from '@/lib/api';
+import { adminApi, ApiError } from '@/lib/api';
 import { brl, centsToInput, parseMoney } from '@/lib/format';
 import { PageHeader } from './AdminApp';
 import { useCrud } from './crud';
@@ -20,6 +22,38 @@ export interface Product {
   delivery_url: string | null;
   delivery_note: string | null;
   active: boolean;
+  checkouts?: { id: string; slug: string; name: string; active: boolean }[];
+}
+
+/** Link de checkout do produto, com copiar/abrir. */
+function ProductLink({ product, onCreated }: { product: Product; onCreated: () => void }) {
+  const [copied, setCopied] = useState<string | null>(null);
+  const create = useMutation({ mutationFn: () => adminApi.post(`/products/${product.id}/checkout`), onSuccess: onCreated });
+  const links = (product.checkouts ?? []).map((c) => ({ ...c, url: `${window.location.origin}/c/${c.slug}` }));
+  if (!links.length)
+    return (
+      <Button size="sm" variant="brand" className="w-full" loading={create.isPending} onClick={() => create.mutate()} style={{ ['--brand' as any]: '#059669' }}>
+        <Link2 className="h-4 w-4" /> Gerar link de checkout
+      </Button>
+    );
+  return (
+    <div className="space-y-1.5">
+      {links.map((l) => (
+        <div key={l.id} className="flex items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50/60 py-1 pl-3 pr-1">
+          <Link2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-emerald-900" title={l.url}>/c/{l.slug}</span>
+          {!l.active && <span className="shrink-0 rounded bg-zinc-200 px-1.5 text-[10px] font-semibold text-zinc-600">inativo</span>}
+          <button
+            className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-emerald-700 hover:bg-white"
+            onClick={() => navigator.clipboard.writeText(l.url).then(() => (setCopied(l.id), setTimeout(() => setCopied(null), 1500)))}
+          >
+            {copied === l.id ? <><Check className="h-3.5 w-3.5" /> Copiado</> : <><Copy className="h-3.5 w-3.5" /> Copiar</>}
+          </button>
+          <a href={l.url} target="_blank" rel="noreferrer" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-emerald-700 hover:bg-white" aria-label="Abrir checkout"><ExternalLink className="h-3.5 w-3.5" /></a>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 const schema = z.object({
@@ -38,10 +72,12 @@ export default function ProductsPage() {
   const { list, save, remove } = useCrud<Product>('products');
   const [editing, setEditing] = useState<Product | 'new' | null>(null);
   const toast = useToast();
+  const qc = useQueryClient();
+  const navigate = useNavigate();
 
   return (
     <>
-      <PageHeader title="Produtos" subtitle="Produtos digitais e como são entregues" action={<Button onClick={() => setEditing('new')}><Plus className="h-4 w-4" /> Novo produto</Button>} />
+      <PageHeader title="Produtos" subtitle="Cada produto tem seu próprio link de checkout, criado automaticamente" action={<Button onClick={() => setEditing('new')}><Plus className="h-4 w-4" /> Novo produto</Button>} />
       {list.isLoading ? (
         <PageLoader />
       ) : !list.data?.length ? (
@@ -51,21 +87,29 @@ export default function ProductsPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {list.data.map((p) => (
-            <div key={p.id} className="flex gap-4 rounded-2xl border border-gray-200 bg-white p-4">
-              {p.image_url ? <img src={p.image_url} alt="" className="h-20 w-20 shrink-0 rounded-xl object-cover" /> : <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-gray-100 text-gray-400"><Boxes className="h-6 w-6" /></div>}
-              <div className="min-w-0 flex-1">
-                <div className="flex items-start justify-between gap-2">
-                  <p className="font-semibold leading-snug">{p.name}</p>
-                  <Badge tone={p.active ? 'on' : 'off'}>{p.active ? 'Ativo' : 'Inativo'}</Badge>
+            <div key={p.id} className="flex flex-col gap-4 rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,.04),0_8px_24px_-12px_rgba(16,24,40,.08)]">
+              <div className="flex gap-4">
+                {p.image_url ? <img src={p.image_url} alt="" className="h-20 w-20 shrink-0 rounded-xl object-cover" /> : <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-400"><Boxes className="h-6 w-6" /></div>}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-semibold leading-snug">{p.name}</p>
+                    <Badge tone={p.active ? 'on' : 'off'}>{p.active ? 'Ativo' : 'Inativo'}</Badge>
+                  </div>
+                  <p className="mt-1 text-lg font-bold tabular-nums">{brl(p.price_cents)}</p>
+                  <p className="text-xs text-zinc-500">Entrega: {{ link: 'link de acesso', file: 'arquivo', none: 'manual' }[p.delivery_type]}</p>
                 </div>
-                <p className="mt-1 text-lg font-bold tabular-nums">{brl(p.price_cents)}</p>
-                <p className="text-xs text-gray-500">Entrega: {{ link: 'link de acesso', file: 'arquivo', none: 'manual' }[p.delivery_type]}</p>
-                <div className="mt-2 flex gap-1">
-                  <Button size="sm" variant="secondary" onClick={() => setEditing(p)}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
-                  <Button size="sm" variant="ghost" aria-label="Excluir" onClick={() => confirm(`Excluir "${p.name}"?`) && remove.mutate(p.id, { onError: (e) => toast.err(e.message) })}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
+              </div>
+              <div>
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Link de checkout</p>
+                <ProductLink product={p} onCreated={() => (qc.invalidateQueries({ queryKey: ['products'] }), qc.invalidateQueries({ queryKey: ['checkouts'] }), toast.ok('Link criado'))} />
+              </div>
+              <div className="mt-auto flex items-center gap-1 whitespace-nowrap border-t border-zinc-100 pt-3">
+                <Button size="sm" variant="secondary" onClick={() => setEditing(p)}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
+                <Button size="sm" variant="ghost" onClick={() => navigate('/admin/checkouts')}><Palette className="h-3.5 w-3.5" /> Personalizar</Button>
+                <span className="flex-1" />
+                <Button size="sm" variant="ghost" aria-label="Excluir" onClick={() => confirm(`Excluir "${p.name}"?`) && remove.mutate(p.id, { onError: (e) => toast.err(e.message) })}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
               </div>
             </div>
           ))}
@@ -76,8 +120,9 @@ export default function ProductsPage() {
           product={editing === 'new' ? null : editing}
           onClose={() => setEditing(null)}
           onSave={async (body) => {
-            await save.mutateAsync(body);
-            toast.ok('Produto salvo');
+            const saved: any = await save.mutateAsync(body);
+            qc.invalidateQueries({ queryKey: ['checkouts'] });
+            toast.ok(saved?.checkout ? `Produto criado com link: /c/${saved.checkout.slug}` : 'Produto salvo');
             setEditing(null);
           }}
         />

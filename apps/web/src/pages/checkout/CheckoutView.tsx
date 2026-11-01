@@ -7,7 +7,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
-import { brl, digits, isValidCnpj, isValidCpf, maskDocument, maskPhone } from '@/lib/format';
+import { brl, digits, maskPhone } from '@/lib/format';
 import { collectTracking, initMetaPixel, pixel, track } from '@/lib/tracking';
 import { themeDefaults, themeStyle, type PublicCheckout } from './theme';
 
@@ -20,18 +20,30 @@ function makeSchema(fields: PublicCheckout['fields']) {
       .refine((v) => v.split(/\s+/).length >= 2, 'Informe nome e sobrenome'),
     email: z.string().trim().toLowerCase().email('Digite um e-mail válido'),
     phone: fields.phone ? z.string().refine((v) => digits(v).length >= 10, 'Informe o celular com DDD') : z.string().optional(),
-    document: fields.document ? z.string().refine((v) => isValidCpf(v) || isValidCnpj(v), 'CPF ou CNPJ inválido') : z.string().optional(),
   });
 }
 type FormValues = z.infer<ReturnType<typeof makeSchema>>;
 
 // ------------------------------------------------------------------ peças
 
-export function PixIcon({ className }: { className?: string }) {
+/** Logo oficial do Pix (marca do Banco Central), cor #32BCAD. */
+export function PixIcon({ className, color = '#32BCAD' }: { className?: string; color?: string }) {
   return (
-    <svg viewBox="0 0 512 512" className={className} aria-hidden>
-      <path fill="#32BCAD" d="M242.4 292.5a32.7 32.7 0 0 1 46.2 0l69.9 69.9a63.9 63.9 0 0 0 45.5 18.8h13.7L329.4 469.5a70.6 70.6 0 0 1-99.8 0l-88.6-88.6h7.9a63.9 63.9 0 0 0 45.5-18.8zm46.2-73a32.7 32.7 0 0 1-46.2 0l-48.7-48.7a63.9 63.9 0 0 0-45.5-18.8h-7.9l88.5-88.5a70.6 70.6 0 0 1 99.8 0l88.3 88.3h-13.7a63.9 63.9 0 0 0-45.5 18.8zM163 172.9a43 43 0 0 1 30.4 12.6l48.7 48.7a22.7 22.7 0 0 0 32.1 0l69.9-69.9a43 43 0 0 1 30.4-12.6h34.5l53.6 53.6a70.6 70.6 0 0 1 0 99.8l-53.6 53.6h-34.5a43 43 0 0 1-30.4-12.6l-69.9-69.9a23.3 23.3 0 0 0-32.1 0l-48.7 48.7A43 43 0 0 1 163 337.6h-42.6l-53.3-53.3a70.6 70.6 0 0 1 0-99.8l53.3-53.3z" />
+    <svg viewBox="0 0 24 24" className={className} role="img" aria-label="Pix">
+      <path
+        fill={color}
+        d="M5.283 18.36a3.505 3.505 0 0 0 2.493-1.032l3.6-3.6a.684.684 0 0 1 .946 0l3.613 3.613a3.504 3.504 0 0 0 2.493 1.032h.71l-4.56 4.56a3.647 3.647 0 0 1-5.156 0L4.85 18.36ZM18.428 5.627a3.505 3.505 0 0 0-2.493 1.032l-3.613 3.614a.67.67 0 0 1-.946 0l-3.6-3.6A3.505 3.505 0 0 0 5.283 5.64h-.434l4.573-4.572a3.646 3.646 0 0 1 5.156 0l4.559 4.559ZM1.068 9.422 3.79 6.699h1.492a2.483 2.483 0 0 1 1.744.722l3.6 3.6a1.73 1.73 0 0 0 2.443 0l3.614-3.613a2.482 2.482 0 0 1 1.744-.723h1.767l2.737 2.737a3.646 3.646 0 0 1 0 5.156l-2.736 2.736h-1.768a2.482 2.482 0 0 1-1.744-.722l-3.613-3.613a1.77 1.77 0 0 0-2.444 0l-3.6 3.6a2.483 2.483 0 0 1-1.744.722H3.791l-2.723-2.723a3.646 3.646 0 0 1 0-5.156"
+      />
     </svg>
+  );
+}
+
+/** Logo Pix + palavra "pix" (como nos apps dos bancos). */
+export function PixLogo({ className }: { className?: string }) {
+  return (
+    <span className={cn('inline-flex items-center gap-1.5 font-bold lowercase tracking-tight text-[#32BCAD]', className)}>
+      <PixIcon className="h-[1.15em] w-[1.15em]" /> pix
+    </span>
   );
 }
 
@@ -130,6 +142,8 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const [serverError, setServerError] = useState<string | null>(null);
   const [ctaVisible, setCtaVisible] = useState(true);
   const ctaRef = useRef<HTMLButtonElement>(null);
+  const footerRef = useRef<HTMLElement>(null);
+  const [footerVisible, setFooterVisible] = useState(false);
   const startedRef = useRef(false);
   const eventIds = useMemo(() => ({ ic: `ic_${crypto.randomUUID()}`, purchase: `purchase_${crypto.randomUUID()}` }), []);
 
@@ -137,7 +151,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const { register, handleSubmit, setValue, formState, watch, reset, getFieldState } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onTouched',
-    defaultValues: { name: '', email: '', phone: '', document: '' },
+    defaultValues: { name: '', email: '', phone: '' },
   });
 
   useEffect(() => {
@@ -149,7 +163,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     if (recover && /^[a-f0-9]{48}$/.test(recover)) {
       publicApi
         .get<{ customer: { name: string; email: string; phone: string | null } | null }>(`/orders/${recover}`)
-        .then((o) => o.customer && reset({ name: o.customer.name, email: o.customer.email, phone: maskPhone(o.customer.phone ?? ''), document: '' }))
+        .then((o) => o.customer && reset({ name: o.customer.name, email: o.customer.email, phone: maskPhone(o.customer.phone ?? '') }))
         .catch(() => {});
     }
   }, [checkout.slug]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -160,7 +174,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     if (!el || typeof IntersectionObserver === 'undefined') return;
     const io = new IntersectionObserver(([e]) => setCtaVisible(e.isIntersecting), { threshold: 0.2 });
     io.observe(el);
-    return () => io.disconnect();
+    const fo = footerRef.current ? new IntersectionObserver(([e]) => setFooterVisible(e.isIntersecting)) : null;
+    if (fo && footerRef.current) fo.observe(footerRef.current);
+    return () => (io.disconnect(), fo?.disconnect());
   }, []);
 
   const values = watch();
@@ -212,13 +228,13 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     mutationFn: (v: FormValues) =>
       publicApi.post<{ token: string }>('/orders', {
         checkout_slug: checkout.slug,
-        customer: { name: v.name, email: v.email, phone: v.phone ? digits(v.phone) : null, document: v.document ? digits(v.document) : null },
+        customer: { name: v.name, email: v.email, phone: v.phone ? digits(v.phone) : null, document: null },
         bump_ids: bumps,
         coupon_code: coupon?.code ?? null,
         tracking: { ...collectTracking(), initiate_checkout_event_id: eventIds.ic, purchase_event_id: eventIds.purchase },
       }),
     onSuccess: (r) => navigate(`/pedido/${r.token}`),
-    onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Não foi possível gerar o PIX. Tente novamente.'),
+    onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Não foi possível gerar o Pix. Tente novamente.'),
   });
 
   const onSubmit = handleSubmit(
@@ -238,6 +254,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const banner = t.bannerUrl || t.mockupUrl;
   const productImage = checkout.product.image_url || t.mockupUrl;
   const busy = submit.isPending;
+  const showSticky = !ctaVisible && !footerVisible;
 
   // ---------- blocos reutilizados (desktop lateral / mobile empilhado)
   const summaryLines = (
@@ -307,7 +324,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         <span className="font-semibold">Total</span>
         <span className="text-right">
           <span className="block text-[26px] font-bold leading-none tracking-tight tabular-nums">{brl(total)}</span>
-          <span className="mt-1 block text-xs text-ck-muted">à vista no PIX</span>
+          <span className="mt-1 flex items-center justify-end gap-1 text-xs text-ck-muted">à vista no <PixIcon className="h-3 w-3" /> Pix</span>
         </span>
       </div>
     </div>
@@ -331,7 +348,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-500"><Zap className="h-5 w-5" /></div>
         <div>
           <p className="font-semibold">Acesso imediato</p>
-          <p className="mt-0.5 leading-relaxed text-ck-muted">Assim que o PIX é confirmado, o acesso chega no seu e-mail.</p>
+          <p className="mt-0.5 leading-relaxed text-ck-muted">Assim que o Pix é confirmado, o acesso chega no seu e-mail.</p>
         </div>
       </div>
       <div className="flex gap-3">
@@ -363,13 +380,13 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const seals = t.showSeals && (
     <div className="grid grid-cols-3 gap-2 text-center text-[11px] font-medium leading-tight text-ck-muted">
       <div className="flex flex-col items-center gap-1.5 rounded-[calc(var(--ck-r)*.6)] border border-ck-border px-2 py-3"><Lock className="h-4 w-4 text-emerald-500" /> Site seguro<br />SSL 256 bits</div>
-      <div className="flex flex-col items-center gap-1.5 rounded-[calc(var(--ck-r)*.6)] border border-ck-border px-2 py-3"><PixIcon className="h-4 w-4" /> PIX aprovado<br />na hora</div>
+      <div className="flex flex-col items-center gap-1.5 rounded-[calc(var(--ck-r)*.6)] border border-ck-border px-2 py-3"><PixIcon className="h-4 w-4" /> Pix aprovado<br />na hora</div>
       <div className="flex flex-col items-center gap-1.5 rounded-[calc(var(--ck-r)*.6)] border border-ck-border px-2 py-3"><ShieldCheck className="h-4 w-4 text-sky-500" /> Dados<br />protegidos</div>
     </div>
   );
 
   return (
-    <div style={themeStyle(t)} className={cn('@container relative bg-ck-bg font-sans text-ck-text antialiased', preview ? 'min-h-full' : 'min-h-screen')}>
+    <div style={themeStyle(t)} className={cn('@container relative bg-ck-bg font-sans text-ck-text antialiased [overflow:clip]', preview ? 'min-h-full' : 'min-h-screen')}>
       {/* Barra de anúncio / cronômetro */}
       {(t.showTimer || t.announcement) && (
         <div className="bg-brand text-brand-fg">
@@ -425,7 +442,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                 {(t.subheadline || checkout.product.description) && <p className="mt-2 text-[15px] leading-relaxed text-ck-muted">{t.subheadline || checkout.product.description}</p>}
                 <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
                   <span className="text-2xl font-bold tracking-tight tabular-nums">{brl(checkout.price_cents)}</span>
-                  <span className="text-sm text-ck-muted">pagamento único · PIX</span>
+                  <span className="text-sm text-ck-muted">pagamento único · <PixIcon className="inline h-3.5 w-3.5 align-[-2px]" /> Pix</span>
                 </div>
               </div>
             </div>
@@ -448,18 +465,6 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                   placeholder="(11) 99999-9999"
                 />
               )}
-              {checkout.fields.document && (
-                <CkField
-                  label="CPF ou CNPJ"
-                  icon={<BadgeCheck className="h-[18px] w-[18px]" />}
-                  reg={{ ...register('document'), onChange: async (e) => setValue('document', maskDocument(e.target.value), { shouldValidate: formState.isSubmitted }) }}
-                  error={err.document?.message}
-                  valid={isValid('document')}
-                  inputMode="numeric"
-                  autoComplete="off"
-                  placeholder="000.000.000-00"
-                />
-              )}
             </div>
           </Section>
 
@@ -468,13 +473,13 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ck-surface shadow-sm ring-1 ring-ck-border"><PixIcon className="h-6 w-6" /></div>
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold">PIX</p>
-                  <p className="text-xs text-ck-muted">Aprovação em segundos · disponível 24h</p>
+                  <p className="font-semibold">Pix</p>
+                  <p className="text-xs text-ck-muted">Aprovação em segundos · disponível 24h, todos os dias</p>
                 </div>
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-brand-fg"><Check className="h-4 w-4" strokeWidth={3} /></span>
               </div>
               <ul className="mt-4 grid gap-2 text-[13px] text-ck-muted @md:grid-cols-3">
-                {['Pague pelo app do seu banco', 'QR Code ou copia e cola', 'Liberação automática'].map((x) => (
+                {['Pague pelo app do seu banco', 'QR Code ou Pix Copia e Cola', 'Liberação automática'].map((x) => (
                   <li key={x} className="flex items-center gap-2"><Check className="h-3.5 w-3.5 shrink-0 text-brand" strokeWidth={3} /> {x}</li>
                 ))}
               </ul>
@@ -527,7 +532,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           <div className="space-y-4">
             <button ref={ctaRef} type="submit" disabled={busy} className="ck-cta flex h-[60px] w-full items-center justify-center gap-2.5 text-[17px] font-bold disabled:opacity-70">
               {busy ? (
-                <><span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> Gerando seu PIX…</>
+                <><span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> Gerando seu Pix…</>
               ) : (
                 <><Lock className="h-[18px] w-[18px]" /> {t.buttonText || 'Finalizar compra'} · {brl(total)}</>
               )}
@@ -558,7 +563,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         </aside>
       </main>
 
-      <footer className="border-t border-ck-border">
+      <footer ref={footerRef} className="border-t border-ck-border">
         <div className="mx-auto max-w-[1120px] space-y-1 px-4 py-8 text-center text-xs leading-relaxed text-ck-muted">
           {t.footerText && <p className="whitespace-pre-line">{t.footerText}</p>}
           <p>
@@ -571,8 +576,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
       {/* CTA fixo (celular) — aparece quando o botão principal sai da tela */}
       {t.stickyMobileCta && (
-        <div className={cn('sticky bottom-0 z-30 border-t border-ck-border bg-ck-surface/95 backdrop-blur-md transition-all duration-300 @4xl:hidden', ctaVisible ? 'pointer-events-none translate-y-full opacity-0' : 'translate-y-0 opacity-100')}>
-          <div className="flex items-center gap-3 px-4 py-3 pb-[max(.75rem,env(safe-area-inset-bottom))]">
+        // h-0: não ocupa espaço no fim da página (sem área vazia na rolagem)
+        <div className="pointer-events-none sticky bottom-0 z-30 h-0 @4xl:hidden">
+          <div className={cn('absolute inset-x-0 bottom-0 flex items-center gap-3 border-t border-ck-border bg-ck-surface/95 px-4 py-3 pb-[max(.75rem,env(safe-area-inset-bottom))] backdrop-blur-md transition-all duration-300', showSticky ? 'pointer-events-auto visible translate-y-0 opacity-100' : 'invisible translate-y-3 opacity-0')}>
             <div className="min-w-0">
               <p className="text-[11px] text-ck-muted">Total</p>
               <p className="text-lg font-bold leading-tight tabular-nums">{brl(total)}</p>

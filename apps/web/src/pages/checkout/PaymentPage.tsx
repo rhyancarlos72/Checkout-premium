@@ -227,11 +227,11 @@ export default function PaymentPage() {
       <Shell theme={theme}>
         <section className="ck-card p-8 text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10 text-amber-500"><Clock className="h-8 w-8" /></div>
-          <h1 className="mt-4 text-xl font-bold">Este PIX expirou</h1>
+          <h1 className="mt-4 text-xl font-bold">Este Pix expirou</h1>
           <p className="mt-2 text-ck-muted">Sem problemas: seu pedido continua salvo. Gere um novo código em segundos.</p>
           {order.checkout && (
             <Link to={`/c/${order.checkout.slug}?recover=${token}`} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">
-              Gerar novo PIX
+              Gerar novo Pix
             </Link>
           )}
         </section>
@@ -281,16 +281,16 @@ export default function PaymentPage() {
         <div className="grid gap-6 p-5 sm:p-7 md:grid-cols-[1fr_auto] md:items-start">
           <div className="space-y-4">
             <div>
-              <p className="mb-2 flex items-center gap-2 text-sm font-semibold"><PixIcon className="h-4 w-4" /> PIX Copia e Cola</p>
+              <p className="mb-2 flex items-center gap-2 text-sm font-semibold"><PixIcon className="h-4 w-4" /> Pix Copia e Cola</p>
               <div className="max-h-24 overflow-y-auto break-all rounded-[calc(var(--ck-r)*.7)] border border-dashed border-ck-border bg-ck-surface-2 p-3 font-mono text-[12px] leading-relaxed text-ck-muted">{order.pix_code}</div>
             </div>
             <button onClick={copy} className={cn('ck-cta flex h-14 w-full items-center justify-center gap-2.5 text-base font-bold', copied && 'bg-emerald-600! text-white!')}>
-              {copied ? <><CopyCheck className="h-5 w-5" /> Código copiado!</> : <><Copy className="h-5 w-5" /> Copiar código PIX</>}
+              {copied ? <><CopyCheck className="h-5 w-5" /> Código copiado!</> : <><Copy className="h-5 w-5" /> Copiar código Pix</>}
             </button>
             <ol className="space-y-3 pt-1 text-sm">
               {[
-                [Smartphone, 'Abra o app do seu banco e entre na área PIX'],
-                [Copy, 'Escolha “PIX Copia e Cola” e cole o código'],
+                [Smartphone, 'Abra o app do seu banco e entre na área Pix'],
+                [Copy, 'Escolha “Pix Copia e Cola” e cole o código'],
                 [CheckCircle2, 'Confirme o pagamento. A liberação é automática'],
               ].map(([Icon, text]: any, i) => (
                 <li key={i} className="flex items-center gap-3">
@@ -308,7 +308,7 @@ export default function PaymentPage() {
                 {(['left-0 top-0 border-l-[3px] border-t-[3px] rounded-tl-xl', 'right-0 top-0 border-r-[3px] border-t-[3px] rounded-tr-xl', 'left-0 bottom-0 border-l-[3px] border-b-[3px] rounded-bl-xl', 'right-0 bottom-0 border-r-[3px] border-b-[3px] rounded-br-xl'] as const).map((c) => (
                   <span key={c} className={cn('absolute h-6 w-6 border-brand', c)} />
                 ))}
-                <img src={order.pix_qr_image} alt="QR Code PIX" className="h-48 w-48 sm:h-52 sm:w-52" />
+                <img src={order.pix_qr_image} alt="QR Code Pix" className="h-48 w-48 sm:h-52 sm:w-52" />
               </div>
               <p className="mt-2 text-center text-xs text-ck-muted">Use a câmera do app do banco</p>
             </div>

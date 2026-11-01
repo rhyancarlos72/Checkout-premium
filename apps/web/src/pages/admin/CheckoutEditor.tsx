@@ -104,7 +104,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
     price: centsToInput(checkout?.price_cents),
     pix_expires_minutes: checkout?.pix_expires_minutes ?? 30,
     active: checkout?.active ?? true,
-    fields: checkout?.fields ?? { phone: true, document: true },
+    fields: { phone: checkout?.fields?.phone ?? true, document: false },
     metaPixelId: checkout?.tracking?.metaPixelId ?? '',
   });
   const [theme, setTheme] = useState<Theme>({ ...themeDefaults, testimonials: [], ...checkout?.theme });
@@ -242,10 +242,9 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                   </Field>
                   <Field label="Validade do PIX (minutos)"><Input type="number" min={5} max={1440} value={f.pix_expires_minutes} onChange={(e) => set({ pix_expires_minutes: Number(e.target.value) })} /></Field>
                 </Group>
-                <Group title="Campos do comprador" desc="Menos campos = mais conversão. Nome e e-mail são sempre pedidos.">
+                <Group title="Campos do comprador" desc="Menos campos = mais conversão. Nome e e-mail são sempre pedidos; CPF não é pedido.">
                   <div className="flex flex-col gap-3">
                     <Switch checked={f.fields.phone} onChange={(v) => set({ fields: { ...f.fields, phone: v } })} label="Celular / WhatsApp" />
-                    <Switch checked={f.fields.document} onChange={(v) => set({ fields: { ...f.fields, document: v } })} label="CPF ou CNPJ" />
                     <div className="sm:hidden"><Switch checked={f.active} onChange={(v) => set({ active: v })} label="Checkout ativo" /></div>
                   </div>
                 </Group>
