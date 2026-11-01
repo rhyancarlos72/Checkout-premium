@@ -16,7 +16,14 @@ import { fetchWithTimeout, logger, sleep, supabase } from '../lib/core.js';
 
 export const whatsappSchema = z.object({
   enabled: z.boolean().default(false),
-  apiUrl: z.string().trim().url('URL da Evolution API inválida').or(z.literal('')).default(''),
+  // aceita "1.2.3.4:8082" sem protocolo (completa com http://) e remove barra final
+  apiUrl: z.preprocess(
+    (v) => {
+      const t = String(v ?? '').trim().replace(/\/+$/, '');
+      return t && !/^https?:\/\//i.test(t) ? `http://${t}` : t;
+    },
+    z.string().url('URL da Evolution API inválida (ex.: http://SEU-IP:8082)').or(z.literal('')),
+  ).default(''),
   instances: z
     .array(z.object({ name: z.string().trim().min(1).max(60), token: z.string().trim().max(300).default(''), active: z.boolean().default(true) }))
     .max(20)
@@ -104,54 +111,120 @@ function pickFresh(pool: string[], phone: string, key: string) {
 }
 
 // ------------------------------------------------------------------ Evolution API
-async function instanceOnline(cfg: WhatsAppConfig, name: string, token: string) {
+const base = (cfg: WhatsAppConfig) => cfg.apiUrl.replace(/\/+$/, '');
+
+/** Traduz falhas de rede do Node em mensagens que dizem o que corrigir. */
+export function describeNetworkError(e: any, apiUrl: string): { message: string; hint: string } {
+  const code = String(e?.cause?.code ?? e?.code ?? '');
+  const port = (() => {
+    try {
+      const u = new URL(apiUrl);
+      return u.port || (u.protocol === 'https:' ? '443' : '80');
+    } catch {
+      return '';
+    }
+  })();
+  if (e?.name === 'AbortError' || /TIMEOUT|ETIMEDOUT/.test(code))
+    return {
+      message: `Tempo esgotado ao conectar em ${apiUrl}`,
+      hint: `O servidor do checkout não conseguiu chegar na Evolution. Causa mais comum: a hospedagem (Hostinger) bloqueia saída para a porta ${port}. Solução: publique a Evolution atrás de um domínio com HTTPS na porta 443 (ex.: https://evolution.seudominio.com via Nginx/Traefik) e use essa URL aqui. Confira também o firewall da VPS da Evolution.`,
+    };
+  if (code === 'ECONNREFUSED')
+    return { message: `Conexão recusada em ${apiUrl}`, hint: 'O IP respondeu, mas nada está escutando nessa porta. Verifique se a Evolution API está rodando e se a porta está correta.' };
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return { message: `Endereço não encontrado: ${apiUrl}`, hint: 'O domínio não existe ou está digitado errado. Confira a URL da Evolution.' };
+  if (code === 'ECONNRESET' || code === 'UND_ERR_SOCKET') return { message: 'A conexão foi encerrada no meio', hint: 'Pode ser firewall/proxy no caminho ou a Evolution reiniciando. Tente de novo; se persistir, use HTTPS na porta 443.' };
+  if (/CERT|SSL|TLS/i.test(code)) return { message: 'Certificado HTTPS inválido na URL da Evolution', hint: 'O certificado SSL do domínio da Evolution está expirado ou é autoassinado. Use um certificado válido (ex.: Let’s Encrypt).' };
+  return { message: `Falha de rede: ${e?.message ?? code ?? 'desconhecida'}`, hint: 'Confira a URL da Evolution API e se ela está acessível pela internet.' };
+}
+
+export interface InstanceCheck {
+  name: string;
+  active: boolean;
+  ok: boolean;
+  reachable: boolean;
+  http: number;
+  state: string | null;
+  message: string;
+  hint?: string;
+}
+
+/** Verifica uma instância e explica o resultado (rede, token, nome, conexão do WhatsApp). */
+export async function checkInstance(cfg: WhatsAppConfig, inst: { name: string; token: string; active?: boolean }): Promise<InstanceCheck> {
+  const r: InstanceCheck = { name: inst.name, active: inst.active !== false, ok: false, reachable: false, http: 0, state: null, message: '' };
+  if (!inst.token) return { ...r, message: 'Token não informado', hint: 'Cole o token (apikey) desta instância, que aparece no painel da Evolution. Não é o número do WhatsApp.' };
   try {
-    const res = await fetchWithTimeout(`${cfg.apiUrl.replace(/\/+$/, '')}/instance/connectionState/${encodeURIComponent(name)}`, { headers: { apikey: token }, timeoutMs: 5000 });
-    // versões diferentes respondem 401/403/404/405 mesmo conectadas: deixa o envio decidir
-    if ([401, 403, 404, 405].includes(res.status)) return true;
-    if (!res.ok) return true;
+    const res = await fetchWithTimeout(`${base(cfg)}/instance/connectionState/${encodeURIComponent(inst.name)}`, { headers: { apikey: inst.token }, timeoutMs: 8000 });
+    r.reachable = true;
+    r.http = res.status;
     const j: any = await res.json().catch(() => ({}));
-    const state = j?.instance?.state ?? j?.state ?? j?.instance?.connectionStatus;
-    return state == null ? true : ['open', 'connected', 'online'].includes(String(state).toLowerCase());
-  } catch {
-    return false; // rede/timeout = offline
+    if (res.status === 401 || res.status === 403)
+      return { ...r, message: `Token recusado (HTTP ${res.status})`, hint: 'O token não pertence a esta instância. Copie o token (apikey) da instância no painel da Evolution. Também funciona a API Key global da Evolution.' };
+    if (res.status === 404)
+      return { ...r, message: `Instância “${inst.name}” não encontrada (HTTP 404)`, hint: 'O nome precisa ser exatamente igual ao da Evolution (maiúsculas/minúsculas contam).' };
+    if (!res.ok) return { ...r, ok: true, message: `A Evolution respondeu HTTP ${res.status} na verificação; o envio será tentado mesmo assim.` };
+    const state = j?.instance?.state ?? j?.state ?? j?.instance?.connectionStatus ?? null;
+    r.state = state == null ? null : String(state);
+    if (state == null) return { ...r, ok: true, message: 'Instância encontrada (estado não informado pela Evolution).' };
+    if (['open', 'connected', 'online'].includes(String(state).toLowerCase())) return { ...r, ok: true, message: 'Conectada ao WhatsApp' };
+    return { ...r, message: `WhatsApp desconectado nesta instância (estado: ${state})`, hint: 'Abra a Evolution, entre na instância e escaneie o QR Code com o celular do número para conectar.' };
+  } catch (e) {
+    const d = describeNetworkError(e, cfg.apiUrl);
+    return { ...r, message: d.message, hint: d.hint };
   }
+}
+
+/** Explica a resposta de erro do envio. */
+function explainSendError(http: number, body: any, raw: string): { error: string; hint?: string } {
+  const flat = JSON.stringify(body ?? raw ?? '');
+  if (http === 400 && /exists"?\s*:\s*false/i.test(flat)) return { error: 'Este número não tem WhatsApp', hint: 'Confira o DDD e o número do cliente.' };
+  if (http === 401 || http === 403) return { error: `Token recusado ao enviar (HTTP ${http})`, hint: 'Copie de novo o token (apikey) da instância na Evolution.' };
+  if (http === 404) return { error: 'Instância não encontrada ao enviar (HTTP 404)', hint: 'Confira se o nome da instância está idêntico ao da Evolution.' };
+  const msg = body?.response?.message ?? body?.message ?? body?.error ?? raw;
+  return { error: `HTTP ${http}${msg ? ` - ${typeof msg === 'string' ? msg.slice(0, 200) : JSON.stringify(msg).slice(0, 200)}` : ''}` };
 }
 
 async function post(cfg: WhatsAppConfig, name: string, token: string, payload: Record<string, unknown>) {
   try {
-    const res = await fetchWithTimeout(`${cfg.apiUrl.replace(/\/+$/, '')}/message/sendText/${encodeURIComponent(name)}`, {
+    const res = await fetchWithTimeout(`${base(cfg)}/message/sendText/${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json', apikey: token, Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
       timeoutMs: 30000,
     });
-    if (res.ok) return { ok: true, http: res.status, error: '' };
-    const j: any = await res.json().catch(() => ({}));
-    const msg = j?.message ?? j?.error ?? '';
-    return { ok: false, http: res.status, error: `HTTP ${res.status}${msg ? ` - ${typeof msg === 'string' ? msg : JSON.stringify(msg)}` : ''}` };
+    if (res.ok) return { ok: true, http: res.status, error: '', hint: undefined as string | undefined };
+    const raw = await res.text().catch(() => '');
+    let body: any = null;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      /* texto */
+    }
+    const x = explainSendError(res.status, body, raw);
+    return { ok: false, http: res.status, error: x.error, hint: x.hint };
   } catch (e: any) {
-    return { ok: false, http: 0, error: String(e?.message ?? e) };
+    const d = describeNetworkError(e, cfg.apiUrl);
+    return { ok: false, http: 0, error: d.message, hint: d.hint };
   }
 }
 
-export type SendResult = { ok: boolean; error?: string; instance?: string };
+export type SendResult = { ok: boolean; error?: string; hint?: string; instance?: string };
 
-/** Envia texto com rodízio de instâncias e fallback. */
+/** Envia texto com rodízio de instâncias e fallback; em falha, diz o motivo de cada instância. */
 export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?: WhatsAppConfig): Promise<SendResult> {
   const cfg = cfgIn ?? (await getWhatsAppConfig());
+  if (!cfg.apiUrl) return { ok: false, error: 'URL da Evolution API não configurada', hint: 'Preencha a URL em Integrações → WhatsApp.' };
   const instances = cfg.instances.filter((i) => i.active && i.name && i.token);
-  if (!cfg.apiUrl || !instances.length) return { ok: false, error: 'WhatsApp não configurado (URL ou instâncias)' };
+  if (!instances.length) return { ok: false, error: 'Nenhuma instância ativa com token', hint: 'Adicione ao menos uma instância com nome e token e deixe-a ativa.' };
   const text = sanitizeText(message);
   if (!text) return { ok: false, error: 'Mensagem vazia' };
   const phone = normalizePhoneBR(phoneRaw);
-  if (!phone) return { ok: false, error: 'Telefone inválido' };
+  if (!phone) return { ok: false, error: `Telefone inválido: ${phoneRaw || '(vazio)'}`, hint: 'Use DDD + número, ex.: (11) 99999-9999.' };
   const hash = hashText(text);
 
   const tried = new Set<string>();
-  let lastErr = 'nenhuma instância disponível';
+  const reasons: string[] = [];
+  let lastHint: string | undefined;
   for (let attempt = 0; attempt < instances.length; attempt++) {
-    // passe 1 respeita o anti-repetição; passe 2 só exige online e não tentada
     let chosen: (typeof instances)[number] | null = null;
     for (const respectHist of [true, false]) {
       for (let k = 1; k <= instances.length && !chosen; k++) {
@@ -159,40 +232,104 @@ export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?
         const inst = instances[idx];
         if (tried.has(inst.name)) continue;
         if (respectHist && (instanceHist.get(inst.name) ?? []).includes(hash)) continue;
-        if (!(await instanceOnline(cfg, inst.name, inst.token))) {
+        const chk = await checkInstance(cfg, inst);
+        if (!chk.ok) {
           tried.add(inst.name);
+          reasons.push(`${inst.name}: ${chk.message}`);
+          lastHint = chk.hint ?? lastHint;
           continue;
         }
         chosen = inst;
-        rotation = idx; // a próxima mensagem começa na instância seguinte
+        rotation = idx;
       }
       if (chosen) break;
     }
     if (!chosen) break;
     tried.add(chosen.name);
 
-    let r = { ok: false, http: 0, error: 'não enviado' };
+    let r: { ok: boolean; http: number; error: string; hint?: string } = { ok: false, http: 0, error: 'não enviado' };
     outer: for (const num of phoneVariants(phone)) {
       for (const payload of [
         { number: num, text, delay: 3500, linkPreview: false }, // Evolution v2
         { number: num, options: { delay: 3500, presence: 'composing' }, textMessage: { text } }, // v1
       ]) {
         r = await post(cfg, chosen.name, chosen.token, payload);
-        if (r.ok || r.http === 401 || r.http === 403) break outer;
+        if (r.ok || r.http === 401 || r.http === 403 || r.http === 0) break outer;
       }
     }
     if (r.ok) {
       instanceHist.set(chosen.name, [...(instanceHist.get(chosen.name) ?? []), hash].slice(-MSG_HIST_PER_INSTANCE));
       return { ok: true, instance: chosen.name };
     }
-    lastErr = `${chosen.name}: ${r.error}`;
+    reasons.push(`${chosen.name}: ${r.error}`);
+    lastHint = r.hint ?? lastHint;
   }
-  return { ok: false, error: `Todas as instâncias falharam. Último erro: ${lastErr}` };
+  return { ok: false, error: reasons.length ? reasons.join(' | ') : 'Nenhuma instância disponível', hint: lastHint };
 }
 
 export async function instancesStatus() {
   const cfg = await getWhatsAppConfig();
-  return Promise.all(cfg.instances.map(async (i) => ({ name: i.name, active: i.active, online: cfg.apiUrl && i.token ? await instanceOnline(cfg, i.name, i.token) : false })));
+  if (!cfg.apiUrl) return [];
+  return Promise.all(cfg.instances.map((i) => checkInstance(cfg, i)));
+}
+
+/** Diagnóstico passo a passo exibido no painel. */
+export async function diagnoseWhatsApp(extra: { jobsEnabled: boolean; lastJobRunAt: number | null }) {
+  const cfg = await getWhatsAppConfig();
+  type Step = { label: string; ok: boolean | null; detail: string; hint?: string };
+  const steps: Step[] = [];
+  steps.push(
+    cfg.enabled
+      ? { label: 'Envio automático', ok: true, detail: 'Ativado' }
+      : { label: 'Envio automático', ok: false, detail: 'Desativado', hint: 'Ligue o botão “Ativado” no topo desta seção e salve. Sem isso, nada é enviado automaticamente (o teste manual funciona mesmo assim).' },
+  );
+  if (!cfg.apiUrl) {
+    steps.push({ label: 'URL da Evolution', ok: false, detail: 'Não preenchida', hint: 'Informe a URL, ex.: https://evolution.seudominio.com' });
+    return { steps, instances: [] as InstanceCheck[] };
+  }
+  let url: URL | null = null;
+  try {
+    url = new URL(cfg.apiUrl);
+  } catch {
+    /* validado no schema */
+  }
+  steps.push({
+    label: 'URL da Evolution',
+    ok: true,
+    detail: cfg.apiUrl,
+    hint: url && url.protocol === 'http:' && url.port && !['80'].includes(url.port) ? `Usando HTTP na porta ${url.port}. Se der “tempo esgotado”, a hospedagem provavelmente bloqueia essa porta: use um domínio HTTPS (porta 443) apontando para a Evolution.` : undefined,
+  });
+  // alcance do servidor (qualquer resposta HTTP já prova que chegou lá)
+  try {
+    const res = await fetchWithTimeout(base(cfg), { timeoutMs: 8000 });
+    steps.push({ label: 'Conexão com o servidor da Evolution', ok: true, detail: `O servidor respondeu (HTTP ${res.status})` });
+  } catch (e) {
+    const d = describeNetworkError(e, cfg.apiUrl);
+    steps.push({ label: 'Conexão com o servidor da Evolution', ok: false, detail: d.message, hint: d.hint });
+  }
+  const instances = await Promise.all(cfg.instances.map((i) => checkInstance(cfg, i)));
+  const usable = instances.filter((i) => i.active && i.ok);
+  steps.push(
+    !cfg.instances.length
+      ? { label: 'Instâncias', ok: false, detail: 'Nenhuma cadastrada', hint: 'Adicione ao menos uma instância (nome + token).' }
+      : usable.length
+        ? { label: 'Instâncias', ok: true, detail: `${usable.length} de ${cfg.instances.length} prontas para enviar` }
+        : { label: 'Instâncias', ok: false, detail: 'Nenhuma instância ativa está pronta', hint: 'Veja abaixo o motivo de cada instância.' },
+  );
+  steps.push(
+    cfg.approved.enabled || cfg.recovery.enabled
+      ? { label: 'Mensagens automáticas', ok: true, detail: [cfg.approved.enabled && 'pagamento aprovado', cfg.recovery.enabled && `recuperação (${cfg.recovery.firstMinutes} min / ${cfg.recovery.secondMinutes} min)`].filter(Boolean).join(' + ') }
+      : { label: 'Mensagens automáticas', ok: false, detail: 'Nenhuma ligada', hint: 'Ligue “Enviar acesso quando o pagamento for aprovado” e/ou “Recuperar Pix pendente”.' },
+  );
+  const mins = extra.lastJobRunAt ? Math.round((Date.now() - extra.lastJobRunAt) / 60000) : null;
+  steps.push(
+    !extra.jobsEnabled
+      ? { label: 'Rotina de recuperação', ok: false, detail: 'JOBS_ENABLED=false', hint: 'A recuperação de Pix roda nos jobs. Remova JOBS_ENABLED=false ou configure o cron de /api/jobs/run.' }
+      : mins === null || mins > 10
+        ? { label: 'Rotina de recuperação', ok: null, detail: mins === null ? 'Ainda não rodou desde que o servidor iniciou' : `Última execução há ${mins} min`, hint: 'Se a hospedagem “dorme” o app parado, crie um Cron Job na Hostinger chamando /api/jobs/run a cada 5 min (veja docs/DEPLOY.md).' }
+        : { label: 'Rotina de recuperação', ok: true, detail: `Rodando (última execução há ${mins} min)` },
+  );
+  return { steps, instances };
 }
 
 // ------------------------------------------------------------------ mensagens
@@ -320,7 +457,7 @@ async function logWa(orderId: string | null, event: string, r: SendResult) {
     order_id: orderId,
     event,
     ok: r.ok,
-    message: (r.ok ? `enviado (${r.instance})` : r.error ?? 'falhou').slice(0, 500),
+    message: (r.ok ? `enviado (${r.instance})` : `${r.error ?? 'falhou'}${r.hint ? ` → ${r.hint}` : ''}`).slice(0, 500),
   });
 }
 

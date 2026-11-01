@@ -10,7 +10,8 @@ import { testEmail } from '../services/email.js';
 import { runJobs } from '../services/jobs.js';
 import { dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
-import { buildApprovedMessage, buildRecoveryMessage, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
+import { lastJobRunAt } from '../services/jobs.js';
+import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
 
@@ -686,6 +687,11 @@ adminRouter.put('/whatsapp', async (req, res) => {
 });
 
 adminRouter.get('/whatsapp/status', async (_req, res) => res.json(await instancesStatus()));
+adminRouter.get('/whatsapp/diagnose', async (_req, res) => res.json(await diagnoseWhatsApp({ jobsEnabled: env.JOBS_ENABLED, lastJobRunAt })));
+adminRouter.get('/whatsapp/logs', async (_req, res) => {
+  const { data } = await supabase.from('integration_logs').select('event, ok, message, created_at, order_id').eq('integration', 'whatsapp').order('created_at', { ascending: false }).limit(15);
+  res.json(data ?? []);
+});
 
 adminRouter.post('/whatsapp/test', async (req, res) => {
   const { phone, kind } = z.object({ phone: z.string().min(8), kind: z.enum(['text', 'approved', 'recovery']).default('approved') }).parse(req.body);
@@ -698,8 +704,8 @@ adminRouter.post('/whatsapp/test', async (req, res) => {
         ? buildApprovedMessage({ phone: p, name: 'Cliente Teste', totalCents: 9700, items: [{ name: 'Produto de exemplo', url: `${env.PUBLIC_URL}`, kind: 'main' }] })
         : 'Teste de envio do checkout: a integração com o WhatsApp está funcionando. 🙂';
   const r = await sendWhatsAppText(p, msg);
-  await supabase.from('integration_logs').insert({ integration: 'whatsapp', event: `test_${kind}`, ok: r.ok, message: (r.ok ? `teste enviado (${r.instance})` : r.error ?? '').slice(0, 500) });
-  res.json({ ok: r.ok, message: r.ok ? `Mensagem de teste enviada pela instância ${r.instance}` : r.error });
+  await supabase.from('integration_logs').insert({ integration: 'whatsapp', event: `test_${kind}`, ok: r.ok, message: (r.ok ? `teste enviado (${r.instance})` : `${r.error ?? ''}${r.hint ? ` → ${r.hint}` : ''}`).slice(0, 500) });
+  res.json({ ok: r.ok, message: r.ok ? `Mensagem de teste enviada pela instância ${r.instance}` : r.error, hint: r.hint });
 });
 
 adminRouter.get('/whatsapp/preview', async (_req, res) => {

@@ -93,6 +93,27 @@ No painel: **Integrações → WhatsApp · Evolution API**.
 
 As mensagens seguem o padrão cordial do checkout antigo (sem CAPS, sem urgência falsa, sem caracteres invisíveis, com “responda SAIR”), alternam entre as instâncias ativas, pulam as offline e não repetem o mesmo texto seguido na mesma instância. Tokens ficam no banco (só admins/servidor) e aparecem mascarados.
 
+### Não está enviando? Use o **Diagnosticar agora**
+
+| Mensagem no painel | O que fazer |
+|---|---|
+| Envio automático desativado | Ligue “Ativado” no topo da seção e salve |
+| Tempo esgotado ao conectar | A hospedagem bloqueia a porta (ex.: 8082). Publique a Evolution num domínio **HTTPS (porta 443)** com proxy reverso e use essa URL |
+| Conexão recusada | Evolution parada ou porta errada |
+| Token recusado (401/403) | Cole o **token (apikey)** da instância — não é o número do WhatsApp. A API Key global também funciona |
+| Instância não encontrada (404) | O nome tem que ser idêntico ao da Evolution |
+| WhatsApp desconectado | Escaneie o QR Code da instância na Evolution |
+| Número não tem WhatsApp | Confira DDD/número do cliente |
+| Rotina parada há muito tempo | Crie o Cron Job de `/api/jobs/run` (seção 7) |
+
+Proxy reverso simples (Nginx na VPS da Evolution, com certificado do Let’s Encrypt):
+```nginx
+server {
+  server_name evolution.seudominio.com;
+  location / { proxy_pass http://127.0.0.1:8082; proxy_set_header Host $host; }
+}
+```
+
 ## 6. Ambientes
 
 Use três conjuntos separados: **desenvolvimento** (local, `EFI_SANDBOX=true`), **homologação** (branch `develop`, outro projeto Supabase) e **produção** (branch `main`). O CI (`.github/workflows/ci.yml`) roda typecheck, testes e build em todo push.

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Eye, EyeOff, MessageCircle, Plus, Radio, Send, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Eye, EyeOff, MessageCircle, Plus, Radio, Send, Stethoscope, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button, cn, Field, Input, PageLoader, Select, Switch } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
@@ -30,7 +30,10 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
   const { data } = useQuery({ queryKey: ['whatsapp'], queryFn: () => adminApi.get<Config>('/whatsapp') });
   const preview = useQuery({ queryKey: ['whatsapp-preview'], queryFn: () => adminApi.get<{ approved: string; recovery1: string; recovery2: string }>('/whatsapp/preview') });
   const [c, setC] = useState<Config | null>(null);
-  const [status, setStatus] = useState<Record<string, boolean>>({});
+  const [status, setStatus] = useState<Record<string, { ok: boolean; message: string; hint?: string }>>({});
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; hint?: string } | null>(null);
+  const [diag, setDiag] = useState<{ steps: { label: string; ok: boolean | null; detail: string; hint?: string }[] } | null>(null);
+  const logs = useQuery({ queryKey: ['whatsapp-logs'], queryFn: () => adminApi.get<{ event: string; ok: boolean; message: string; created_at: string }[]>('/whatsapp/logs'), refetchInterval: 30_000 });
   const [phone, setPhone] = useState('');
   const [kind, setKind] = useState<'approved' | 'recovery' | 'text'>('approved');
   const [tab, setTab] = useState<'approved' | 'recovery1' | 'recovery2'>('approved');
@@ -45,17 +48,22 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao salvar'),
   });
   const check = useMutation({
-    mutationFn: () => adminApi.get<{ name: string; online: boolean }[]>('/whatsapp/status'),
+    mutationFn: () => adminApi.get<{ name: string; ok: boolean; message: string; hint?: string }[]>('/whatsapp/status'),
     onSuccess: (r) => {
-      setStatus(Object.fromEntries(r.map((x) => [x.name, x.online])));
-      const on = r.filter((x) => x.online).length;
-      (on ? toast.ok : toast.err)(`${on} de ${r.length} instância(s) online`);
+      setStatus(Object.fromEntries(r.map((x) => [x.name, x])));
+      const on = r.filter((x) => x.ok).length;
+      (on ? toast.ok : toast.err)(`${on} de ${r.length} instância(s) prontas`);
     },
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
   });
   const test = useMutation({
-    mutationFn: () => adminApi.post<{ ok: boolean; message: string }>('/whatsapp/test', { phone, kind }),
-    onSuccess: (r) => (r.ok ? toast.ok : toast.err)(r.message),
+    mutationFn: () => adminApi.post<{ ok: boolean; message: string; hint?: string }>('/whatsapp/test', { phone, kind }),
+    onSuccess: (r) => (setTestResult(r), qc.invalidateQueries({ queryKey: ['whatsapp-logs'] })),
+    onError: (e) => setTestResult({ ok: false, message: e instanceof ApiError ? e.message : 'Erro' }),
+  });
+  const diagnose = useMutation({
+    mutationFn: () => adminApi.get<{ steps: { label: string; ok: boolean | null; detail: string; hint?: string }[]; instances: { name: string; ok: boolean; message: string; hint?: string }[] }>('/whatsapp/diagnose'),
+    onSuccess: (r) => (setDiag(r), setStatus(Object.fromEntries(r.instances.map((x) => [x.name, x])))),
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
   });
 
@@ -77,6 +85,37 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
         <Switch checked={c.enabled} onChange={(v) => set({ enabled: v })} label={c.enabled ? 'Ativado' : 'Desativado'} />
       </header>
 
+      {!c.enabled && (
+        <div className="mx-5 mt-5 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>O envio automático está <b>desativado</b>. Ligue o botão “Ativado” acima e clique em <b>Salvar WhatsApp</b>. (O envio de teste funciona mesmo desativado.)</span>
+        </div>
+      )}
+
+      {/* Diagnóstico */}
+      <div className="mx-5 mt-5 rounded-xl border border-zinc-200 p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="flex items-center gap-2 text-sm font-semibold text-zinc-800"><Stethoscope className="h-4 w-4 text-blue-600" /> Diagnóstico</p>
+            <p className="text-xs text-zinc-500">Confere a configuração, a conexão com a Evolution e cada instância, e diz o que corrigir. Salve antes de diagnosticar.</p>
+          </div>
+          <Button size="sm" variant="secondary" loading={diagnose.isPending} onClick={() => diagnose.mutate()}>Diagnosticar agora</Button>
+        </div>
+        {diag && (
+          <ul className="mt-3 space-y-2">
+            {diag.steps.map((st, i) => (
+              <li key={i} className={cn('rounded-lg px-3 py-2 text-sm', st.ok === false ? 'bg-red-50' : st.ok === null ? 'bg-amber-50' : 'bg-emerald-50')}>
+                <p className="flex items-center gap-2 font-medium text-zinc-800">
+                  {st.ok === false ? <XCircle className="h-4 w-4 shrink-0 text-red-600" /> : st.ok === null ? <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" /> : <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />}
+                  {st.label}: <span className="font-normal text-zinc-700">{st.detail}</span>
+                </p>
+                {st.hint && <p className="mt-1 pl-6 text-xs text-zinc-600">💡 {st.hint}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <div className="grid gap-6 p-5 xl:grid-cols-2">
         {/* Conexão */}
         <div className="space-y-4">
@@ -95,10 +134,16 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
                   <Input value={inst.name} onChange={(e) => setInst(idx, { name: e.target.value })} placeholder="checkout1" className="h-11" />
                   <TokenInput value={inst.token ?? ''} onChange={(v) => setInst(idx, { token: v })} placeholder={saved(inst.name)?.has_token ? `salvo ${saved(inst.name)?.token_hint}` : 'token da instância'} />
                   <div className="flex items-center gap-1">
-                    {status[inst.name] !== undefined && (status[inst.name] ? <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-label="online" /> : <XCircle className="h-4 w-4 text-red-500" aria-label="offline" />)}
+                    {status[inst.name] !== undefined && (status[inst.name].ok ? <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-label="pronta" /> : <XCircle className="h-4 w-4 text-red-500" aria-label="com problema" />)}
                     <Switch checked={inst.active} onChange={(v) => setInst(idx, { active: v })} />
                     <Button size="sm" variant="ghost" aria-label="Remover" onClick={() => set({ instances: c.instances.filter((_, j) => j !== idx) })}><Trash2 className="h-4 w-4" /></Button>
                   </div>
+                  {status[inst.name] && (
+                    <div className={cn('col-span-3 rounded-lg px-2.5 py-1.5 text-xs', status[inst.name].ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
+                      {status[inst.name].message}
+                      {status[inst.name].hint && <span className="mt-0.5 block text-zinc-600">💡 {status[inst.name].hint}</span>}
+                    </div>
+                  )}
                 </div>
               ))}
               <Button size="sm" variant="secondary" disabled={c.instances.length >= 20} onClick={() => set({ instances: [...c.instances, { name: `checkout${c.instances.length + 1}`, token: '', active: true }] })}><Plus className="h-4 w-4" /> Adicionar instância</Button>
@@ -155,6 +200,30 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
               <Button className="h-11 shrink-0" loading={test.isPending} disabled={phone.replace(/\D/g, '').length < 10} onClick={() => test.mutate()}><Send className="h-4 w-4" /> Enviar</Button>
             </div>
             <p className="text-xs text-zinc-500">Salve antes de testar. O teste usa as instâncias salvas.</p>
+            {testResult && (
+              <div className={cn('rounded-lg px-3 py-2 text-sm', testResult.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-800')}>
+                <p className="flex items-start gap-2 font-medium">{testResult.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}<span className="break-words">{testResult.message}</span></p>
+                {testResult.hint && <p className="mt-1 pl-6 text-xs text-zinc-700">💡 {testResult.hint}</p>}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-zinc-200 p-4">
+            <p className="mb-2 text-sm font-medium text-zinc-700">Últimos envios</p>
+            {!logs.data?.length ? (
+              <p className="text-xs text-zinc-500">Nenhum envio ainda.</p>
+            ) : (
+              <ul className="space-y-1.5">
+                {logs.data.map((l, i) => (
+                  <li key={i} className="flex items-start gap-2 text-xs">
+                    {l.ok ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" /> : <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />}
+                    <span className="shrink-0 font-medium text-zinc-700">{({ approved: 'Aprovado', recovery_1: '1º lembrete', recovery_2: '2º lembrete', test_approved: 'Teste', test_recovery: 'Teste', test_text: 'Teste' } as Record<string, string>)[l.event] ?? l.event}</span>
+                    <span className={cn('min-w-0 flex-1 break-words', l.ok ? 'text-zinc-500' : 'text-red-600')}>{l.message}</span>
+                    <span className="shrink-0 text-zinc-400">{new Date(l.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </div>
       </div>

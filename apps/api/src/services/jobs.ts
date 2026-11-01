@@ -87,9 +87,12 @@ export async function sendRecoveries() {
 }
 
 let running = false;
+/** Momento da última execução dos jobs (exibido no diagnóstico do WhatsApp). */
+export let lastJobRunAt: number | null = null;
 export async function runJobs() {
   if (running) return;
   running = true;
+  lastJobRunAt = Date.now();
   try {
     await reconcilePending();
     await expireOrders();

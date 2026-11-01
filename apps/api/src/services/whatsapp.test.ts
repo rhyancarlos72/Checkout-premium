@@ -13,6 +13,11 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => (b += c));
   req.on('end', () => {
     calls.push({ path: req.url!, apikey: req.headers.apikey as string, body: b ? JSON.parse(b) : null });
+    if (req.headers.apikey === 'bad') return res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"message":"Unauthorized"}');
+    if (req.url!.endsWith('/naoexiste')) return res.writeHead(404, { 'Content-Type': 'application/json' }).end('{"message":"not found"}');
+    if (req.url!.includes('/sendText/') && req.body === undefined && JSON.stringify(b).includes('5511900000000')) {
+      return res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"response":{"message":[{"exists":false,"number":"5511900000000"}]}}');
+    }
     if (req.url!.startsWith('/instance/connectionState/')) {
       const name = req.url!.split('/').pop();
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -91,5 +96,51 @@ describe('envio pela Evolution API', () => {
   });
   it('explica quando não há instância configurada', async () => {
     expect((await wa.sendWhatsAppText('11988887777', 'x', cfg([]))).ok).toBe(false);
+  });
+});
+
+describe('mensagens de erro para corrigir no painel', () => {
+  it('token recusado', async () => {
+    const c = await wa.checkInstance(cfg([]), { name: 'x', token: 'bad' });
+    expect(c.ok).toBe(false);
+    expect(c.message).toMatch(/Token recusado/);
+    expect(c.hint).toMatch(/apikey/);
+  });
+  it('instância com nome errado', async () => {
+    const c = await wa.checkInstance(cfg([]), { name: 'naoexiste', token: 't' });
+    expect(c.message).toMatch(/não encontrada/);
+  });
+  it('WhatsApp desconectado (QR Code)', async () => {
+    const c = await wa.checkInstance(cfg([]), { name: 'off', token: 't' });
+    expect(c.message).toMatch(/desconectado/);
+    expect(c.hint).toMatch(/QR Code/);
+  });
+  it('token vazio (ex.: número colocado no lugar do token)', async () => {
+    const c = await wa.checkInstance(cfg([]), { name: 'x', token: '' });
+    expect(c.hint).toMatch(/Não é o número/);
+  });
+  it('porta fechada / Evolution parada', async () => {
+    const closed = wa.whatsappSchema.parse({ enabled: true, apiUrl: 'http://127.0.0.1:1', instances: [{ name: 'a', token: 't' }] });
+    const r = await wa.sendWhatsAppText('11988887777', 'oi', closed);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/recusada|Falha de rede/);
+  });
+  it('tempo esgotado aponta bloqueio de porta na hospedagem', () => {
+    const d = wa.describeNetworkError({ name: 'AbortError' }, 'http://1.2.3.4:8082');
+    expect(d.hint).toMatch(/porta 8082/);
+    expect(d.hint).toMatch(/443/);
+  });
+  it('envio falho lista o motivo de cada instância', async () => {
+    const r = await wa.sendWhatsAppText('11988887777', 'teste motivos', cfg([{ name: 'off', token: 't' }, { name: 'z', token: 'bad' }]));
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/off: WhatsApp desconectado/);
+    expect(r.error).toMatch(/z: Token recusado/);
+  });
+});
+
+describe('URL da Evolution', () => {
+  it('completa http:// e tira a barra final', () => {
+    expect(wa.whatsappSchema.parse({ apiUrl: '10.0.0.1:8082/' }).apiUrl).toBe('http://10.0.0.1:8082');
+    expect(wa.whatsappSchema.parse({ apiUrl: 'https://evo.site.com' }).apiUrl).toBe('https://evo.site.com');
   });
 });
