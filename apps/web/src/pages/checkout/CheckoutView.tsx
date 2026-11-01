@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation } from '@tanstack/react-query';
-import { BadgeCheck, Check, ChevronDown, Clock, CreditCard, Gift, Lock, Mail, Megaphone, Phone, ShieldCheck, Star, Tag, User, X, Zap } from 'lucide-react';
+import { ArrowRight, BadgeCheck, Check, ChevronDown, Clock, CreditCard, Gift, Lock, Mail, Megaphone, Phone, ShieldCheck, Star, Tag, User, X, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useForm, type UseFormRegisterReturn } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -82,35 +82,36 @@ function Countdown({ minutes, text, preview }: { minutes: number; text?: string;
 
 function Section({ step, title, children, aside }: { step?: number; title: string; children: ReactNode; aside?: ReactNode }) {
   return (
-    <section className="ck-card p-5 @lg:p-7">
-      <header className="mb-5 flex items-center justify-between gap-3">
-        <h2 className="flex items-center gap-3 font-display text-[18px] font-semibold tracking-tight">
-          {step && <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand text-[13px] font-bold text-brand-fg">{step}</span>}
+    <section className="ck-card overflow-hidden">
+      <header className="flex items-center justify-between gap-3 border-b border-ck-border bg-ck-surface-2 px-5 py-3.5 @lg:px-6">
+        <h2 className="flex items-center gap-3 text-[13px] font-bold uppercase tracking-[.06em] text-ck-text">
+          {step && <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-[12px] font-bold text-brand-fg shadow-sm shadow-brand/30">{step}</span>}
           {title}
         </h2>
         {aside}
       </header>
-      {children}
+      <div className="p-5 @lg:p-6">{children}</div>
     </section>
   );
 }
 
 function CkField({
   label,
-  icon,
+  required = true,
   error,
   hint,
   valid,
   reg,
   className,
   ...input
-}: { label: string; icon: ReactNode; error?: string; hint?: string; valid?: boolean; reg: UseFormRegisterReturn; className?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+}: { label: string; required?: boolean; error?: string; hint?: string; valid?: boolean; reg: UseFormRegisterReturn; className?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className={cn('block', className)}>
-      <span className="mb-1.5 block text-[13px] font-medium text-ck-text">{label}</span>
+      <span className="mb-2 block text-[14px] font-bold text-ck-text">
+        {label} {required && <span className="text-red-500">*</span>}
+      </span>
       <span className="relative block">
-        <span className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ck-muted">{icon}</span>
-        <input className="ck-input" aria-invalid={error ? true : undefined} {...reg} {...input} />
+        <input className="ck-input ck-input-plain" aria-invalid={error ? true : undefined} {...reg} {...input} />
         {valid && !error && (
           <span className="animate-pop absolute right-3.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-emerald-500 text-white">
             <Check className="h-3 w-3" strokeWidth={3} />
@@ -388,7 +389,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   );
 
   return (
-    <div style={themeStyle(t, prefersDark)} className={cn('@container relative bg-ck-bg font-sans text-ck-text antialiased [overflow:clip]', preview ? 'min-h-full' : 'min-h-screen')}>
+    <div style={themeStyle(t, prefersDark)} className={cn('@container relative bg-ck-bg font-checkout text-ck-text antialiased [overflow:clip]', preview ? 'min-h-full' : 'min-h-screen')}>
       {/* Barra de anúncio / cronômetro */}
       {(t.showTimer || t.announcement) && (
         <div className="bg-brand text-brand-fg">
@@ -433,16 +434,6 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
       <main className="mx-auto grid max-w-[1120px] gap-5 px-4 pb-10 pt-5 @4xl:grid-cols-[minmax(0,1fr)_380px] @4xl:gap-8 @4xl:pt-10 @5xl:grid-cols-[minmax(0,1fr)_400px]">
         <form id="ck-form" noValidate onSubmit={onSubmit} className="min-w-0 space-y-5">
-          {/* Etapas */}
-          <ol className="flex items-center gap-2 text-[12px] font-semibold @lg:text-[13px]">
-            {['Identificação', 'Pagamento', 'Acesso liberado'].map((step, i) => (
-              <li key={step} className={cn('flex items-center gap-2', i < 2 && 'flex-1')}>
-                <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px]', i === 0 ? 'bg-brand text-brand-fg shadow-md shadow-brand/30' : 'border border-ck-border bg-ck-surface text-ck-muted')}>{i + 1}</span>
-                <span className={cn('whitespace-nowrap', i === 0 ? 'text-ck-text' : 'text-ck-muted')}>{step}</span>
-                {i < 2 && <span className="h-px flex-1 bg-ck-border" />}
-              </li>
-            ))}
-          </ol>
           {/* Banner no topo (celular) */}
           {banner && <img src={banner} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm @4xl:hidden" fetchPriority="high" />}
 
@@ -495,76 +486,108 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
             )}
           </section>
 
-          <Section step={1} title="Identificação">
-            <div className="grid gap-4 @lg:grid-cols-2">
-              <CkField className="@lg:col-span-2" label="Nome completo" icon={<User className="h-[18px] w-[18px]" />} reg={register('name')} error={err.name?.message} valid={isValid('name')} autoComplete="name" placeholder="Seu nome e sobrenome" enterKeyHint="next" />
-              <CkField className="@lg:col-span-2" label="E-mail" icon={<Mail className="h-[18px] w-[18px]" />} reg={register('email')} error={err.email?.message} valid={isValid('email')} hint="Seu acesso será enviado para este e-mail" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="voce@email.com" enterKeyHint="next" />
+          <Section step={1} title="Dados pessoais">
+            <div className="grid gap-4">
+              <CkField label="Nome completo" reg={register('name')} error={err.name?.message} valid={isValid('name')} autoComplete="name" placeholder="Digite seu nome completo" enterKeyHint="next" />
+              <CkField label="E-mail" reg={register('email')} error={err.email?.message} valid={isValid('email')} type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="Digite seu melhor e-mail" hint="Você receberá o acesso neste e-mail" enterKeyHint="next" />
               {checkout.fields.phone && (
                 <CkField
-                  label="Celular / WhatsApp"
-                  icon={<Phone className="h-[18px] w-[18px]" />}
+                  label="Celular (WhatsApp)"
                   reg={{ ...register('phone'), onChange: async (e) => setValue('phone', maskPhone(e.target.value), { shouldValidate: formState.isSubmitted }) }}
                   error={err.phone?.message}
                   valid={isValid('phone')}
                   type="tel"
                   inputMode="tel"
                   autoComplete="tel-national"
-                  placeholder="(11) 99999-9999"
+                  placeholder="(00) 00000-0000"
                 />
               )}
             </div>
           </Section>
 
-          <Section step={2} title="Pagamento" aside={<span className="flex items-center gap-1 text-xs text-ck-muted"><Lock className="h-3.5 w-3.5" /> Criptografado</span>}>
-            <div className="relative overflow-hidden rounded-[calc(var(--ck-r)*.8)] border-2 border-brand bg-brand/[.06] p-4">
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ck-surface shadow-sm ring-1 ring-ck-border"><PixIcon className="h-6 w-6" /></div>
-                <div className="min-w-0 flex-1">
-                  <p className="font-semibold">Pix</p>
-                  <p className="text-xs text-ck-muted">Aprovação em segundos · disponível 24h, todos os dias</p>
-                </div>
-                <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand text-brand-fg"><Check className="h-4 w-4" strokeWidth={3} /></span>
-              </div>
-              <ul className="mt-4 grid gap-2 text-[13px] text-ck-muted @md:grid-cols-3">
-                {['Pague pelo app do seu banco', 'QR Code ou Pix Copia e Cola', 'Liberação automática'].map((x) => (
-                  <li key={x} className="flex items-center gap-2"><Check className="h-3.5 w-3.5 shrink-0 text-brand" strokeWidth={3} /> {x}</li>
-                ))}
-              </ul>
+          <Section step={2} title="Pagamento" aside={<span className="hidden items-center gap-1 text-xs text-ck-muted @sm:flex"><Lock className="h-3.5 w-3.5" /> Ambiente seguro</span>}>
+            <div className="flex flex-wrap gap-3">
+              <button type="button" aria-pressed="true" className="flex h-[84px] w-[112px] flex-col items-center justify-center gap-2 rounded-[calc(var(--ck-r)*.8)] border-2 border-brand bg-brand/[.07] shadow-[0_0_0_4px_color-mix(in_srgb,var(--brand)_10%,transparent)]">
+                <PixIcon className="h-7 w-7" />
+                <span className="text-[13px] font-bold text-ck-text">Pix</span>
+              </button>
             </div>
+            <ol className="mt-4 rounded-[calc(var(--ck-r)*.8)] border border-ck-border bg-ck-surface-2 px-4">
+              {[
+                [`Clique em “${t.buttonText || 'Finalizar compra'}”`, 'Geramos na hora o QR Code e o código Pix “copia e cola” do seu pedido.'],
+                ['Pague no app do seu banco', 'Abra o app do banco, escolha Pix, escaneie o QR Code ou cole o código copiado.'],
+                ['Acesso liberado automaticamente', 'A confirmação é em segundos e o produto chega no seu e-mail assim que o pagamento cair.'],
+              ].map(([title, text], i) => (
+                <li key={i} className={cn('flex gap-3 py-3.5', i > 0 && 'border-t border-dashed border-ck-border')}>
+                  <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand/15 text-[12px] font-bold text-brand">{i + 1}</span>
+                  <div>
+                    <p className="text-[14px] font-bold leading-snug">{title}</p>
+                    <p className="mt-0.5 text-[13px] leading-relaxed text-ck-muted">{text}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
           </Section>
 
           {/* Order bumps */}
-          {checkout.bumps.map((b) => {
-            const on = bumps.includes(b.id);
-            const off = b.compare_at_cents && b.compare_at_cents > b.price_cents ? Math.round((1 - b.price_cents / b.compare_at_cents) * 100) : 0;
-            return (
-              <div key={b.id} className={cn('overflow-hidden rounded-ck border-2 border-dashed transition-all duration-200', on ? 'border-brand bg-brand/[.05] shadow-lg shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-brand/50')}>
-                <div className="flex items-center justify-between gap-2 bg-brand px-4 py-2 text-[12px] font-bold uppercase tracking-wider text-brand-fg">
-                  <span className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5" /> Oferta especial · só nesta página</span>
-                  {off > 0 && <span className="rounded-full bg-black/20 px-2 py-0.5">-{off}%</span>}
-                </div>
-                <button type="button" onClick={() => toggleBump(b.id)} aria-pressed={on} className="block w-full p-4 text-left @lg:p-5">
-                  <div className="flex gap-4">
-                    {b.image_url && <img src={b.image_url} alt="" className="h-20 w-20 shrink-0 rounded-[calc(var(--ck-r)*.6)] object-cover ring-1 ring-ck-border @md:h-24 @md:w-24" loading="lazy" />}
-                    <div className="min-w-0 flex-1">
-                      <p className="font-semibold leading-snug">{b.title}</p>
-                      {b.description && <p className="mt-1 text-sm leading-relaxed text-ck-muted">{b.description}</p>}
-                      <p className="mt-2 flex flex-wrap items-baseline gap-x-2">
-                        {b.compare_at_cents ? <span className="text-sm text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
-                        <span className="text-lg font-bold text-brand">{brl(b.price_cents)}</span>
-                      </p>
+          {checkout.bumps.length > 0 && (
+            <div className="space-y-4">
+              {checkout.bumps.map((b) => {
+                const on = bumps.includes(b.id);
+                const off = b.compare_at_cents && b.compare_at_cents > b.price_cents ? Math.round((1 - b.price_cents / b.compare_at_cents) * 100) : 0;
+                return (
+                  <div
+                    key={b.id}
+                    className={cn(
+                      'relative overflow-hidden rounded-ck border-2 border-dashed transition-all duration-300',
+                      on ? 'border-brand bg-brand/[.06] shadow-xl shadow-brand/15' : 'ck-bump-idle border-amber-400 bg-ck-surface',
+                    )}
+                  >
+                    {/* faixa superior */}
+                    <div className={cn('flex items-center justify-between gap-2 px-4 py-2 text-[12px] font-extrabold uppercase tracking-wider', on ? 'bg-brand text-brand-fg' : 'bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950')}>
+                      <span className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 fill-current" /> Oferta única · só nesta página</span>
+                      {off > 0 && <span className="rounded-full bg-black/15 px-2 py-0.5">-{off}%</span>}
                     </div>
+
+                    <button type="button" onClick={() => toggleBump(b.id)} aria-pressed={on} className="block w-full text-left">
+                      <div className="flex gap-4 p-4 @lg:p-5">
+                        <div className="relative shrink-0">
+                          {b.image_url ? (
+                            <img src={b.image_url} alt="" className="h-[88px] w-[88px] rounded-[calc(var(--ck-r)*.6)] object-cover shadow-md ring-1 ring-ck-border @md:h-24 @md:w-24" loading="lazy" />
+                          ) : (
+                            <div className="flex h-[88px] w-[88px] items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-gradient-to-br from-amber-300 to-orange-400 text-amber-950 shadow-md @md:h-24 @md:w-24"><Gift className="h-9 w-9" /></div>
+                          )}
+                          {off > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[11px] font-extrabold text-white shadow-md">-{off}%</span>}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[15px] font-bold leading-snug">{b.title}</p>
+                          {b.description && <p className="mt-1 text-[13px] leading-relaxed text-ck-muted">{b.description}</p>}
+                          <div className="mt-2.5 flex flex-wrap items-baseline gap-x-2">
+                            {b.compare_at_cents ? <span className="text-[13px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
+                            <span className="text-[22px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* barra de ação */}
+                      <div
+                        className={cn(
+                          'flex items-center gap-3 border-t-2 border-dashed px-4 py-3.5 text-[14px] font-extrabold transition-colors duration-300',
+                          on ? 'border-brand/30 bg-brand text-brand-fg' : 'border-amber-300 bg-amber-300 text-amber-950',
+                        )}
+                      >
+                        {!on && <ArrowRight className="ck-nudge h-5 w-5 shrink-0" strokeWidth={3} />}
+                        <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-amber-950/60 bg-[#fff]')}>
+                          {on && <Check className="h-4 w-4" strokeWidth={3.5} />}
+                        </span>
+                        <span className="flex-1 leading-snug">{on ? 'Adicionado ao seu pedido!' : `Sim! Quero adicionar por ${brl(b.price_cents)}`}</span>
+                      </div>
+                    </button>
                   </div>
-                  <div className={cn('mt-4 flex items-center gap-3 rounded-[calc(var(--ck-r)*.6)] px-3 py-2.5 text-sm font-semibold transition', on ? 'bg-brand text-brand-fg' : 'bg-ck-surface-2 text-ck-text')}>
-                    <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-ck-muted/50 bg-ck-surface')}>
-                      {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
-                    </span>
-                    {on ? 'Adicionado ao seu pedido!' : 'Sim, quero adicionar ao meu pedido'}
-                  </div>
-                </button>
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          )}
 
           {/* Resumo + CTA (celular) */}
           <section className="ck-card space-y-4 p-5 @4xl:hidden">

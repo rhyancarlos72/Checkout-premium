@@ -85,7 +85,7 @@ function Shell({ theme, children }: { theme: Theme; children: ReactNode }) {
   const t = { ...themeDefaults, ...theme };
   const prefersDark = usePrefersDark();
   return (
-    <div style={themeStyle(t, prefersDark)} className="min-h-screen bg-ck-bg font-sans text-ck-text antialiased">
+    <div style={themeStyle(t, prefersDark)} className="min-h-screen bg-ck-bg font-checkout text-ck-text antialiased">
       <header className="border-b border-ck-border bg-ck-surface/80 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-2xl items-center justify-between px-4">
           {t.logoUrl ? <img src={t.logoUrl} alt="" className="h-8 w-auto max-w-[150px] object-contain" /> : <PixLogo className="text-base" />}
