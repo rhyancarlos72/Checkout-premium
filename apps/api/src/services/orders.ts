@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { HttpError, logger, must, onlyDigits, supabase } from '../lib/core.js';
 import { getProvider, type ProviderName } from '../providers/index.js';
+import { globalProvider } from './gateways.js';
 import { sendDeliveryEmail, type DeliveryItem } from './email.js';
 import { sendWhatsAppApproved } from './whatsapp.js';
 import { checkCoupon, computeTotals, type CouponRow, type PriceLine } from './pricing.js';
@@ -139,7 +140,8 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
   // CPF não é pedido no checkout; se vier (API), só é usado quando válido
   if (fields.phone && onlyDigits(input.customer.phone).length < 10) throw new HttpError(400, 'Telefone inválido');
 
-  const provider = getProvider(checkout.provider as ProviderName);
+  // gateway global (Integrações) vale para todos os produtos; senão, o do checkout
+  const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
   const customer = await upsertCustomer(input.customer);
   const tracking = sanitizeTracking(input.tracking);
 

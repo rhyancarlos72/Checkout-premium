@@ -11,6 +11,8 @@ import { supabase } from '../lib/core.js';
  * Segredos nunca são devolvidos inteiros ao navegador.
  */
 export interface GatewaySettings {
+  /** Gateway usado por TODOS os produtos/checkouts. Vazio = cada checkout usa o seu. */
+  defaultProvider?: 'woovi' | 'efi' | null;
   woovi?: { appId?: string; webhookSecret?: string };
   efi?: {
     clientId?: string;
@@ -54,6 +56,9 @@ export async function patchGateways(fn: (cur: GatewaySettings) => GatewaySetting
   snap = next;
   loadedAt = Date.now();
 }
+
+/** Gateway global escolhido em Integrações (null = cada checkout escolhe o seu). */
+export const globalProvider = (): 'woovi' | 'efi' | null => snap.defaultProvider ?? null;
 
 export const randomSecret = () => crypto.randomBytes(24).toString('hex');
 export const mask = (v?: string) => (v ? `••••${v.slice(-4)}` : '');

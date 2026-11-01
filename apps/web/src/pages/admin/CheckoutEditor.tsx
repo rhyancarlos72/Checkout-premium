@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Check, ExternalLink, Eye, Monitor, MonitorSmartphone, Moon, RefreshCw, PenLine, Plus, Smartphone, Sun, Trash2, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import { Link } from 'react-router-dom';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ImageUpload } from '@/components/ImageUpload';
 import { Button, cn, Field, Input, Select, Switch, Textarea } from '@/components/ui';
@@ -99,11 +100,13 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const gw = useQuery({ queryKey: ['gateways'], queryFn: () => adminApi.get<{ defaultProvider: 'woovi' | 'efi' | null }>('/gateways'), staleTime: 60_000 });
+  const globalGw = gw.data?.defaultProvider ?? null;
   const [f, setF] = useState({
     name: checkout?.name ?? '',
     slug: checkout?.slug ?? linkCode(),
     product_id: checkout?.product_id ?? products[0]?.id ?? '',
-    provider: checkout?.provider ?? 'woovi',
+    provider: checkout?.provider ?? (globalGw || 'woovi'),
     price: centsToInput(checkout?.price_cents),
     pix_expires_minutes: checkout?.pix_expires_minutes ?? 30,
     active: checkout?.active ?? true,
@@ -161,7 +164,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
         name: f.name,
         slug: f.slug,
         product_id: f.product_id,
-        provider: f.provider,
+        provider: globalGw ?? f.provider,
         price_cents: f.price ? parseMoney(f.price) : null,
         pix_expires_minutes: Number(f.pix_expires_minutes),
         active: f.active,
@@ -247,9 +250,17 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                   <Field label="Preço neste checkout" hint="Deixe vazio para usar o preço do produto"><Input value={f.price} onChange={(e) => set({ price: e.target.value })} inputMode="decimal" placeholder={product ? centsToInput(product.price_cents) : '97,00'} /></Field>
                 </Group>
                 <Group title="Pagamento">
-                  <Field label="Gateway PIX">
-                    <Segmented value={f.provider} onChange={(v) => set({ provider: v })} options={[{ value: 'woovi', label: 'Woovi' }, { value: 'efi', label: 'Efí Bank' }]} />
-                  </Field>
+                  {globalGw ? (
+                    <Field label="Gateway PIX">
+                      <p className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-sm text-blue-800">
+                        Todos os produtos usam <b>{globalGw === 'efi' ? 'Efí Bank' : 'Woovi'}</b>. Para escolher por checkout, mude em <Link to="/admin/integracoes" className="font-semibold underline">Integrações</Link>.
+                      </p>
+                    </Field>
+                  ) : (
+                    <Field label="Gateway PIX">
+                      <Segmented value={f.provider} onChange={(v) => set({ provider: v })} options={[{ value: 'woovi', label: 'Woovi' }, { value: 'efi', label: 'Efí Bank' }]} />
+                    </Field>
+                  )}
                   <Field label="Validade do PIX (minutos)"><Input type="number" min={5} max={1440} value={f.pix_expires_minutes} onChange={(e) => set({ pix_expires_minutes: Number(e.target.value) })} /></Field>
                 </Group>
                 <Group title="Campos do comprador" desc="Menos campos = mais conversão. Nome e e-mail são sempre pedidos; CPF não é pedido.">

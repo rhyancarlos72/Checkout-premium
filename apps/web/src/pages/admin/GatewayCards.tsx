@@ -7,6 +7,7 @@ import { dateTime } from '@/lib/format';
 import { PixIcon } from '../checkout/CheckoutView';
 
 interface Gateways {
+  defaultProvider: 'woovi' | 'efi' | null;
   woovi: { configured: boolean; source: 'painel' | 'env' | null; appId_hint: string; hasWebhookSecret: boolean; webhookUrl: string };
   efi: {
     configured: boolean;
@@ -79,6 +80,58 @@ function GatewayCard({ logo, title, desc, status, detail, onConfigure, onTest, t
   );
 }
 
+/** Um gateway para todos os produtos de uma vez (sem precisar escolher em cada checkout). */
+function DefaultGatewayCard({ current, configured, toast, onSaved }: { current: 'woovi' | 'efi' | null; configured: { efi: boolean; woovi: boolean }; toast: Toast; onSaved: () => void }) {
+  const qc = useQueryClient();
+  const save = useMutation({
+    mutationFn: (provider: 'woovi' | 'efi' | null) => adminApi.put<{ ok: boolean; message: string }>('/gateways/default', { provider }),
+    onSuccess: (r) => {
+      toast.ok(r.message);
+      onSaved();
+      qc.invalidateQueries({ queryKey: ['checkouts'] });
+    },
+    onError: (err) => toast.err(err instanceof ApiError ? err.message : 'Erro ao salvar'),
+  });
+  const options: { value: 'woovi' | 'efi' | null; label: ReactNode; hint: string; disabled?: boolean }[] = [
+    { value: 'efi', label: <EfiLogo />, hint: configured.efi ? 'Todos os produtos recebem pela Efí' : 'Configure a Efí abaixo para usar', disabled: !configured.efi },
+    { value: 'woovi', label: <WooviLogo />, hint: configured.woovi ? 'Todos os produtos recebem pela Woovi' : 'Configure a Woovi abaixo para usar', disabled: !configured.woovi },
+    { value: null, label: <span className="font-display text-base font-bold text-zinc-800">Por checkout</span>, hint: 'Cada checkout usa o gateway escolhido nele' },
+  ];
+  return (
+    <section className="rounded-2xl border border-zinc-200 bg-white p-6 lg:col-span-2">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="flex items-center gap-2 font-display text-lg font-semibold text-zinc-900"><PixIcon className="h-5 w-5" /> Gateway para todos os produtos</h3>
+          <p className="text-sm text-zinc-500">Escolha uma vez e vale para todos os produtos e checkouts, inclusive os criados depois.</p>
+        </div>
+        {save.isPending && <RefreshCw className="h-4 w-4 animate-spin text-zinc-400" />}
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-3">
+        {options.map((o) => {
+          const active = current === o.value;
+          return (
+            <button
+              key={String(o.value)}
+              type="button"
+              disabled={o.disabled || save.isPending}
+              onClick={() => !active && save.mutate(o.value)}
+              className={cn(
+                'relative flex min-h-[92px] flex-col items-start justify-between gap-2 rounded-xl border-2 p-4 text-left transition',
+                active ? 'border-blue-600 bg-blue-50/60 ring-4 ring-blue-600/10' : 'border-zinc-200 hover:border-zinc-300',
+                o.disabled && 'cursor-not-allowed opacity-50',
+              )}
+            >
+              {active && <CheckCircle2 className="absolute right-3 top-3 h-5 w-5 text-blue-600" />}
+              {o.label}
+              <span className="text-xs text-zinc-500">{o.hint}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function GatewayCards({ toast }: { toast: Toast }) {
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({ queryKey: ['gateways'], queryFn: () => adminApi.get<Gateways>('/gateways') });
@@ -95,6 +148,7 @@ export function GatewayCards({ toast }: { toast: Toast }) {
   const w = data.woovi;
   return (
     <>
+      <DefaultGatewayCard current={data.defaultProvider} configured={{ efi: e.configured, woovi: w.configured }} toast={toast} onSaved={refresh} />
       <GatewayCard
         logo={<EfiLogo />}
         title={`Efí Bank${e.sandbox ? ' · homologação' : ''}`}

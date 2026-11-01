@@ -574,6 +574,7 @@ adminRouter.get('/gateways', async (_req, res) => {
   const e = efiConfig();
   const g = (await import('../services/gateways.js'));
   res.json({
+    defaultProvider: g.globalProvider(),
     woovi: {
       configured: Boolean(w.appId),
       source: w.source,
@@ -591,6 +592,26 @@ adminRouter.get('/gateways', async (_req, res) => {
       hasWebhookSecret: Boolean(e.webhookSecret),
       webhookUrl: `${env.PUBLIC_URL}/api/webhooks/efi`,
     },
+  });
+});
+
+/** Gateway global: um só gateway para todos os produtos (também grava em todos os checkouts). */
+adminRouter.put('/gateways/default', async (req, res) => {
+  const b = z.object({ provider: z.enum(['woovi', 'efi']).nullable() }).parse(req.body);
+  if (b.provider && !(b.provider === 'woovi' ? woovi : efi).isConfigured())
+    throw new HttpError(400, `Configure a ${b.provider === 'woovi' ? 'Woovi' : 'Efí Bank'} antes de usá-la em todos os produtos`);
+  await patchGateways((g) => ({ ...g, defaultProvider: b.provider }));
+  let updated = 0;
+  if (b.provider) {
+    const { data, error } = await supabase.from('checkouts').update({ provider: b.provider }).neq('provider', b.provider).select('id');
+    if (error) throw new HttpError(500, error.message);
+    updated = data?.length ?? 0;
+  }
+  res.json({
+    ok: true,
+    message: b.provider
+      ? `Todos os produtos agora recebem pelo ${b.provider === 'woovi' ? 'Woovi' : 'Efí Bank'}${updated ? ` (${updated} checkout${updated > 1 ? 's' : ''} atualizado${updated > 1 ? 's' : ''})` : ''}`
+      : 'Cada checkout volta a usar o gateway escolhido nele',
   });
 });
 
