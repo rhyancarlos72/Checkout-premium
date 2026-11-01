@@ -19,3 +19,16 @@ create index if not exists integration_logs_recent_idx   on public.integration_l
 create index if not exists webhook_logs_recent_idx       on public.webhook_logs (created_at desc);
 create index if not exists checkouts_product_idx         on public.checkouts (product_id);
 create index if not exists order_bumps_product_idx       on public.order_bumps (product_id);
+
+-- ===== 20261104000000_expired_stay_pending.sql =====
+-- Pix vencido continua em "vendas pendentes": volta para pendente os pedidos marcados como expirados.
+-- (Novos Pix vencidos já não mudam de status; o envio de sale.canceled fica registrado em events.type = 'pix_expired'.)
+insert into public.events (order_id, checkout_id, type, data)
+select o.id, o.checkout_id, 'pix_expired', '{}'::jsonb
+from public.orders o
+where o.status = 'expired'
+  and not exists (select 1 from public.events e where e.order_id = o.id and e.type = 'pix_expired');
+
+update public.orders set status = 'pending' where status = 'expired';
+
+create index if not exists events_order_type_idx on public.events(order_id, type);

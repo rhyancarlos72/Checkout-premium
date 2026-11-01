@@ -2,13 +2,13 @@ import { env } from '../config/env.js';
 import { logger, supabase } from '../lib/core.js';
 import { sendRecoveryEmail } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
-import { dispatchTracking, syncOrderWithProvider } from './orders.js';
+import { notifyPixExpired, syncOrderWithProvider } from './orders.js';
 import { getSettings } from './settings.js';
 
 /**
  * Jobs de manutenção:
  *  1. Conciliação: consulta no gateway pedidos pendentes recentes (caso um webhook se perca).
- *  2. Expiração: marca como expirado PIX vencido.
+ *  2. Pix vencido: continua pendente; webhooks recebem sale.canceled uma vez.
  *  3. Recuperação: e-mail para quem gerou o PIX e não pagou.
  */
 export async function reconcilePending() {
@@ -30,14 +30,20 @@ export async function reconcilePending() {
   }
 }
 
+/** Pix vencido NÃO sai de pendente (fica em vendas pendentes); só notifica os webhooks uma vez. */
 export async function expireOrders() {
+  const now = Date.now();
   const { data } = await supabase
     .from('orders')
-    .update({ status: 'expired' })
+    .select('id, checkout_id')
     .eq('status', 'pending')
-    .lt('expires_at', new Date(Date.now() - 2 * 60 * 1000).toISOString())
-    .select('id');
-  for (const o of data ?? []) void dispatchTracking(o.id, 'sale.canceled');
+    .lt('expires_at', new Date(now - 2 * 60 * 1000).toISOString())
+    .gt('expires_at', new Date(now - 24 * 60 * 60 * 1000).toISOString())
+    .limit(100);
+  if (!data?.length) return;
+  const { data: done } = await supabase.from('events').select('order_id').eq('type', 'pix_expired').in('order_id', data.map((o) => o.id));
+  const notified = new Set((done ?? []).map((e: any) => e.order_id));
+  for (const o of data) if (!notified.has(o.id)) await notifyPixExpired(o.id, o.checkout_id);
 }
 
 export async function sendRecoveries() {

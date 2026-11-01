@@ -30,7 +30,7 @@ export function useDebounced<T>(v: T, ms = 350) {
 }
 
 export default function OrdersPage() {
-  const [status, setStatus] = useState('all');
+  const [status, setStatus] = useState(() => new URLSearchParams(window.location.search).get('status') || 'all');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
   const [open, setOpen] = useState<string | null>(null);
@@ -53,7 +53,7 @@ export default function OrdersPage() {
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <div className="flex-1"><Input icon={<Search className="h-4 w-4" />} placeholder="Buscar por nº do pedido, nome ou e-mail" value={q} onChange={(e) => (setQ(e.target.value), setPage(1))} /></div>
         <Select className="sm:w-48" value={status} onChange={(e) => (setStatus(e.target.value), setPage(1))}>
-          <option value="all">Todos os status</option><option value="paid">Pagos</option><option value="pending">Pendentes</option><option value="expired">Expirados</option><option value="refunded">Reembolsados</option><option value="failed">Falhos</option>
+          <option value="all">Todos os status</option><option value="paid">Pagos</option><option value="pending">Pendentes</option><option value="refunded">Reembolsados</option><option value="failed">Falhos</option>
         </Select>
       </div>
       {isLoading ? (

@@ -291,8 +291,8 @@ export async function syncOrderWithProvider(orderId: string): Promise<string> {
     return 'already_paid';
   }
   if (info.status === 'expired' && order.status === 'pending') {
-    await supabase.from('orders').update({ status: 'expired' }).eq('id', orderId).eq('status', 'pending');
-    void dispatchTracking(orderId, 'sale.canceled');
+    // o pedido CONTINUA pendente no painel (vendas pendentes); só avisa os webhooks uma vez
+    await notifyPixExpired(orderId, order.checkout_id);
     return 'expired';
   }
   return info.status;
@@ -306,4 +306,16 @@ export async function findOrderByCharge(provider: ProviderName, chargeId: string
 export async function resendDelivery(orderId: string) {
   await supabase.from('orders').update({ delivered_at: null }).eq('id', orderId).eq('status', 'paid');
   await fulfill(orderId);
+}
+
+/**
+ * Pix vencido: o pedido permanece "pendente" (para recuperação e acompanhamento),
+ * mas os webhooks (PayTracking etc.) recebem `sale.canceled` uma única vez.
+ */
+export async function notifyPixExpired(orderId: string, checkoutId: string | null) {
+  const { count } = await supabase.from('events').select('id', { count: 'exact', head: true }).eq('order_id', orderId).eq('type', 'pix_expired');
+  if (count) return false;
+  await supabase.from('events').insert({ order_id: orderId, checkout_id: checkoutId, type: 'pix_expired', data: {} });
+  void dispatchTracking(orderId, 'sale.canceled');
+  return true;
 }

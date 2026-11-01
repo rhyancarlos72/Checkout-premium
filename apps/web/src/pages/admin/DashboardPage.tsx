@@ -1,7 +1,8 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { BadgeCheck, CalendarDays, Check, ChevronDown, Package, Timer, TrendingUp, Trophy } from 'lucide-react';
+import { ArrowRight, BadgeCheck, CalendarDays, Check, ChevronDown, Layers, Package, RotateCcw, ShoppingBag, Timer, TrendingUp, Trophy } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { cn } from '@/components/ui';
 import { adminApi } from '@/lib/api';
 import { brl, productCode } from '@/lib/format';
@@ -81,18 +82,30 @@ function Dropdown({ button, children, align = 'left' }: { button: (open: boolean
 
 const pillBtn = 'flex h-12 items-center gap-2.5 rounded-xl border border-zinc-200 bg-white px-4 text-[15px] font-medium text-zinc-800 shadow-sm transition hover:border-zinc-300';
 
-// ------------------------------------------------------------------ KPI
-function Kpi({ label, value, sub, icon, glow, tile }: { label: string; value: string; sub?: string; icon?: ReactNode; glow?: string; tile?: string }) {
+// ------------------------------------------------------------------ resumo (KPIs)
+function Tile({ label, value, sub, icon, tone, bar }: { label: string; value: string; sub?: ReactNode; icon: ReactNode; tone: 'blue' | 'amber' | 'violet' | 'emerald' | 'cyan'; bar?: number }) {
+  const tones = {
+    blue: ['bg-blue-500/10 text-blue-600', 'from-blue-600 to-blue-400'],
+    amber: ['bg-amber-500/15 text-amber-600', 'from-amber-500 to-amber-300'],
+    violet: ['bg-violet-500/10 text-violet-600', 'from-violet-600 to-fuchsia-400'],
+    emerald: ['bg-emerald-500/10 text-emerald-600', 'from-emerald-600 to-teal-400'],
+    cyan: ['bg-cyan-500/10 text-cyan-600', 'from-cyan-600 to-sky-400'],
+  }[tone];
   return (
-    <div className="kpi-glow rounded-2xl border border-zinc-200 bg-white p-6 shadow-[0_1px_2px_rgba(16,24,40,.04)]" style={glow ? ({ ['--glow' as any]: glow } as React.CSSProperties) : { ['--glow' as any]: 'transparent' }}>
-      <div className="relative flex items-center justify-between gap-4">
-        <div className="min-w-0">
-          <p className="text-[15px] text-zinc-600">{label}</p>
-          <p className="mt-1.5 text-[30px] font-bold leading-none tracking-tight text-zinc-900 tabular-nums">{value}</p>
-          {sub && <p className="mt-2 text-[13px] text-zinc-500">{sub}</p>}
-        </div>
-        {icon && <div className={cn('flex h-12 w-12 shrink-0 items-center justify-center rounded-xl shadow-lg', tile ?? 'bg-[#fff]')}>{icon}</div>}
+    <div className="group relative flex flex-col rounded-2xl border border-zinc-200 bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,.04)] transition hover:-translate-y-0.5 hover:shadow-lg hover:shadow-zinc-900/5">
+      <div className="flex items-center gap-3">
+        <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', tones[0])}>{icon}</div>
+        <p className="text-sm font-medium text-zinc-600">{label}</p>
       </div>
+      <p className="mt-4 text-[26px] font-bold leading-none tracking-tight text-zinc-900 tabular-nums">{value}</p>
+      {sub && <p className="mt-2 text-[13px] text-zinc-500">{sub}</p>}
+      {bar !== undefined && (
+        <div className="mt-auto pt-4">
+          <div className="h-1.5 overflow-hidden rounded-full bg-zinc-100">
+            <div className={cn('h-full rounded-full bg-gradient-to-r transition-all duration-700', tones[1])} style={{ width: `${Math.min(100, Math.max(bar > 0 ? 3 : 0, bar * 100))}%` }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -194,14 +207,59 @@ export default function DashboardPage({ name }: { name?: string }) {
         </Dropdown>
       </div>
 
-      {/* KPIs */}
-      <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-        <Kpi label="Vendas (pagas)" value={brl(k?.paid_cents ?? 0)} sub={`${k?.paid_count ?? 0} vendas`} glow="rgb(59 130 246 / .22)" icon={<BadgeCheck className="h-6 w-6 text-blue-600" />} />
-        <Kpi label="Vendas pendentes" value={brl(k?.pending_cents ?? 0)} sub={`${k?.pending_count ?? 0} pendentes`} glow="rgb(245 158 11 / .22)" tile="bg-amber-300" icon={<Timer className="h-6 w-6 text-amber-900" />} />
-        <Kpi label="Conversão do checkout" value={pct(k?.checkout_conversion ?? 0)} sub={`${k?.initiated_count ?? 0} checkouts iniciados`} glow="rgb(59 130 246 / .22)" icon={<TrendingUp className="h-6 w-6 text-blue-600" />} />
-        <Kpi label="Vendas de Orderbump" value={brl(k?.bump_cents ?? 0)} sub={`${k?.bump_count ?? 0} orderbumps`} />
-        <Kpi label="Valor Recuperado" value={brl(k?.recovered_cents ?? 0)} sub={k?.recovered_count ? `${k.recovered_count} vendas após e-mail de recuperação` : undefined} />
-        <Kpi label="Ticket médio" value={brl(k?.avg_ticket_cents ?? 0)} sub={k?.orders_count ? `Pix pago em ${pct(k.pix_conversion)} dos pedidos` : undefined} />
+      {/* Resumo */}
+      <div className="grid gap-5 xl:grid-cols-3">
+        {/* destaque: faturamento aprovado */}
+        <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0b1430] via-[#13245a] to-[#1d4ed8] p-6 text-white shadow-xl shadow-blue-900/20 sm:p-7 xl:col-span-2">
+          <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-cyan-400/20 blur-3xl" />
+          <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-blue-400/20 blur-3xl" />
+          <div className="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-sm font-medium text-blue-100/80"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10"><BadgeCheck className="h-4 w-4" /></span> Faturamento aprovado · {range.label.toLowerCase()}</p>
+              <p className="mt-3 font-display text-[40px] font-bold leading-none tracking-tight tabular-nums sm:text-[46px]">{brl(k?.paid_cents ?? 0)}</p>
+              <div className="mt-4 flex flex-wrap gap-2 text-[13px]">
+                <span className="rounded-full bg-white/10 px-3 py-1 font-medium">{k?.paid_count ?? 0} {k?.paid_count === 1 ? 'venda' : 'vendas'}</span>
+                <span className="rounded-full bg-white/10 px-3 py-1 font-medium">Ticket médio {brl(k?.avg_ticket_cents ?? 0)}</span>
+                {k?.orders_count ? <span className="rounded-full bg-[#34d399]/20 px-3 py-1 font-medium text-[#a7f3d0]">Pix pago em {pct(k.pix_conversion)}</span> : null}
+              </div>
+            </div>
+            <div className="h-20 w-full sm:w-56">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={hourly} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="heroFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#67e8f9" stopOpacity={0.5} />
+                      <stop offset="100%" stopColor="#67e8f9" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Area type="monotone" dataKey="revenue" stroke="#a5f3fc" strokeWidth={2} fill="url(#heroFill)" isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </section>
+
+        {/* pendentes */}
+        <section className="relative overflow-hidden rounded-3xl border border-amber-300/40 bg-white p-6 sm:p-7">
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-amber-50 via-transparent to-transparent" />
+          <div className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-amber-400/20 blur-3xl" />
+          <div className="relative">
+          <div className="flex items-center justify-between">
+            <p className="flex items-center gap-2 text-sm font-medium text-amber-800"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-400/25"><Timer className="h-4 w-4 text-amber-700" /></span> Vendas pendentes</p>
+            <span className="rounded-full bg-amber-400/25 px-2.5 py-0.5 text-xs font-semibold text-amber-800">{k?.pending_count ?? 0}</span>
+          </div>
+          <p className="mt-3 font-display text-[34px] font-bold leading-none tracking-tight text-zinc-900 tabular-nums">{brl(k?.pending_cents ?? 0)}</p>
+          <p className="mt-2 text-[13px] text-zinc-600">Pix gerados e ainda não pagos (inclui os vencidos), alvo da recuperação.</p>
+          <Link to="/admin/pedidos?status=pending" className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-amber-700 hover:underline">Ver pendentes <ArrowRight className="h-4 w-4" /></Link>
+          </div>
+        </section>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <Tile tone="blue" label="Conversão do checkout" value={pct(k?.checkout_conversion ?? 0)} sub={`${k?.initiated_count ?? 0} checkouts iniciados`} icon={<TrendingUp className="h-5 w-5" />} bar={k?.checkout_conversion ?? 0} />
+        <Tile tone="violet" label="Order bumps" value={brl(k?.bump_cents ?? 0)} sub={`${k?.bump_count ?? 0} adicionais vendidos`} icon={<Layers className="h-5 w-5" />} bar={k?.paid_cents ? (k.bump_cents ?? 0) / k.paid_cents : 0} />
+        <Tile tone="emerald" label="Valor recuperado" value={brl(k?.recovered_cents ?? 0)} sub={`${k?.recovered_count ?? 0} vendas após a recuperação`} icon={<RotateCcw className="h-5 w-5" />} bar={k?.paid_cents ? (k.recovered_cents ?? 0) / k.paid_cents : 0} />
+        <Tile tone="cyan" label="Pedidos gerados" value={(k?.orders_count ?? 0).toLocaleString('pt-BR')} sub={`${(k?.page_views ?? 0).toLocaleString('pt-BR')} visitas ao checkout`} icon={<ShoppingBag className="h-5 w-5" />} bar={k?.orders_count ? (k.paid_count ?? 0) / k.orders_count : 0} />
       </div>
 
       {/* Gráficos */}
