@@ -7,10 +7,16 @@ const bool = z
   .transform((v) => v === 'true' || v === '1');
 
 const schema = z.object({
-  NODE_ENV: z.enum(['development', 'staging', 'production', 'test']).default('development'),
+  NODE_ENV: z
+    .string()
+    .optional()
+    .transform((v) => (['development', 'staging', 'production', 'test'].includes(v ?? '') ? v : 'production') as 'development' | 'staging' | 'production' | 'test'),
   PORT: z.coerce.number().default(3000),
   /** URL pública do site (ex.: https://checkout.seudominio.com) — usada em webhooks e e-mails */
-  PUBLIC_URL: z.string().url(),
+  PUBLIC_URL: z
+    .string()
+    .url()
+    .transform((v) => v.replace(/\/+$/, '')),
   /** Origens extras liberadas no CORS (separadas por vírgula). O próprio PUBLIC_URL já é liberado. */
   CORS_ORIGINS: z.string().optional().default(''),
   TRUST_PROXY: z.coerce.number().default(1),
@@ -63,12 +69,15 @@ const schema = z.object({
   CRON_SECRET: z.string().optional(),
 });
 
-const parsed = schema.safeParse(process.env);
+// Variáveis vazias (ex.: `PAYTRACKING_URL=` copiado do .env.example) contam como não definidas
+const cleaned = Object.fromEntries(Object.entries(process.env).filter(([, v]) => v !== undefined && v.trim() !== ''));
+const parsed = schema.safeParse(cleaned);
 if (!parsed.success) {
   // Mostra só os NOMES das variáveis com problema, nunca valores.
   const fields = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('\n  ');
   console.error(`Variáveis de ambiente inválidas:\n  ${fields}`);
-  process.exit(1);
+  // Lança (em vez de encerrar) para o server.js da raiz exibir uma página de diagnóstico.
+  throw Object.assign(new Error(`Variáveis de ambiente inválidas:\n  ${fields}`), { code: 'ENV_INVALID' });
 }
 
 export const env = parsed.data;

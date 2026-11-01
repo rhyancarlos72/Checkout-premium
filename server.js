@@ -1,14 +1,46 @@
 // Arquivo de entrada para a Hostinger (preset Express → "server.js").
-// Ele carrega a API compilada, que também serve o site (React) e escuta em process.env.PORT.
+// Carrega a API compilada, que serve o site (React) e a API em process.env.PORT.
+// Se algo impedir a inicialização (build ausente, variável faltando), sobe uma
+// página de diagnóstico em vez de cair — assim você vê o motivo no navegador
+// em vez de "503 Service Unavailable". Nunca exibe VALORES de variáveis.
 const fs = require('node:fs');
+const http = require('node:http');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const entry = path.join(__dirname, 'apps', 'api', 'dist', 'server.js');
-if (!fs.existsSync(entry)) {
-  console.error('Build não encontrado. Configure o comando de build como: npm run build');
-  process.exit(1);
+const webIndex = path.join(__dirname, 'apps', 'web', 'dist', 'index.html');
+
+function startDiagnostics(title, detail) {
+  console.error(`[checkout] ${title}\n${detail}`);
+  const required = ['PUBLIC_URL', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY'];
+  const rows = required
+    .map((k) => `<tr><td><code>${k}</code></td><td>${process.env[k] ? '✅ definida' : '❌ <b>faltando</b>'}</td></tr>`)
+    .join('');
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  const html = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Checkout — configuração pendente</title>
+<body style="font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;color:#111">
+<h1 style="font-size:22px">⚠️ ${esc(title)}</h1>
+<pre style="background:#f4f4f5;padding:12px;border-radius:8px;white-space:pre-wrap">${esc(detail)}</pre>
+<h2 style="font-size:16px">Variáveis obrigatórias</h2>
+<table cellpadding="6" style="border-collapse:collapse">${rows}</table>
+<p style="color:#555">Build do site: ${fs.existsSync(webIndex) ? '✅ encontrado' : '❌ não encontrado (comando de build: <code>npm run build</code>)'}<br>
+Build da API: ${fs.existsSync(entry) ? '✅ encontrado' : '❌ não encontrado'}<br>Node: ${process.version} (use 22)</p>
+<p style="color:#555">Corrija no painel da Hostinger (variáveis de ambiente) e faça o redeploy. As variáveis <code>VITE_*</code> precisam existir antes do build.</p>
+</body>`;
+  http
+    .createServer((req, res) => {
+      res.writeHead(req.url === '/api/health' ? 503 : 200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(html);
+    })
+    .listen(process.env.PORT || 3000);
 }
-import(require('node:url').pathToFileURL(entry).href).catch((err) => {
-  console.error('Falha ao iniciar o servidor:', err);
-  process.exit(1);
-});
+
+if (!fs.existsSync(entry)) {
+  startDiagnostics('Build não encontrado', 'O arquivo apps/api/dist/server.js não existe. Configure o comando de build como: npm run build');
+} else {
+  import(pathToFileURL(entry).href).catch((err) => {
+    startDiagnostics('O servidor não conseguiu iniciar', err && err.message ? err.message : String(err));
+  });
+}
