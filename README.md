@@ -35,7 +35,7 @@ docs/            guia de deploy
 ## Rodando localmente
 
 ```bash
-npm install
+SKIP_POSTINSTALL_BUILD=1 npm install   # o build automático é para o servidor
 cp .env.example .env        # preencha com suas chaves
 npm run dev:api             # API em http://localhost:3000
 npm run dev:web             # site em http://localhost:5173 (proxy /api → 3000)

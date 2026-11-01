@@ -16,7 +16,8 @@
     "build": "npm run build -w apps/web && npm run build -w apps/api",
     "start": "node server.js",
     "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/web",
-    "test": "npm run test -w apps/api"
+    "test": "npm run test -w apps/api",
+    "postinstall": "node scripts/postinstall.cjs"
   },
   "main": "server.js"
 }

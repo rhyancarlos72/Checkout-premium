@@ -8,7 +8,7 @@ export default defineConfig({
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: {
     port: 5173,
-    proxy: { '/api': 'http://localhost:3000' },
+    proxy: { '/api': 'http://localhost:3000', '/config.js': 'http://localhost:3000' },
   },
   build: { sourcemap: false, chunkSizeWarningLimit: 900 },
 });

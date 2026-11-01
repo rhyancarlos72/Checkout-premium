@@ -23,6 +23,9 @@ const schema = z.object({
 
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20),
+  /** Chave pública (anon/publishable) — entregue ao navegador via /config.js */
+  SUPABASE_ANON_KEY: z.string().optional(),
+  VITE_SUPABASE_ANON_KEY: z.string().optional(),
 
   // ---- Woovi (OpenPix)
   WOOVI_APP_ID: z.string().optional(),

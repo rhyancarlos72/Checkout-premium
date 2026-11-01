@@ -31,7 +31,7 @@ export default function LoginPage() {
           </div>
         </div>
         {!supabaseConfigured && (
-          <p className="mb-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">Defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no build do frontend.</p>
+          <p className="mb-4 rounded-xl bg-amber-50 p-3 text-xs text-amber-800">Defina SUPABASE_URL e SUPABASE_ANON_KEY nas variáveis de ambiente do servidor e reinicie o app.</p>
         )}
         <div className="space-y-4">
           <Field label="E-mail">

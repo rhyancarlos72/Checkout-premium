@@ -62,6 +62,14 @@ export function createApp() {
 
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Rota não encontrada' }));
 
+  // Configuração pública do frontend lida em tempo de execução (não depende do build).
+  // Só valores públicos: URL do projeto e chave anon. A service role NUNCA sai do servidor.
+  app.get('/config.js', (_req, res) => {
+    const cfg = { supabaseUrl: env.SUPABASE_URL, supabaseAnonKey: env.SUPABASE_ANON_KEY ?? env.VITE_SUPABASE_ANON_KEY ?? '' };
+    res.type('application/javascript').set('Cache-Control', 'public, max-age=300');
+    res.send(`window.__APP_CONFIG__=${JSON.stringify(cfg)};`);
+  });
+
   // Frontend (build do Vite) servido pelo mesmo app → um único deploy na Hostinger
   const here = path.dirname(fileURLToPath(import.meta.url));
   const webDist = path.resolve(here, '../../web/dist');

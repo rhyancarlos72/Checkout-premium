@@ -14,12 +14,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+        env:
+          SKIP_POSTINSTALL_BUILD: '1'
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-        env:
-          VITE_SUPABASE_URL: https://example.supabase.co
-          VITE_SUPABASE_ANON_KEY: ci-placeholder
       - name: Garante que nenhum segredo foi commitado
         run: |
           ! git ls-files | grep -E '\.(p12|pem|key)$|(^|/)\.env$'

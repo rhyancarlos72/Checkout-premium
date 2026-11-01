@@ -23,13 +23,13 @@ O repositório não contém credenciais. `.env`, certificados `.p12/.pem` e logs
 | Campo | Valor |
 |---|---|
 | Framework | **Express** |
-| Versão do Node | **22** (obrigatório; Vite 8 e Supabase exigem Node 22) |
-| Comando de build | `npm run build` |
-| Arquivo de entrada | `server.js` (está na raiz do repositório) |
+| Versão do Node | **22** |
 | Gerenciador de pacotes | npm |
-| Variáveis de ambiente | todas do `.env.example` (as `VITE_*` precisam existir **antes do build**) |
+| Arquivo de entrada | `server.js` |
 
-O `server.js` da raiz carrega a API compilada (`apps/api/dist/server.js`), que serve o site e a API na porta definida pela Hostinger (`PORT`). As ferramentas de build ficam em `dependencies`, então o build funciona mesmo com `NODE_ENV=production`.
+Não existe campo de build na Hostinger, e não precisa: o `npm install` dispara o build sozinho (script `postinstall`). Se por algum motivo o build não rodar, o `server.js` compila na primeira inicialização. Se mesmo assim algo der errado, o site mostra uma página de diagnóstico em vez de "503".
+
+**Variáveis de ambiente obrigatórias:** `PUBLIC_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`. As demais (Woovi, Efí, PayTracking, SMTP) podem ser adicionadas depois. Elas são lidas na inicialização, então depois de alterar variáveis basta reiniciar/redeploy.
 
 Depois, aponte o domínio/subdomínio (ex.: `checkout.seudominio.com.br`) e ative o SSL (HTTPS é obrigatório para os webhooks).
 
