@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { HttpError, logger, must, onlyDigits, supabase } from '../lib/core.js';
 import { getProvider, type ProviderName } from '../providers/index.js';
 import { sendDeliveryEmail, type DeliveryItem } from './email.js';
+import { sendWhatsAppApproved } from './whatsapp.js';
 import { checkCoupon, computeTotals, type CouponRow, type PriceLine } from './pricing.js';
 import { sendPayTracking, type OrderForTracking, type PayTrackingEvent } from './paytracking.js';
 
@@ -261,7 +262,11 @@ export async function syncOrderWithProvider(orderId: string): Promise<string> {
     if (error) throw new HttpError(500, error.message);
     if (transitioned) {
       await supabase.from('events').insert({ checkout_id: order.checkout_id, order_id: orderId, type: 'purchase', data: { total_cents: order.total_cents } });
-      await Promise.allSettled([fulfill(orderId), dispatchTracking(orderId, 'sale.approved')]);
+      await Promise.allSettled([
+        fulfill(orderId),
+        dispatchTracking(orderId, 'sale.approved'),
+        deliveryItems(orderId).then((items) => sendWhatsAppApproved(orderId, items.map((it, i) => ({ ...it, kind: i === 0 ? 'main' : 'bump' })))),
+      ]);
       return 'paid';
     }
     return 'already_paid';

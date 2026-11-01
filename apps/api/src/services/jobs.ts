@@ -1,6 +1,7 @@
 import { env } from '../config/env.js';
 import { logger, supabase } from '../lib/core.js';
 import { sendRecoveryEmail } from './email.js';
+import { sendWhatsAppRecoveries } from './whatsapp.js';
 import { dispatchTracking, syncOrderWithProvider } from './orders.js';
 import { getSettings } from './settings.js';
 
@@ -93,6 +94,7 @@ export async function runJobs() {
     await reconcilePending();
     await expireOrders();
     await sendRecoveries();
+    await sendWhatsAppRecoveries();
   } catch (e) {
     logger.error({ err: e }, 'Jobs falharam');
   } finally {

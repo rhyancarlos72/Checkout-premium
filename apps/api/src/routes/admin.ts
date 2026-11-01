@@ -10,6 +10,7 @@ import { testEmail } from '../services/email.js';
 import { runJobs } from '../services/jobs.js';
 import { dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
+import { buildApprovedMessage, buildRecoveryMessage, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
 
@@ -664,6 +665,50 @@ adminRouter.post('/gateways/:name/test', async (req, res) => {
   } catch (e: any) {
     res.json({ ok: false, message: String(e?.message ?? e) });
   }
+});
+
+// ------------------------------------------------------------------ WhatsApp (Evolution API)
+adminRouter.get('/whatsapp', async (_req, res) => {
+  const cfg = await getWhatsAppConfig();
+  res.json({ ...cfg, instances: cfg.instances.map(({ token, ...i }) => ({ ...i, token_hint: gwMask(token), has_token: Boolean(token) })) });
+});
+
+/** Salva a configuração; instância com token vazio mantém o token já salvo (pelo nome). */
+adminRouter.put('/whatsapp', async (req, res) => {
+  const input = whatsappSchema.parse(req.body);
+  const cur = await getWhatsAppConfig();
+  const names = input.instances.map((i) => i.name);
+  if (new Set(names).size !== names.length) throw new HttpError(400, 'Há instâncias com o mesmo nome');
+  const instances = input.instances.map((i) => ({ ...i, token: i.token || cur.instances.find((c) => c.name === i.name)?.token || '' }));
+  if (input.enabled && (!input.apiUrl || !instances.some((i) => i.active && i.token))) throw new HttpError(400, 'Informe a URL da API e pelo menos uma instância ativa com token');
+  await saveWhatsAppConfig({ ...input, instances });
+  res.json({ ok: true });
+});
+
+adminRouter.get('/whatsapp/status', async (_req, res) => res.json(await instancesStatus()));
+
+adminRouter.post('/whatsapp/test', async (req, res) => {
+  const { phone, kind } = z.object({ phone: z.string().min(8), kind: z.enum(['text', 'approved', 'recovery']).default('approved') }).parse(req.body);
+  const p = normalizePhoneBR(phone);
+  if (!p) throw new HttpError(400, 'Telefone inválido (use DDD + número)');
+  const msg =
+    kind === 'recovery'
+      ? buildRecoveryMessage({ phone: p, name: 'Cliente Teste', link: `${env.PUBLIC_URL}/checkout?produto_id=exemplo`, attempt: 1, pixCode: '00020126...exemplo' })
+      : kind === 'approved'
+        ? buildApprovedMessage({ phone: p, name: 'Cliente Teste', totalCents: 9700, items: [{ name: 'Produto de exemplo', url: `${env.PUBLIC_URL}`, kind: 'main' }] })
+        : 'Teste de envio do checkout: a integração com o WhatsApp está funcionando. 🙂';
+  const r = await sendWhatsAppText(p, msg);
+  await supabase.from('integration_logs').insert({ integration: 'whatsapp', event: `test_${kind}`, ok: r.ok, message: (r.ok ? `teste enviado (${r.instance})` : r.error ?? '').slice(0, 500) });
+  res.json({ ok: r.ok, message: r.ok ? `Mensagem de teste enviada pela instância ${r.instance}` : r.error });
+});
+
+adminRouter.get('/whatsapp/preview', async (_req, res) => {
+  const phone = '5500000000000';
+  res.json({
+    approved: buildApprovedMessage({ phone, name: 'Maria Silva', totalCents: 11690, items: [{ name: 'Método Completo', url: 'https://link-de-acesso', kind: 'main' }, { name: 'Pack de Planilhas', url: 'https://link-do-bump', kind: 'bump' }] }),
+    recovery1: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/checkout?produto_id=…`, attempt: 1, pixCode: '00020126580014br.gov.bcb.pix…' }),
+    recovery2: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/checkout?produto_id=…`, attempt: 2, pixCode: null }),
+  });
 });
 
 // ------------------------------------------------------------------ webhooks de saída (PayTracking e outros)

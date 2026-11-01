@@ -83,6 +83,16 @@ No painel: **Integrações → Webhooks → Adicionar webhook → PayTracking**.
 - Token e segredo ficam no banco (tabela `settings`, só admins/servidor) e o painel mostra apenas os 4 últimos caracteres.
 - As variáveis `PAYTRACKING_*` continuam funcionando como alternativa; se existirem, aparecem na lista como “variáveis de ambiente”.
 
+## 5.1 WhatsApp (Evolution API)
+
+No painel: **Integrações → WhatsApp · Evolution API**.
+1. Informe a **URL da Evolution API** (ex.: `http://SEU-IP:8082`).
+2. Adicione as **instâncias** (nome + token). Clique em **Verificar conexão** para ver quais estão online.
+3. Escolha o que enviar: **acesso quando o pagamento for aprovado** e/ou **recuperação de Pix pendente** (2 lembretes; padrão 20 min e 3 h, com o Pix copia e cola).
+4. **Salvar WhatsApp** e use **Enviar teste** com o seu número.
+
+As mensagens seguem o padrão cordial do checkout antigo (sem CAPS, sem urgência falsa, sem caracteres invisíveis, com “responda SAIR”), alternam entre as instâncias ativas, pulam as offline e não repetem o mesmo texto seguido na mesma instância. Tokens ficam no banco (só admins/servidor) e aparecem mascarados.
+
 ## 6. Ambientes
 
 Use três conjuntos separados: **desenvolvimento** (local, `EFI_SANDBOX=true`), **homologação** (branch `develop`, outro projeto Supabase) e **produção** (branch `main`). O CI (`.github/workflows/ci.yml`) roda typecheck, testes e build em todo push.

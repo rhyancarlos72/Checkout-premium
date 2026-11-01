@@ -8,6 +8,7 @@ import { dateTime } from '@/lib/format';
 import { PageHeader } from './AdminApp';
 import { GatewayCards } from './GatewayCards';
 import { WebhooksCard } from './WebhooksCard';
+import { WhatsAppCard } from './WhatsAppCard';
 
 interface Integrations {
   providers: { name: string; configured: boolean }[];
@@ -54,6 +55,8 @@ export default function IntegrationsPage() {
       <PageHeader title="Integrações" subtitle="Configure gateways de pagamento e webhooks direto por aqui. Credenciais ficam protegidas no servidor e nunca aparecem completas." />
       <div className="grid gap-6 lg:grid-cols-2">
         <GatewayCards toast={toast} />
+
+        <WhatsAppCard toast={toast} />
 
         <WebhooksCard toast={toast} />
 
