@@ -6,6 +6,7 @@ import { Button, Card, cn, Field, Input, PageLoader, Switch, useToast } from '@/
 import { adminApi, ApiError } from '@/lib/api';
 import { dateTime } from '@/lib/format';
 import { PageHeader } from './AdminApp';
+import { GatewayCards } from './GatewayCards';
 import { WebhooksCard } from './WebhooksCard';
 
 interface Integrations {
@@ -50,27 +51,9 @@ export default function IntegrationsPage() {
 
   return (
     <>
-      <PageHeader title="Integrações" subtitle="Gateways de pagamento usam as variáveis de ambiente do servidor. Webhooks (PayTracking e outros) são configurados aqui, com token e segredo protegidos." />
+      <PageHeader title="Integrações" subtitle="Configure gateways de pagamento e webhooks direto por aqui. Credenciais ficam protegidas no servidor e nunca aparecem completas." />
       <div className="grid gap-6 lg:grid-cols-2">
-        <Card title="Woovi (OpenPix)" action={<Status ok={prov('woovi')} />}>
-          <div className="space-y-3 text-sm">
-            <p className="text-gray-600">Variáveis: <code>WOOVI_APP_ID</code> e (recomendado) <code>WOOVI_WEBHOOK_SECRET</code>.</p>
-            <p className="font-medium">URL do webhook (evento <code>OPENPIX:CHARGE_COMPLETED</code>):</p>
-            <CopyLine value={data.webhooks.woovi} />
-            <p className="text-gray-600">No painel da Woovi, use o valor de <code>WOOVI_WEBHOOK_SECRET</code> no campo “Authorization”. <Status ok={data.webhooks.wooviSecretConfigured} label={data.webhooks.wooviSecretConfigured ? 'segredo ativo' : 'sem segredo'} /></p>
-          </div>
-        </Card>
-
-        <Card title={`Efí Bank${data.webhooks.efiSandbox ? ' (homologação)' : ''}`} action={<Status ok={prov('efi')} />}>
-          <div className="space-y-3 text-sm">
-            <p className="text-gray-600">Variáveis: <code>EFI_CLIENT_ID</code>, <code>EFI_CLIENT_SECRET</code>, <code>EFI_PIX_KEY</code>, <code>EFI_CERT_BASE64</code> e <code>EFI_WEBHOOK_SECRET</code>.</p>
-            <CopyLine value={`${data.webhooks.efi}?hmac=•••`} />
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" disabled={!prov('efi') || !data.webhooks.efiSecretConfigured} loading={run.isPending && run.variables?.path.includes('efi')} onClick={() => run.mutate({ path: '/integrations/efi/register-webhook' })}>Registrar webhook na Efí</Button>
-              <Button size="sm" variant="secondary" disabled={!prov('efi')} onClick={() => adminApi.get<any>('/integrations/efi/webhook').then((w) => toast.ok(`Webhook atual: ${w.webhookUrl || 'nenhum'}`)).catch((e) => toast.err(e.message))}>Ver webhook atual</Button>
-            </div>
-          </div>
-        </Card>
+        <GatewayCards toast={toast} />
 
         <WebhooksCard toast={toast} />
 

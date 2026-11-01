@@ -1,6 +1,5 @@
-import fs from 'node:fs';
 import https from 'node:https';
-import { env } from '../config/env.js';
+import { efiConfig } from '../services/gateways.js';
 import { HttpError, centsToBRL, isValidCnpj, isValidCpf, logger, onlyDigits } from '../lib/core.js';
 import type { ChargeInfo, ChargeStatus, CreateChargeInput, CreatedCharge, PixProvider } from './types.js';
 
@@ -13,25 +12,26 @@ import type { ChargeInfo, ChargeStatus, CreateChargeInput, CreatedCharge, PixPro
 export class EfiProvider implements PixProvider {
   readonly name = 'efi' as const;
   private agent: https.Agent | null = null;
+  private agentKey = '';
   private token: { value: string; exp: number } | null = null;
 
   private get baseUrl() {
-    return env.EFI_SANDBOX ? 'https://pix-h.api.efipay.com.br' : 'https://pix.api.efipay.com.br';
+    return efiConfig().sandbox ? 'https://pix-h.api.efipay.com.br' : 'https://pix.api.efipay.com.br';
   }
 
   isConfigured() {
-    return Boolean(
-      env.EFI_CLIENT_ID && env.EFI_CLIENT_SECRET && env.EFI_PIX_KEY && (env.EFI_CERT_BASE64 || env.EFI_CERT_PATH),
-    );
+    return efiConfig().configured;
   }
 
   private getAgent(): https.Agent {
-    if (this.agent) return this.agent;
-    if (!this.isConfigured()) throw new HttpError(503, 'Efí não configurada');
-    const pfx = env.EFI_CERT_BASE64
-      ? Buffer.from(env.EFI_CERT_BASE64, 'base64')
-      : fs.readFileSync(env.EFI_CERT_PATH as string);
-    this.agent = new https.Agent({ pfx, passphrase: env.EFI_CERT_PASSPHRASE, keepAlive: true });
+    const cfg = efiConfig();
+    if (!cfg.configured || !cfg.pfx) throw new HttpError(503, 'Efí não configurada');
+    // credenciais/certificado mudaram no painel → novo agente mTLS e novo token
+    if (this.agent && this.agentKey === cfg.key) return this.agent;
+    this.agent?.destroy();
+    this.agent = new https.Agent({ pfx: cfg.pfx, passphrase: cfg.passphrase, keepAlive: true });
+    this.agentKey = cfg.key;
+    this.token = null;
     return this.agent;
   }
 
@@ -76,8 +76,10 @@ export class EfiProvider implements PixProvider {
   }
 
   private async accessToken(): Promise<string> {
+    this.getAgent(); // garante agente/token coerentes com a configuração atual
     if (this.token && this.token.exp > Date.now() + 60_000) return this.token.value;
-    const basic = Buffer.from(`${env.EFI_CLIENT_ID}:${env.EFI_CLIENT_SECRET}`).toString('base64');
+    const cfg = efiConfig();
+    const basic = Buffer.from(`${cfg.clientId}:${cfg.clientSecret}`).toString('base64');
     const data = await this.request<{ access_token: string; expires_in: number }>(
       'POST',
       '/oauth/token',
@@ -110,7 +112,7 @@ export class EfiProvider implements PixProvider {
       calendario: { expiracao: input.expiresInSeconds },
       ...(devedor ? { devedor } : {}),
       valor: { original: centsToBRL(input.amountCents) },
-      chave: env.EFI_PIX_KEY,
+      chave: efiConfig().pixKey,
       solicitacaoPagador: input.description.slice(0, 140),
     });
 
@@ -158,12 +160,19 @@ export class EfiProvider implements PixProvider {
    * um segredo na URL (?hmac=) + reconsulta da cobrança na API antes de aprovar.
    */
   async registerWebhook(webhookUrl: string) {
-    return this.authed<any>('PUT', `/v2/webhook/${encodeURIComponent(env.EFI_PIX_KEY!)}`, { webhookUrl }, {
+    return this.authed<any>('PUT', `/v2/webhook/${encodeURIComponent(efiConfig().pixKey)}`, { webhookUrl }, {
       'x-skip-mtls-checking': 'true',
     });
   }
 
   async getWebhook() {
-    return this.authed<any>('GET', `/v2/webhook/${encodeURIComponent(env.EFI_PIX_KEY!)}`);
+    return this.authed<any>('GET', `/v2/webhook/${encodeURIComponent(efiConfig().pixKey)}`);
+  }
+
+  /** Testa Client ID/Secret + certificado obtendo um token OAuth. */
+  async testConnection() {
+    this.token = null;
+    await this.accessToken();
+    return true;
   }
 }

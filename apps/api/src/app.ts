@@ -12,6 +12,7 @@ import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
 import { webhookRouter } from './routes/webhooks.js';
+import { refreshGateways } from './services/gateways.js';
 import { runJobs } from './services/jobs.js';
 import crypto from 'node:crypto';
 
@@ -44,6 +45,9 @@ export function createApp() {
   app.use('/api', cors({ origin: (o, cb) => cb(null, !o || origins.includes(o)), credentials: false }));
   app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => !req.url?.startsWith('/api') } }));
   app.use(express.json({ limit: '200kb' }));
+
+  // credenciais dos gateways configuradas no painel (cache de 30s)
+  app.use('/api', (_req, _res, next) => void refreshGateways().then(() => next(), () => next()));
 
   app.get('/api/health', (_req, res) => res.json({ ok: true, env: env.NODE_ENV }));
   app.use('/api/public', publicRouter);

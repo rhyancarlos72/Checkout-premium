@@ -5,6 +5,7 @@ import { env, features, isProd } from '../config/env.js';
 import { HttpError, must, supabase } from '../lib/core.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
+import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
 import { testEmail } from '../services/email.js';
 import { runJobs } from '../services/jobs.js';
 import { dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
@@ -538,10 +539,10 @@ adminRouter.get('/integrations', async (_req, res) => {
     email: { configured: features.email, from: env.MAIL_FROM ?? null },
     webhooks: {
       woovi: `${env.PUBLIC_URL}/api/webhooks/woovi`,
-      wooviSecretConfigured: Boolean(env.WOOVI_WEBHOOK_SECRET),
+      wooviSecretConfigured: Boolean(wooviConfig().webhookSecret),
       efi: `${env.PUBLIC_URL}/api/webhooks/efi`,
-      efiSecretConfigured: Boolean(env.EFI_WEBHOOK_SECRET),
-      efiSandbox: env.EFI_SANDBOX,
+      efiSecretConfigured: Boolean(efiConfig().webhookSecret),
+      efiSandbox: efiConfig().sandbox,
     },
     jobs: { enabled: env.JOBS_ENABLED },
     lastWebhooks: lastWebhooks.data ?? [],
@@ -550,6 +551,120 @@ adminRouter.get('/integrations', async (_req, res) => {
 });
 
 adminRouter.post('/integrations/paytracking/test', async (_req, res) => res.json(await testPayTracking()));
+
+// ------------------------------------------------------------------ gateways (Efí / Woovi) configurados no painel
+adminRouter.get('/gateways', async (_req, res) => {
+  await refreshGateways(true);
+  const w = wooviConfig();
+  const e = efiConfig();
+  const g = (await import('../services/gateways.js'));
+  res.json({
+    woovi: {
+      configured: Boolean(w.appId),
+      source: w.source,
+      appId_hint: gwMask(w.appId),
+      hasWebhookSecret: Boolean(w.webhookSecret),
+      webhookUrl: `${env.PUBLIC_URL}/api/webhooks/woovi`,
+    },
+    efi: {
+      configured: e.configured,
+      clientId_hint: gwMask(e.clientId),
+      hasClientSecret: Boolean(e.clientSecret),
+      pixKey: e.pixKey, // chave Pix não é segredo (é o que o pagador vê)
+      sandbox: e.sandbox,
+      cert: e.pfx ? { source: e.certSource, name: g.efiCertMeta().name, uploadedAt: g.efiCertMeta().uploadedAt } : null,
+      hasWebhookSecret: Boolean(e.webhookSecret),
+      webhookUrl: `${env.PUBLIC_URL}/api/webhooks/efi`,
+    },
+  });
+});
+
+/** Mostra o segredo do webhook da Woovi (para colar no campo Authorization do painel Woovi). */
+adminRouter.get('/gateways/woovi/webhook-secret', async (_req, res) => {
+  let secret = wooviConfig().webhookSecret;
+  if (!secret) {
+    secret = randomSecret();
+    await patchGateways((g) => ({ ...g, woovi: { ...g.woovi, webhookSecret: secret } }));
+  }
+  res.set('Cache-Control', 'no-store').json({ secret });
+});
+
+adminRouter.put('/gateways/woovi', async (req, res) => {
+  const b = z.object({ appId: z.string().trim().max(500).optional(), regenerateSecret: z.boolean().optional() }).parse(req.body);
+  await patchGateways((g) => ({
+    ...g,
+    woovi: {
+      ...g.woovi,
+      ...(b.appId ? { appId: b.appId } : {}),
+      // o segredo só é criado/trocado a pedido (senão a Woovi passaria a ser recusada sem você colar o valor lá)
+      ...(b.regenerateSecret ? { webhookSecret: randomSecret() } : {}),
+    },
+  }));
+  res.json({ ok: true });
+});
+
+adminRouter.put('/gateways/efi', async (req, res) => {
+  const b = z
+    .object({
+      clientId: z.string().trim().max(500).optional(),
+      clientSecret: z.string().trim().max(500).optional(),
+      pixKey: z.string().trim().max(120).optional(),
+      sandbox: z.boolean().optional(),
+    })
+    .parse(req.body);
+  await patchGateways((g) => ({
+    ...g,
+    efi: {
+      ...g.efi,
+      ...(b.clientId ? { clientId: b.clientId } : {}),
+      ...(b.clientSecret ? { clientSecret: b.clientSecret } : {}),
+      ...(b.pixKey !== undefined && b.pixKey !== '' ? { pixKey: b.pixKey } : {}),
+      ...(b.sandbox !== undefined ? { sandbox: b.sandbox } : {}),
+      // mantém o segredo em uso (inclusive o das variáveis), para não invalidar webhook já registrado
+      webhookSecret: g.efi?.webhookSecret || env.EFI_WEBHOOK_SECRET || randomSecret(),
+    },
+  }));
+  res.json({ ok: true });
+});
+
+/** Envio do certificado .p12 da Efí (base64 no JSON). Validado com a senha antes de salvar. */
+adminRouter.post('/gateways/efi/certificate', async (req, res) => {
+  const b = z
+    .object({
+      fileName: z.string().trim().max(200).regex(/\.(p12|pfx)$/i, 'Envie o arquivo .p12 baixado da Efí'),
+      fileBase64: z.string().min(100).max(200_000),
+      passphrase: z.string().max(200).optional().default(''),
+    })
+    .parse(req.body);
+  const pfx = Buffer.from(b.fileBase64, 'base64');
+  const problem = validatePfx(pfx, b.passphrase);
+  if (problem) throw new HttpError(400, problem);
+  await patchGateways((g) => ({
+    ...g,
+    efi: { ...g.efi, certBase64: pfx.toString('base64'), passphrase: b.passphrase, certName: b.fileName, certUploadedAt: new Date().toISOString() },
+  }));
+  res.json({ ok: true, message: 'Certificado salvo e validado' });
+});
+
+adminRouter.delete('/gateways/efi/certificate', async (_req, res) => {
+  await patchGateways((g) => {
+    const { certBase64: _c, passphrase: _p, certName: _n, certUploadedAt: _u, ...rest } = g.efi ?? {};
+    return { ...g, efi: rest };
+  });
+  res.status(204).end();
+});
+
+adminRouter.post('/gateways/:name/test', async (req, res) => {
+  const name = z.enum(['woovi', 'efi']).parse(req.params.name);
+  const p = name === 'woovi' ? woovi : efi;
+  if (!p.isConfigured()) return res.json({ ok: false, message: name === 'woovi' ? 'Informe o AppID primeiro' : 'Preencha Client ID, Client Secret, Chave Pix e envie o certificado' });
+  try {
+    await p.testConnection();
+    res.json({ ok: true, message: name === 'woovi' ? 'Conexão com a Woovi OK' : `Conexão com a Efí OK (${efiConfig().sandbox ? 'homologação' : 'produção'})` });
+  } catch (e: any) {
+    res.json({ ok: false, message: String(e?.message ?? e) });
+  }
+});
 
 // ------------------------------------------------------------------ webhooks de saída (PayTracking e outros)
 const webhookInput = z.object({
@@ -634,9 +749,13 @@ adminRouter.post('/integrations/email/test', async (req, res) => {
   res.json(await testEmail(to));
 });
 adminRouter.post('/integrations/efi/register-webhook', async (_req, res) => {
-  if (!efi.isConfigured()) throw new HttpError(400, 'Configure as variáveis EFI_* primeiro');
-  if (!env.EFI_WEBHOOK_SECRET) throw new HttpError(400, 'Defina EFI_WEBHOOK_SECRET antes de registrar o webhook');
-  const url = `${env.PUBLIC_URL}/api/webhooks/efi?hmac=${encodeURIComponent(env.EFI_WEBHOOK_SECRET)}&ignorar=`;
+  if (!efi.isConfigured()) throw new HttpError(400, 'Configure a Efí primeiro (Client ID, Client Secret, Chave Pix e certificado)');
+  let secret = efiConfig().webhookSecret;
+  if (!secret) {
+    secret = randomSecret();
+    await patchGateways((g) => ({ ...g, efi: { ...g.efi, webhookSecret: secret } }));
+  }
+  const url = `${env.PUBLIC_URL}/api/webhooks/efi?hmac=${encodeURIComponent(secret)}&ignorar=`;
   await efi.registerWebhook(url);
   res.json({ ok: true, message: 'Webhook registrado na Efí' });
 });

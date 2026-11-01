@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Router, type Request } from 'express';
-import { env } from '../config/env.js';
+import { efiConfig, wooviConfig } from '../services/gateways.js';
 import { logger, supabase } from '../lib/core.js';
 import { findOrderByCharge, syncOrderWithProvider } from '../services/orders.js';
 
@@ -25,9 +25,10 @@ async function log(provider: string, reference: string | null, payload: unknown,
  */
 webhookRouter.post('/woovi', async (req: Request, res) => {
   const body: any = req.body ?? {};
-  if (env.WOOVI_WEBHOOK_SECRET) {
+  const wooviSecret = wooviConfig().webhookSecret;
+  if (wooviSecret) {
     const provided = (req.get('authorization') ?? req.get('x-webhook-secret') ?? String(req.query.secret ?? '')).replace(/^Bearer\s+/i, '');
-    if (!safeEqual(provided, env.WOOVI_WEBHOOK_SECRET)) {
+    if (!safeEqual(provided, wooviSecret)) {
       await log('woovi', null, { event: body?.event }, 'error', 'segredo inválido');
       return res.status(401).json({ error: 'unauthorized' });
     }
@@ -54,7 +55,8 @@ webhookRouter.post('/woovi', async (req: Request, res) => {
  *   {PUBLIC_URL}/api/webhooks/efi?hmac=EFI_WEBHOOK_SECRET  (a Efí acrescenta /pix)
  */
 async function efiHandler(req: Request, res: any) {
-  if (env.EFI_WEBHOOK_SECRET && !safeEqual(String(req.query.hmac ?? ''), env.EFI_WEBHOOK_SECRET)) {
+  const efiSecret = efiConfig().webhookSecret;
+  if (efiSecret && !safeEqual(String(req.query.hmac ?? ''), efiSecret)) {
     await log('efi', null, null, 'error', 'hmac inválido');
     return res.status(401).json({ error: 'unauthorized' });
   }

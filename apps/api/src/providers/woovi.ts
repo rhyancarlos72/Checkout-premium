@@ -1,4 +1,4 @@
-import { env } from '../config/env.js';
+import { wooviConfig } from '../services/gateways.js';
 import { fetchWithTimeout, HttpError, logger, onlyDigits } from '../lib/core.js';
 import type { ChargeInfo, ChargeStatus, CreateChargeInput, CreatedCharge, PixProvider } from './types.js';
 
@@ -11,16 +11,17 @@ export class WooviProvider implements PixProvider {
   readonly name = 'woovi' as const;
 
   isConfigured() {
-    return Boolean(env.WOOVI_APP_ID);
+    return Boolean(wooviConfig().appId);
   }
 
   private async call<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!env.WOOVI_APP_ID) throw new HttpError(503, 'Woovi não configurada');
-    const res = await fetchWithTimeout(`${env.WOOVI_API_URL}${path}`, {
+    const cfg = wooviConfig();
+    if (!cfg.appId) throw new HttpError(503, 'Woovi não configurada');
+    const res = await fetchWithTimeout(`${cfg.apiUrl}${path}`, {
       ...init,
       timeoutMs: 15000,
       headers: {
-        Authorization: env.WOOVI_APP_ID,
+        Authorization: cfg.appId,
         'Content-Type': 'application/json',
         Accept: 'application/json',
         ...(init.headers ?? {}),
@@ -75,5 +76,11 @@ export class WooviProvider implements PixProvider {
       status: map[raw] ?? 'unknown',
       paidAmountCents: typeof data.charge?.value === 'number' ? data.charge.value : undefined,
     };
+  }
+
+  /** Testa o AppID consultando a conta na Woovi. */
+  async testConnection() {
+    await this.call<any>('/api/v1/account/');
+    return true;
   }
 }

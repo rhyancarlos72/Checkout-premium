@@ -38,7 +38,7 @@ O repositório não contém credenciais. `.env`, certificados `.p12/.pem` e logs
 
 Não existe campo de build na Hostinger, e não precisa: o `npm install` dispara o build sozinho (script `postinstall`). Se por algum motivo o build não rodar, o `server.js` compila na primeira inicialização. Se mesmo assim algo der errado, o site mostra uma página de diagnóstico em vez de "503".
 
-**Variáveis de ambiente obrigatórias:** `PUBLIC_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` e `ADMIN_EMAIL` (para o primeiro acesso). As demais (Woovi, Efí, PayTracking, SMTP) podem ser adicionadas depois. Elas são lidas na inicialização, então depois de alterar variáveis basta reiniciar/redeploy.
+**Variáveis de ambiente obrigatórias:** `PUBLIC_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` e `ADMIN_EMAIL` (para o primeiro acesso). Woovi, Efí e PayTracking são configurados no painel (Integrações); SMTP pode ser adicionado depois. Elas são lidas na inicialização, então depois de alterar variáveis basta reiniciar/redeploy.
 
 Depois, aponte o domínio/subdomínio (ex.: `checkout.seudominio.com.br`) e ative o SSL (HTTPS é obrigatório para os webhooks).
 
@@ -59,11 +59,17 @@ base64 -i certificado.p12       # macOS
 ```
 Nunca coloque o certificado em `public_html` nem no repositório.
 
-## 4. Gateways
+## 4. Gateways (pelo painel)
 
-**Woovi:** painel Woovi → API/Plugins → crie o AppID (`WOOVI_APP_ID`). Em Webhooks, crie um com o evento `OPENPIX:CHARGE_COMPLETED`, URL `https://SEU_DOMINIO/api/webhooks/woovi` e, no campo Authorization, o mesmo valor de `WOOVI_WEBHOOK_SECRET`.
+**Efí Bank:** painel → **Integrações → Efí Bank → Configurar**.
+1. Na Efí, crie a aplicação com os escopos Pix (cob.write, cob.read, pix.read, webhook.write, webhook.read) e baixe o certificado **.p12** de produção.
+2. No formulário: Client ID, Client Secret, Chave Pix e **envie o arquivo .p12** (senha só se o seu tiver; os da Efí normalmente não têm). O certificado é validado ao salvar.
+3. Clique em **Salvar e testar** e depois em **Registrar webhook na Efí**.
+Use “Homologação” para testar com as credenciais e o certificado de homologação.
 
-**Efí:** crie a aplicação com escopos Pix (cob.write, cob.read, pix.read, webhook.write, webhook.read), baixe o certificado de produção, cadastre as variáveis e clique em **Painel → Integrações → Registrar webhook na Efí**.
+**Woovi:** painel → **Integrações → Woovi → Configurar**. Cole o AppID e salve. No painel da Woovi → Webhooks, crie um webhook com o evento `OPENPIX:CHARGE_COMPLETED` e a URL mostrada. Recomendado: clique em **Gerar segredo do webhook** e cole o valor no campo *Authorization* desse webhook na Woovi.
+
+As credenciais ficam no banco (tabela `settings`, só admins/servidor) e o painel só mostra os 4 últimos caracteres. As variáveis `WOOVI_*` / `EFI_*` continuam funcionando como alternativa; o que for salvo no painel tem prioridade.
 
 > Os webhooks do sistema PHP antigo continuam apontando para o servidor antigo. Troque para as URLs novas só quando migrar o tráfego.
 
