@@ -28,15 +28,22 @@ export interface GatewaySettings {
 const KEY = 'gateways';
 let snap: GatewaySettings = {};
 let loadedAt = 0;
+let inflight: Promise<void> | null = null;
 
 /** Recarrega do banco (cache de 30s). Chamado em toda requisição da API e no boot. */
 export async function refreshGateways(force = false) {
   if (!force && Date.now() - loadedAt < 30_000) return;
-  const { data, error } = await supabase.from('settings').select('value').eq('key', KEY).maybeSingle();
-  if (!error) {
-    snap = ((data as any)?.value ?? {}) as GatewaySettings;
-    loadedAt = Date.now();
-  }
+  if (inflight) return inflight; // evita várias consultas simultâneas
+  inflight = (async () => {
+    const { data, error } = await supabase.from('settings').select('value').eq('key', KEY).maybeSingle();
+    if (!error) {
+      snap = ((data as any)?.value ?? {}) as GatewaySettings;
+      loadedAt = Date.now();
+    }
+  })().finally(() => {
+    inflight = null;
+  });
+  return inflight;
 }
 
 export async function patchGateways(fn: (cur: GatewaySettings) => GatewaySettings) {

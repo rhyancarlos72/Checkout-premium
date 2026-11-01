@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Download, RefreshCw, Search, Send, ShoppingB
 import { useEffect, useState } from 'react';
 import { Badge, Button, Card, cn, EmptyState, Input, Modal, PageLoader, Select, StatusBadge, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
-import { brl, dateTime } from '@/lib/format';
+import { brl, dateTime, productCode } from '@/lib/format';
 import { PageHeader } from './AdminApp';
 
 interface OrderRow {
@@ -70,9 +70,9 @@ export default function OrdersPage() {
               <tbody className="divide-y divide-gray-100">
                 {data.data.map((o) => (
                   <tr key={o.id} className="cursor-pointer hover:bg-gray-50" onClick={() => setOpen(o.id)}>
-                    <td className="px-5 py-3"><p className="font-semibold">#{o.number}</p><p className="text-xs text-gray-500">{dateTime(o.created_at)}</p></td>
+                    <td className="px-5 py-3"><p className="font-semibold">ID: {productCode(o.number)}</p><p className="text-xs text-gray-500">{dateTime(o.created_at)}</p></td>
                     <td className="px-5 py-3"><p className="font-medium">{o.customer?.name ?? '—'}</p><p className="text-xs text-gray-500">{o.customer?.email}</p></td>
-                    <td className="px-5 py-3 text-gray-600">{(() => { const m = o.items.find((i) => i.kind === 'main'); return m ? <>{m.product?.number && <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">#{m.product.number}</span>}{m.name}</> : null; })()}{o.items.some((i) => i.kind === 'bump') && <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-teal-700"><Zap className="h-3 w-3" />+{o.items.filter((i) => i.kind === 'bump').length}</span>}</td>
+                    <td className="px-5 py-3 text-gray-600">{(() => { const m = o.items.find((i) => i.kind === 'main'); return m ? <>{m.product?.number && <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID: {productCode(m.product.number)}</span>}{m.name}</> : null; })()}{o.items.some((i) => i.kind === 'bump') && <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-teal-700"><Zap className="h-3 w-3" />+{o.items.filter((i) => i.kind === 'bump').length}</span>}</td>
                     <td className="px-5 py-3 text-xs text-gray-500">{o.tracking?.utm_source ?? 'direto'}{o.tracking?.utm_campaign ? ` / ${o.tracking.utm_campaign}` : ''}</td>
                     <td className="px-5 py-3 text-right font-semibold tabular-nums">{brl(o.total_cents)}</td>
                     <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
@@ -110,7 +110,7 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
   });
 
   return (
-    <Modal open onClose={onClose} title={o ? `Pedido #${o.number}` : 'Pedido'} wide>
+    <Modal open onClose={onClose} title={o ? `Pedido ID: ${productCode(o.number)}` : 'Pedido'} wide>
       {isLoading || !o ? (
         <PageLoader />
       ) : (
@@ -134,7 +134,7 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
             </div>
             <div className="rounded-xl border border-gray-200 p-4 text-sm">
               <p className="mb-2 font-semibold">Itens</p>
-              {o.items.map((i: any) => <div key={i.id} className="flex justify-between gap-2"><span>{i.kind === 'bump' && '⚡ '}{i.product?.number && <span className="mr-1 font-mono text-xs text-zinc-500">#{i.product.number}</span>}{i.name}</span><span className="tabular-nums">{brl(i.price_cents)}</span></div>)}
+              {o.items.map((i: any) => <div key={i.id} className="flex justify-between gap-2"><span>{i.kind === 'bump' && '⚡ '}{i.product?.number && <span className="mr-1 font-mono text-xs text-zinc-500">ID: {productCode(i.product.number)}</span>}{i.name}</span><span className="tabular-nums">{brl(i.price_cents)}</span></div>)}
               {o.discount_cents > 0 && <div className="flex justify-between text-emerald-700"><span>Desconto {o.coupon?.code && `(${o.coupon.code})`}</span><span>−{brl(o.discount_cents)}</span></div>}
               <div className="mt-1 flex justify-between border-t border-gray-100 pt-1 font-semibold"><span>Total</span><span>{brl(o.total_cents)}</span></div>
             </div>

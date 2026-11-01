@@ -1,7 +1,7 @@
 import { Copy, CreditCard, ExternalLink, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { Button, Card, EmptyState, PageLoader, useToast } from '@/components/ui';
-import { brl } from '@/lib/format';
+import { brl, productCode } from '@/lib/format';
 import { checkoutUrl } from '@/lib/links';
 import { PageHeader } from './AdminApp';
 import { CheckoutEditor, type Checkout } from './CheckoutEditor';
@@ -38,7 +38,7 @@ export default function CheckoutsPage() {
                 </div>
                 <div className="absolute bottom-3 left-4 right-4">
                   <p className="truncate font-semibold text-white">{c.name}</p>
-                  <p className="truncate text-xs text-white/75">{c.product?.number ? `#${c.product.number} · ` : ''}{c.product?.name} · {brl(c.price_cents ?? c.product?.price_cents ?? 0)}</p>
+                  <p className="truncate text-xs text-white/75">{c.product?.number ? `ID: ${productCode(c.product.number)} · ` : ''}{c.product?.name} · {brl(c.price_cents ?? c.product?.price_cents ?? 0)}</p>
                 </div>
               </button>
               <div className="space-y-3 p-4">

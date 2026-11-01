@@ -1,7 +1,7 @@
 import { ImageUpload } from '@/components/ImageUpload';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Boxes, Check, Copy, CopyPlus, ExternalLink, Link2, Palette, Pencil, Plus, Trash2, Zap } from 'lucide-react';
+import { Boxes, Check, Copy, CopyPlus, ExternalLink, Link2, Palette, Pencil, Plus, Search, Trash2, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { Badge, Button, cn, Card, EmptyState, Field, Input, Modal, PageLoader, Select, Switch, Textarea, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { checkoutUrl } from '@/lib/links';
-import { brl, centsToInput, parseMoney } from '@/lib/format';
+import { brl, centsToInput, parseMoney, productCode } from '@/lib/format';
 import { PageHeader } from './AdminApp';
 import { ProductBumpsModal } from './ProductBumpsModal';
 import { useCrud } from './crud';
@@ -113,12 +113,13 @@ export default function ProductsPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [bumpsFor, setBumpsFor] = useState<Product | null>(null);
+  const [search, setSearch] = useState('');
   const duplicate = useMutation({
     mutationFn: (id: string) => adminApi.post<any>(`/products/${id}/duplicate`),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['products'] });
       qc.invalidateQueries({ queryKey: ['checkouts'] });
-      toast.ok(`Duplicado${r?.number ? ` como #${r.number}` : ''} · produto_id=${r?.checkout?.slug ?? ''}`);
+      toast.ok(`Duplicado${r?.number ? ` · ID: ${productCode(r.number)}` : ''} · produto_id=${r?.checkout?.slug ?? ''}`);
     },
     onError: (e) => toast.err(e.message),
   });
@@ -133,15 +134,19 @@ export default function ProductsPage() {
           <EmptyState icon={<Boxes className="h-6 w-6" />} title="Nenhum produto ainda" text="Cadastre seu primeiro produto digital para criar um checkout." action={<Button onClick={() => setEditing('new')}>Cadastrar produto</Button>} />
         </Card>
       ) : (
+        <>
+        <div className="mb-4 max-w-md">
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome ou ID (ex.: 9452335)" icon={<Search className="h-4 w-4" />} />
+        </div>
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {list.data.map((p) => (
+          {list.data.filter((p) => { const q = search.trim().toLowerCase(); return !q || p.name.toLowerCase().includes(q) || productCode(p.number).includes(q.replace(/\D/g, '') || '§'); }).map((p) => (
             <div key={p.id} className="flex flex-col gap-4 rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,.04),0_8px_24px_-12px_rgba(16,24,40,.08)]">
               <div className="flex gap-4">
                 {p.image_url ? <img src={p.image_url} alt="" className="h-20 w-20 shrink-0 rounded-xl object-cover" /> : <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-400"><Boxes className="h-6 w-6" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      {p.number && <span className="mb-1 inline-block rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID #{p.number}</span>}
+                      {p.number && <button type="button" title="Copiar ID" onClick={() => navigator.clipboard.writeText(productCode(p.number)).then(() => toast.ok(`ID ${productCode(p.number)} copiado`))} className="mb-1 inline-block rounded-md bg-zinc-100 px-2 py-0.5 text-[13px] font-medium text-zinc-500 transition hover:text-zinc-800">ID: {productCode(p.number)}</button>}
                       <p className="font-semibold leading-snug">{p.name}</p>
                     </div>
                     <Badge tone={p.active ? 'on' : 'off'}>{p.active ? 'Ativo' : 'Inativo'}</Badge>
@@ -167,6 +172,7 @@ export default function ProductsPage() {
             </div>
           ))}
         </div>
+        </>
       )}
       {bumpsFor && (
         <ProductBumpsModal
@@ -189,7 +195,7 @@ export default function ProductsPage() {
           onSave={async (body) => {
             const saved: any = await save.mutateAsync(body);
             qc.invalidateQueries({ queryKey: ['checkouts'] });
-            toast.ok(saved?.checkout ? `Produto${saved.number ? ` #${saved.number}` : ''} criado · produto_id=${saved.checkout.slug}` : 'Produto salvo');
+            toast.ok(saved?.checkout ? `Produto${saved.number ? ` ID: ${productCode(saved.number)}` : ''} criado · produto_id=${saved.checkout.slug}` : 'Produto salvo');
             setEditing(null);
           }}
         />
@@ -218,7 +224,7 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
   const e = formState.errors;
 
   return (
-    <Modal open onClose={onClose} title={product ? `Editar produto${product.number ? ` · ID #${product.number}` : ''}` : 'Novo produto'}>
+    <Modal open onClose={onClose} title={product ? `Editar produto${product.number ? ` · ID: ${productCode(product.number)}` : ''}` : 'Novo produto'}>
       <form
         className="space-y-4"
         onSubmit={handleSubmit(async ({ price, ...v }) => {

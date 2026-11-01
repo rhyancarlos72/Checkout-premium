@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { ImageUpload } from '@/components/ImageUpload';
 import { Button, cn, Field, Input, Select, Switch, Textarea } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
-import { brl, centsToInput, parseMoney } from '@/lib/format';
+import { brl, centsToInput, parseMoney, productCode } from '@/lib/format';
 import { checkoutPath, checkoutUrl } from '@/lib/links';
 import { CheckoutView } from '../checkout/CheckoutView';
 import { palettes, themeDefaults, type PublicCheckout, type Theme } from '../checkout/theme';
@@ -240,7 +240,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                 </Group>
                 <Group title="Produto e preço">
                   <Field label="Produto principal">
-                    <Select value={f.product_id} onChange={(e) => set({ product_id: e.target.value })}>{products.map((p) => <option key={p.id} value={p.id}>{p.number ? `#${p.number} · ` : ''}{p.name} — {brl(p.price_cents)}</option>)}</Select>
+                    <Select value={f.product_id} onChange={(e) => set({ product_id: e.target.value })}>{products.map((p) => <option key={p.id} value={p.id}>{p.number ? `ID: ${productCode(p.number)} · ` : ''}{p.name} — {brl(p.price_cents)}</option>)}</Select>
                   </Field>
                   <Field label="Preço neste checkout" hint="Deixe vazio para usar o preço do produto"><Input value={f.price} onChange={(e) => set({ price: e.target.value })} inputMode="decimal" placeholder={product ? centsToInput(product.price_cents) : '97,00'} /></Field>
                 </Group>

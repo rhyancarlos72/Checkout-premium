@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import compression from 'compression';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
@@ -20,6 +21,8 @@ export function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', env.TRUST_PROXY);
+  // gzip/brotli-like: respostas JSON e arquivos do site até ~70% menores
+  app.use(compression({ threshold: 1024 }));
 
   const supabaseHost = new URL(env.SUPABASE_URL).origin;
   app.use(
@@ -47,7 +50,11 @@ export function createApp() {
   app.use(express.json({ limit: '200kb' }));
 
   // credenciais dos gateways configuradas no painel (cache de 30s)
-  app.use('/api', (_req, _res, next) => void refreshGateways().then(() => next(), () => next()));
+  // recarrega em segundo plano: nenhuma requisição espera o banco por causa disso
+  app.use('/api', (_req, _res, next) => {
+    void refreshGateways().catch(() => {});
+    next();
+  });
 
   app.get('/api/health', (_req, res) => res.json({ ok: true, env: env.NODE_ENV }));
   app.use('/api/public', publicRouter);

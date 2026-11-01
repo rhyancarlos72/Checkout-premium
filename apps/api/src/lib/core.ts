@@ -4,6 +4,15 @@ import { env, isProd } from '../config/env.js';
 
 export const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
+  // limite de tempo em toda chamada ao banco: nada fica preso esperando o Supabase
+  global: {
+    fetch: (input: any, init: any = {}) => {
+      if (init.signal) return fetch(input, init);
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 15_000);
+      return fetch(input, { ...init, signal: ctrl.signal }).finally(() => clearTimeout(t));
+    },
+  },
 });
 
 export const logger = pino({
@@ -88,3 +97,10 @@ export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
 }
+
+/**
+ * ID único do produto (7 dígitos, ex.: 9452335), derivado do número interno (#1001…).
+ * Bijeção: (n·7919 + 4523) mod 9.000.000 + 1.000.000 — 7919 é primo com 9.000.000,
+ * então dois produtos nunca têm o mesmo ID, e o ID nunca muda.
+ */
+export const productCode = (n?: number | null) => (n ? String(((n * 7919 + 4523) % 9_000_000) + 1_000_000) : '');

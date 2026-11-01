@@ -7,7 +7,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
-import { brl, digits, maskPhone } from '@/lib/format';
+import { brl, digits, maskPhone, productCode } from '@/lib/format';
 import { collectTracking, initMetaPixel, pixel, track } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
 
@@ -270,7 +270,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         )}
         <div className="min-w-0 flex-1">
           <p className="font-medium leading-snug">{checkout.product.name}</p>
-          <p className="mt-0.5 text-xs text-ck-muted">{checkout.product.number ? `Produto #${checkout.product.number} · ` : ''}Acesso digital imediato</p>
+          <p className="mt-0.5 text-xs text-ck-muted">{checkout.product.number ? `ID: ${productCode(checkout.product.number)} · ` : ''}Acesso digital imediato</p>
         </div>
         <p className="shrink-0 font-semibold tabular-nums">{brl(checkout.price_cents)}</p>
       </div>

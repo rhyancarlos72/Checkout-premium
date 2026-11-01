@@ -59,8 +59,25 @@ export function visibleBumps(rows: any[] | null | undefined) {
     }));
 }
 
-/** Carrega checkout ativo com produto e bumps vinculados. */
+// Cache curto da configuração do checkout (cada visita evitava 1 consulta pesada ao banco).
+// Limpo a cada alteração feita no painel, então mudanças aparecem na hora.
+const checkoutCache = new Map<string, { at: number; data: any }>();
+const CHECKOUT_TTL = 15_000;
+export function clearCheckoutCache() {
+  checkoutCache.clear();
+}
+
+/** Carrega checkout ativo com produto e bumps vinculados (com cache de 15s). */
 export async function loadCheckout(slug: string) {
+  const hit = checkoutCache.get(slug);
+  if (hit && Date.now() - hit.at < CHECKOUT_TTL) return hit.data;
+  const data = await loadCheckoutFresh(slug);
+  checkoutCache.set(slug, { at: Date.now(), data });
+  if (checkoutCache.size > 500) checkoutCache.delete(checkoutCache.keys().next().value!);
+  return data;
+}
+
+async function loadCheckoutFresh(slug: string) {
   const checkout = must(
     await supabase
       .from('checkouts')

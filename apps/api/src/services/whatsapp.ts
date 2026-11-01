@@ -557,19 +557,25 @@ export async function sendWhatsAppRecoveries(max = 10) {
     .gte('created_at', since)
     .order('created_at', { ascending: true })
     .limit(200);
+  const orders = ((data ?? []) as any[]).filter((o) => o.customer?.phone && o.checkout?.slug);
+  if (!orders.length) return;
+  // uma consulta para as tentativas e outra para quem já comprou (antes eram 2 consultas por pedido)
+  const [evRes, paidRes] = await Promise.all([
+    supabase.from('events').select('order_id').eq('type', 'wa_recovery').in('order_id', orders.map((o) => o.id)),
+    supabase.from('orders').select('customer_id').eq('status', 'paid').gte('created_at', since).in('customer_id', [...new Set(orders.map((o) => o.customer_id).filter(Boolean))]),
+  ]);
+  const attempts = new Map<string, number>();
+  for (const e of evRes.data ?? []) attempts.set(e.order_id, (attempts.get(e.order_id) ?? 0) + 1);
+  const buyers = new Set((paidRes.data ?? []).map((p: any) => p.customer_id));
+
   let sent = 0;
-  for (const o of (data ?? []) as any[]) {
+  for (const o of orders) {
     if (sent >= max) break;
-    if (!o.customer?.phone || !o.checkout?.slug) continue;
     const minutes = (Date.now() - new Date(o.created_at).getTime()) / 60000;
-    const { data: evs } = await supabase.from('events').select('id').eq('order_id', o.id).eq('type', 'wa_recovery');
-    const done = evs?.length ?? 0;
-    const next = done + 1;
+    const next = (attempts.get(o.id) ?? 0) + 1;
     if (next > 2) continue;
     if ((next === 1 && minutes < cfg.recovery.firstMinutes) || (next === 2 && minutes < cfg.recovery.secondMinutes)) continue;
-    // já comprou depois? não incomoda
-    const { count: paid } = await supabase.from('orders').select('id', { count: 'exact', head: true }).eq('customer_id', o.customer_id).eq('status', 'paid').gte('created_at', since);
-    if ((paid ?? 0) > 0) continue;
+    if (buyers.has(o.customer_id)) continue; // já comprou depois? não incomoda
     // reserva a tentativa ANTES de enviar (nunca reenviar em duplicidade)
     const { error } = await supabase.from('events').insert({ order_id: o.id, checkout_id: o.checkout_id, type: 'wa_recovery', data: { attempt: next } });
     if (error) continue;

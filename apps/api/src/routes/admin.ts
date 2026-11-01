@@ -2,13 +2,13 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { env, features, isProd } from '../config/env.js';
-import { HttpError, must, supabase } from '../lib/core.js';
+import { HttpError, must, productCode, supabase } from '../lib/core.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
 import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
 import { testEmail } from '../services/email.js';
 import { runJobs } from '../services/jobs.js';
-import { dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
+import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
 import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
@@ -17,6 +17,11 @@ import { getSettings, saveSettings } from '../services/settings.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
+// qualquer alteração no painel invalida o cache dos checkouts públicos
+adminRouter.use((req, _res, next) => {
+  if (req.method !== 'GET') clearCheckoutCache();
+  next();
+});
 
 const uuid = z.string().uuid();
 const urlOrEmpty = z.string().url().or(z.literal('')).nullable().optional().transform((v) => v || null);
@@ -64,13 +69,14 @@ function linkCode() {
 
 type CheckoutTemplate = { theme?: unknown; fields?: unknown; tracking?: unknown; provider?: string; price_cents?: number | null; pix_expires_minutes?: number; bumpIds?: string[] };
 
-async function createDefaultCheckout(product: { id: string; name: string }, template: CheckoutTemplate = {}) {
+async function createDefaultCheckout(product: { id: string; name: string; number?: number | null }, template: CheckoutTemplate = {}) {
   const provider = template.provider ?? (woovi.isConfigured() ? 'woovi' : efi.isConfigured() ? 'efi' : 'woovi');
   for (let i = 0; i < 8; i++) {
     const r = await supabase
       .from('checkouts')
       .insert({
-        slug: linkCode(),
+        // 1ª tentativa: o próprio ID do produto (link ?produto_id= igual ao ID); depois, código aleatório
+        slug: i === 0 && product.number ? productCode(product.number) : linkCode(),
         name: product.name,
         product_id: product.id,
         provider,
@@ -97,7 +103,7 @@ adminRouter.post('/products', async (req, res) => {
   res.status(201).json({ ...product, checkout });
 });
 adminRouter.post('/products/:id/checkout', async (req, res) => {
-  const product = must(await supabase.from('products').select('id, name').eq('id', uuid.parse(req.params.id)).maybeSingle(), 'Produto não encontrado') as any;
+  const product = must(await supabase.from('products').select('id, name, number').eq('id', uuid.parse(req.params.id)).maybeSingle(), 'Produto não encontrado') as any;
   res.status(201).json(await createDefaultCheckout(product));
 });
 
@@ -443,14 +449,13 @@ adminRouter.get('/dashboard', async (req, res) => {
   const from = q.from ? new Date(q.from) : new Date(to.getTime() - (q.days ?? 30) * 86400000);
   if (to.getTime() - from.getTime() > 366 * 86400000) throw new HttpError(400, 'Período máximo: 1 ano');
 
-  const [ordersRes, eventsRes, productsRes] = await Promise.all([
+  const [ordersRes, productsRes] = await Promise.all([
     supabase
       .from('orders')
       .select('id, status, total_cents, provider, created_at, paid_at, recovery_sent_at, checkout_id, items:order_items(kind, product_id, name, price_cents, product:products(number))')
       .gte('created_at', from.toISOString())
       .lt('created_at', to.toISOString())
       .limit(50000),
-    supabase.from('events').select('type, checkout_id').gte('created_at', from.toISOString()).lt('created_at', to.toISOString()).in('type', ['page_view', 'initiate_checkout']).limit(200000),
     supabase.from('products').select('id, name, number, checkouts(id)').order('created_at', { ascending: false }),
   ]);
   if (ordersRes.error) throw new HttpError(500, ordersRes.error.message);
@@ -458,14 +463,22 @@ adminRouter.get('/dashboard', async (req, res) => {
   const products = (productsRes.data ?? []) as any[];
   const checkoutIds = q.product_id ? new Set((products.find((p) => p.id === q.product_id)?.checkouts ?? []).map((c: any) => c.id)) : null;
   const orders = ((ordersRes.data ?? []) as any[]).filter((o) => !q.product_id || o.items.some((i: any) => i.kind === 'main' && i.product_id === q.product_id));
-  const events = ((eventsRes.data ?? []) as any[]).filter((e) => !checkoutIds || checkoutIds.has(e.checkout_id));
+  // contagem feita no banco (antes baixava até 200 mil linhas de eventos para contar no servidor)
+  const countEvents = async (type: string) => {
+    if (checkoutIds && checkoutIds.size === 0) return 0;
+    let q = supabase.from('events').select('id', { count: 'exact', head: true }).eq('type', type).gte('created_at', from.toISOString()).lt('created_at', to.toISOString());
+    if (checkoutIds) q = q.in('checkout_id', [...checkoutIds] as string[]);
+    const { count } = await q;
+    return count ?? 0;
+  };
+  const [pageViews, initiatedCount] = await Promise.all([countEvents('page_view'), countEvents('initiate_checkout')]);
 
   const paid = orders.filter((o) => o.status === 'paid');
   const pending = orders.filter((o) => o.status === 'pending');
   const sum = (arr: any[]) => arr.reduce((s, o) => s + o.total_cents, 0);
   const bumpItems = paid.flatMap((o) => o.items.filter((i: any) => i.kind === 'bump'));
   const recovered = paid.filter((o) => o.recovery_sent_at && o.paid_at && new Date(o.paid_at) > new Date(o.recovery_sent_at));
-  const initiated = events.filter((e) => e.type === 'initiate_checkout').length;
+  const initiated = initiatedCount;
 
   const hourly = Array.from({ length: 24 }, (_, h) => ({ hour: h, paid: 0, revenue_cents: 0 }));
   const daily = new Map<string, { day: string; paid: number; revenue_cents: number }>();
@@ -504,7 +517,7 @@ adminRouter.get('/dashboard', async (req, res) => {
       pending_count: pending.length,
       orders_count: orders.length,
       initiated_count: initiated,
-      page_views: events.filter((e) => e.type === 'page_view').length,
+      page_views: pageViews,
       checkout_conversion: initiated ? paid.length / initiated : 0,
       pix_conversion: orders.length ? paid.length / orders.length : 0,
       bump_cents: bumpItems.reduce((s, i) => s + i.price_cents, 0),

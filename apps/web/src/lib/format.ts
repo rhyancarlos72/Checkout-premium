@@ -1,5 +1,9 @@
-/** Identificação do produto: "#1001" (vazio se ainda não tiver número) */
-export const pid = (n?: number | null) => (n ? `#${n}` : '');
+/**
+ * ID único do produto (7 dígitos, ex.: 9452335), derivado do número interno (#1001…).
+ * Bijeção: (n·7919 + 4523) mod 9.000.000 + 1.000.000 — 7919 é primo com 9.000.000,
+ * então dois produtos nunca têm o mesmo ID, e o ID nunca muda.
+ */
+export const productCode = (n?: number | null) => (n ? String(((n * 7919 + 4523) % 9_000_000) + 1_000_000) : '');
 
 export const brl = (cents: number) => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 export const digits = (v: string) => v.replace(/\D/g, '');
