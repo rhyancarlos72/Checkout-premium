@@ -437,51 +437,54 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           {/* Banner no topo (celular) */}
           {banner && <img src={banner} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm @4xl:hidden" fetchPriority="high" />}
 
-          {/* Produto — estilo infoproduto */}
+          {/* Produto — estilo infoproduto, centralizado: imagem → selos → título → descrição → preço → benefícios */}
           <section className="ck-card overflow-hidden">
-            <div className="flex gap-4 p-5 @lg:gap-5 @lg:p-6">
+            <div className="flex flex-col items-center px-5 pb-6 pt-6 text-center @lg:px-8 @lg:pt-8">
               {productImage ? (
-                <img src={productImage} alt="" className="h-24 w-24 shrink-0 rounded-[calc(var(--ck-r)*.7)] object-cover shadow-md ring-1 ring-ck-border @lg:h-28 @lg:w-28" />
+                <img src={productImage} alt="" className="h-28 w-28 rounded-[calc(var(--ck-r)*.8)] object-cover shadow-lg ring-1 ring-ck-border @lg:h-32 @lg:w-32" />
               ) : (
-                <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.7)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg shadow-md @lg:h-28 @lg:w-28"><Gift className="h-9 w-9" /></div>
+                <div className="flex h-28 w-28 items-center justify-center rounded-[calc(var(--ck-r)*.8)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg shadow-lg @lg:h-32 @lg:w-32"><Gift className="h-10 w-10" /></div>
               )}
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-brand"><Gift className="h-3 w-3" /> Produto digital</span>
-                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-600"><Zap className="h-3 w-3" /> Acesso imediato</span>
-                </div>
-                <h1 className="mt-2 font-display text-[20px] font-bold leading-snug tracking-tight @lg:text-[26px]">{t.headline || checkout.product.name}</h1>
-                {t.producerName && (
-                  <p className="mt-1 flex items-center gap-1 text-[13px] text-ck-muted">por <span className="font-semibold text-ck-text">{t.producerName}</span> <BadgeCheck className="h-3.5 w-3.5 text-sky-500" /></p>
-                )}
-                <div className="mt-3">
-                  {compareAt > checkout.price_cents && (
-                    <p className="flex items-center gap-2 text-[13px] text-ck-muted">
-                      De <span className="line-through">{brl(compareAt)}</span>
-                      <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-bold text-emerald-600">-{Math.round((1 - checkout.price_cents / compareAt) * 100)}%</span>
-                    </p>
-                  )}
-                  <p className="flex flex-wrap items-baseline gap-x-2">
-                    {compareAt > checkout.price_cents && <span className="text-sm font-medium text-ck-muted">por</span>}
-                    <span className="font-display text-[30px] font-extrabold leading-tight tracking-tight text-brand tabular-nums">{brl(checkout.price_cents)}</span>
+              <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+                <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand"><Gift className="h-3 w-3" /> Produto digital</span>
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-600"><Zap className="h-3 w-3" /> Acesso imediato</span>
+              </div>
+              <h1 className="mt-3 max-w-xl font-display text-[22px] font-bold leading-snug tracking-tight @lg:text-[28px]">{t.headline || checkout.product.name}</h1>
+              {t.producerName && (
+                <p className="mt-1 flex items-center justify-center gap-1 text-[13px] text-ck-muted">por <span className="font-semibold text-ck-text">{t.producerName}</span> <BadgeCheck className="h-3.5 w-3.5 text-sky-500" /></p>
+              )}
+              {(t.subheadline || checkout.product.description) && (
+                <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-ck-muted">{t.subheadline || checkout.product.description}</p>
+              )}
+
+              {/* preço */}
+              <div className="mt-5 w-full max-w-sm rounded-[calc(var(--ck-r)*.8)] border border-ck-border bg-ck-surface-2 px-4 py-4">
+                {compareAt > checkout.price_cents && (
+                  <p className="flex items-center justify-center gap-2 text-[13px] text-ck-muted">
+                    De <span className="line-through">{brl(compareAt)}</span>
+                    <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-bold text-emerald-600">-{Math.round((1 - checkout.price_cents / compareAt) * 100)}%</span>
                   </p>
-                  <p className="mt-0.5 text-xs text-ck-muted">à vista no <PixIcon className="inline h-3 w-3 align-[-1px]" /> Pix · pagamento único</p>
-                </div>
+                )}
+                <p className="flex items-baseline justify-center gap-x-2">
+                  {compareAt > checkout.price_cents && <span className="text-sm font-medium text-ck-muted">por</span>}
+                  <span className="font-display text-[34px] font-extrabold leading-tight tracking-tight text-brand tabular-nums">{brl(checkout.price_cents)}</span>
+                </p>
+                <p className="mt-0.5 text-xs text-ck-muted">
+                  à vista no <PixIcon className="inline h-3 w-3 align-[-1px]" /> Pix · pagamento único
+                </p>
               </div>
             </div>
-            {(t.subheadline || checkout.product.description || (t.benefits?.filter(Boolean).length ?? 0) > 0) && (
-              <div className="space-y-4 border-t border-ck-border bg-ck-surface-2/60 p-5 @lg:px-6">
-                {(t.subheadline || checkout.product.description) && <p className="text-[15px] leading-relaxed text-ck-muted">{t.subheadline || checkout.product.description}</p>}
-                {(t.benefits?.filter(Boolean).length ?? 0) > 0 && (
-                  <ul className="grid gap-2.5 @lg:grid-cols-2">
-                    {t.benefits!.filter(Boolean).map((b, i) => (
-                      <li key={i} className="flex items-start gap-2.5 text-sm">
-                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-brand-fg"><Check className="h-3 w-3" strokeWidth={3.5} /></span>
-                        <span className="leading-snug">{b}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+
+            {(t.benefits?.filter(Boolean).length ?? 0) > 0 && (
+              <div className="border-t border-ck-border bg-ck-surface-2/60 px-5 py-5 @lg:px-8">
+                <ul className="mx-auto grid max-w-xl gap-2.5 @lg:grid-cols-2">
+                  {t.benefits!.filter(Boolean).map((b, i) => (
+                    <li key={i} className="flex items-start gap-2.5 text-left text-sm">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-brand-fg"><Check className="h-3 w-3" strokeWidth={3.5} /></span>
+                      <span className="leading-snug">{b}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             )}
           </section>
@@ -635,7 +638,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
       <footer ref={footerRef} className="border-t border-ck-border">
         <div className="mx-auto max-w-[1120px] space-y-2 px-4 py-8 text-center text-xs leading-relaxed text-ck-muted">
-          <p className="flex items-center justify-center gap-1.5 font-medium"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Compra protegida · dados criptografados · pagamento via <PixIcon className="h-3 w-3" /> Pix</p>
+          <p className="mx-auto max-w-md text-center font-medium leading-relaxed">
+            <ShieldCheck className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-emerald-500" />Compra protegida · dados criptografados · pagamento via <PixIcon className="mx-0.5 inline h-3 w-3 align-[-1px]" />Pix
+          </p>
           {t.footerText && <p className="whitespace-pre-line">{t.footerText}</p>}
           {(t.producerName || checkout.store.document || checkout.store.supportEmail) && (
             <p>
