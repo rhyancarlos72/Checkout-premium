@@ -34,8 +34,8 @@ export function createApp() {
           'script-src': ["'self'", 'https://connect.facebook.net'],
           'img-src': ["'self'", 'data:', 'blob:', 'https:'],
           'connect-src': ["'self'", supabaseHost, supabaseHost.replace('https://', 'wss://'), 'https://www.facebook.com', 'https://connect.facebook.net'],
-          'style-src': ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-          'font-src': ["'self'", 'https://fonts.gstatic.com', 'data:'],
+          'style-src': ["'self'", "'unsafe-inline'"],
+          'font-src': ["'self'", 'data:'],
           'frame-src': ["'self'", 'https://www.facebook.com'],
           'frame-ancestors': ["'none'"],
         },
@@ -89,9 +89,24 @@ export function createApp() {
   if (fs.existsSync(webDist)) {
     app.use('/assets', express.static(path.join(webDist, 'assets'), { immutable: true, maxAge: '1y' }));
     app.use(express.static(webDist, { index: false, maxAge: '1h' }));
+    // CSS embutido no HTML: o navegador pinta a página sem esperar outro arquivo (sem "render-blocking")
+    let html: { mtime: number; body: string } | null = null;
+    const indexHtml = () => {
+      const file = path.join(webDist, 'index.html');
+      const mtime = fs.statSync(file).mtimeMs;
+      if (html?.mtime === mtime) return html.body;
+      let body = fs.readFileSync(file, 'utf8');
+      body = body.replace(/<link rel="stylesheet"[^>]*href="(\/assets\/[^"]+\.css)"[^>]*>/g, (tag, href: string) => {
+        const css = path.join(webDist, href);
+        if (!css.startsWith(webDist) || !fs.existsSync(css)) return tag;
+        return `<style>${fs.readFileSync(css, 'utf8').replace(/<\/style/gi, '<\\/style')}</style>`;
+      });
+      html = { mtime, body };
+      return body;
+    };
     app.get(/^\/(?!api\/).*/, (_req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
-      res.sendFile(path.join(webDist, 'index.html'));
+      res.type('html').send(indexHtml());
     });
   }
 

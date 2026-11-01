@@ -111,6 +111,8 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
     metaPixelId: checkout?.tracking?.metaPixelId ?? '',
   });
   const [theme, setTheme] = useState<Theme>({ ...themeDefaults, testimonials: [], ...checkout?.theme });
+  // texto livre do preço “De”: não reformata enquanto digita
+  const [compareInput, setCompareInput] = useState(centsToInput(checkout?.theme?.compareAtCents ?? null));
   const [bumpIds, setBumpIds] = useState<string[]>([...(checkout?.checkout_bumps ?? [])].sort((a, b) => a.sort - b.sort).map((b) => b.bump_id));
   const settings = useQuery({ queryKey: ['settings'], queryFn: () => adminApi.get<{ store: { name: string; supportEmail: string; document: string } }>('/settings') });
   const set = (patch: Partial<typeof f>) => setF((p) => ({ ...p, ...patch }));
@@ -292,7 +294,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                   <Field label="Subtítulo" hint="Vazio = descrição do produto"><Textarea rows={2} value={theme.subheadline ?? ''} onChange={(e) => setT({ subheadline: e.target.value })} /></Field>
                   <Field label="Texto do botão"><Input value={theme.buttonText ?? ''} onChange={(e) => setT({ buttonText: e.target.value })} placeholder="Finalizar compra" /></Field>
                   <Field label="Nome do produtor / marca" hint="Aparece como “por …” abaixo do título"><Input value={theme.producerName ?? ''} onChange={(e) => setT({ producerName: e.target.value })} placeholder="Ex.: Prof. Ana Lima" /></Field>
-                  <Field label="Preço “De” (riscado)" hint="Mostra “De R$ X por R$ Y” e o selo de desconto"><Input value={centsToInput(theme.compareAtCents ?? null)} onChange={(e) => setT({ compareAtCents: e.target.value ? parseMoney(e.target.value) : null })} inputMode="decimal" placeholder="197,00" /></Field>
+                  <Field label="Preço “De” (riscado)" hint="Mostra “De R$ X por R$ Y” e o selo de desconto"><Input value={compareInput} onChange={(e) => { const v = e.target.value; setCompareInput(v); setT({ compareAtCents: v.trim() ? parseMoney(v) || null : null }); }} onBlur={() => setCompareInput(centsToInput(theme.compareAtCents ?? null))} inputMode="decimal" placeholder="Ex.: 197,00" /></Field>
                 </Group>
                 <Group title="Benefícios" desc="Lista com ✓ no card do produto. Até 8 itens curtos.">
                   {(theme.benefits ?? []).map((b, i) => (

@@ -50,7 +50,18 @@ export const dateTime = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
 
 /** "197,90" → 19790 */
-export const parseMoney = (v: string) => Math.round(Number(v.replace(/\./g, '').replace(',', '.')) * 100) || 0;
+/**
+ * Converte valor digitado livremente em centavos: "29,90", "29.90", "R$ 29,90", "1.299,90", "1,299.90", "29".
+ * O último separador seguido de 1–2 dígitos é o decimal; os demais são de milhar.
+ */
+export const parseMoney = (v: string) => {
+  const s = v.replace(/[^\d.,]/g, '');
+  if (!s) return 0;
+  const m = s.match(/^(.*)[.,](\d{1,2})$/);
+  const int = (m ? m[1] : s).replace(/[.,]/g, '');
+  const dec = m ? m[2].padEnd(2, '0') : '00';
+  return Number(int || '0') * 100 + Number(dec) || 0;
+};
 export const centsToInput = (c: number | null | undefined) => (c == null ? '' : (c / 100).toFixed(2).replace('.', ','));
 
 /** Cor de texto legível sobre a cor de fundo */
