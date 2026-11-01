@@ -31,7 +31,7 @@ export interface OrderForTracking {
   tracking: Record<string, any>;
   checkout_slug: string | null;
   customer: { name: string; email: string; phone: string | null; document: string | null } | null;
-  items: { kind: string; name: string; price_cents: number; product_id: string | null; bump_id: string | null }[];
+  items: { kind: string; name: string; price_cents: number; product_id: string | null; bump_id: string | null; product?: { number: number | null } | null }[];
 }
 
 function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
@@ -64,8 +64,10 @@ function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
     event_source_url: t.page_url || (o.checkout_slug ? `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout_slug}` : env.PUBLIC_URL),
     product_id: main?.product_id ?? '',
     product_name: main?.name ?? '',
+    product_number: main?.product?.number ?? null, // ID numérico do produto (#1001)
     products: o.items.map((i) => ({
       id: i.product_id ?? i.bump_id ?? '',
+      number: i.product?.number ?? null,
       name: i.name,
       quantity: 1,
       price: Number((i.price_cents / 100).toFixed(2)),

@@ -8,7 +8,7 @@ import { brl } from '@/lib/format';
 import { PixIcon } from '../checkout/CheckoutView';
 
 interface Dashboard {
-  products: { id: string; name: string }[];
+  products: { id: string; name: string; number?: number | null }[];
   kpis: {
     paid_cents: number;
     paid_count: number;
@@ -27,7 +27,7 @@ interface Dashboard {
   };
   hourly: { hour: number; paid: number; revenue_cents: number }[];
   methods: { method: string; label: string; count: number; revenue_cents: number }[];
-  top_products: { name: string; kind: string; count: number; revenue_cents: number }[];
+  top_products: { name: string; kind: string; number?: number | null; count: number; revenue_cents: number }[];
 }
 
 // ------------------------------------------------------------------ período
@@ -177,7 +177,7 @@ export default function DashboardPage({ name }: { name?: string }) {
           button={(open) => (
             <button className={pillBtn}>
               <Package className="h-[18px] w-[18px] text-zinc-500" />
-              <span className="max-w-[220px] truncate">{productName ?? 'Todos os produtos'}</span>
+              <span className="max-w-[220px] truncate">{productName ? `${data?.products.find((p) => p.id === productId)?.number ? `#${data?.products.find((p) => p.id === productId)?.number} · ` : ''}${productName}` : 'Todos os produtos'}</span>
               <ChevronDown className={cn('h-4 w-4 text-zinc-500 transition', open && 'rotate-180')} />
             </button>
           )}
@@ -186,7 +186,7 @@ export default function DashboardPage({ name }: { name?: string }) {
             <div className="max-h-80 w-[280px] overflow-y-auto">
               {[{ id: '', name: 'Todos os produtos' }, ...(data?.products ?? [])].map((p) => (
                 <button key={p.id || 'all'} onClick={() => (setProductId(p.id), close())} className={cn('flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2.5 text-left text-sm transition hover:bg-zinc-100', productId === p.id && 'font-semibold text-blue-600')}>
-                  <span className="truncate">{p.name}</span> {productId === p.id && <Check className="h-4 w-4 shrink-0" />}
+                  <span className="truncate">{'number' in p && p.number ? <span className="mr-1.5 font-mono text-xs text-zinc-400">#{p.number}</span> : null}{p.name}</span> {productId === p.id && <Check className="h-4 w-4 shrink-0" />}
                 </button>
               ))}
             </div>
@@ -308,7 +308,7 @@ export default function DashboardPage({ name }: { name?: string }) {
                   <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold', i === 0 ? 'bg-amber-100 text-amber-700' : 'bg-zinc-100 text-zinc-500')}>{i + 1}</span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-zinc-900">{p.name}</p>
-                    <p className="text-xs text-zinc-500">{p.count} vendas{p.kind === 'bump' && ' · order bump'}</p>
+                    <p className="text-xs text-zinc-500">{p.number ? `#${p.number} · ` : ''}{p.count} vendas{p.kind === 'bump' && ' · order bump'}</p>
                   </div>
                   <span className="text-sm font-semibold tabular-nums text-zinc-900">{brl(p.revenue_cents)}</span>
                 </li>

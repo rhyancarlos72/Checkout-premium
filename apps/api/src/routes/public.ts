@@ -26,7 +26,7 @@ publicRouter.get('/checkouts/:slug', async (req, res) => {
     theme: c.theme,
     fields: c.fields,
     tracking: { metaPixelId: c.tracking?.metaPixelId ?? null },
-    product: { name: c.product.name, description: c.product.description, image_url: c.product.image_url },
+    product: { name: c.product.name, number: c.product.number ?? null, description: c.product.description, image_url: c.product.image_url },
     bumps: c.bumps.map((b: any) => ({
       id: b.id,
       title: b.title,

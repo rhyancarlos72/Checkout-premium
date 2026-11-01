@@ -87,7 +87,7 @@ No painel: **Integrações → Webhooks → Adicionar webhook → PayTracking**.
 
 No painel: **Integrações → WhatsApp · Evolution API**.
 1. Informe a **URL da Evolution API** (ex.: `http://SEU-IP:8082`).
-2. Adicione as **instâncias** (nome + token). Clique em **Verificar conexão** para ver quais estão online.
+2. Informe a **API Key global** da Evolution (`AUTHENTICATION_API_KEY`) e clique em **Buscar instâncias**: o painel puxa o nome exato, o status e o número de cada instância — marque as que quer usar e clique em **Importar**. (Também dá para cadastrar manualmente nome + token.)
 3. Escolha o que enviar: **acesso quando o pagamento for aprovado** e/ou **recuperação de Pix pendente** (2 lembretes; padrão 20 min e 3 h, com o Pix copia e cola).
 4. **Salvar WhatsApp** e use **Enviar teste** com o seu número.
 
@@ -101,7 +101,7 @@ As mensagens seguem o padrão cordial do checkout antigo (sem CAPS, sem urgênci
 | Tempo esgotado ao conectar | A hospedagem bloqueia a porta (ex.: 8082). Publique a Evolution num domínio **HTTPS (porta 443)** com proxy reverso e use essa URL |
 | Conexão recusada | Evolution parada ou porta errada |
 | Token recusado (401/403) | Cole o **token (apikey)** da instância — não é o número do WhatsApp. A API Key global também funciona |
-| Instância não encontrada (404) | O nome tem que ser idêntico ao da Evolution |
+| Instância não encontrada / 404 ao enviar | Use **Buscar instâncias** e importe com o nome exato (a resposta da Evolution aparece na mensagem) |
 | WhatsApp desconectado | Escaneie o QR Code da instância na Evolution |
 | Número não tem WhatsApp | Confira DDD/número do cliente |
 | Rotina parada há muito tempo | Crie o Cron Job de `/api/jobs/run` (seção 7) |

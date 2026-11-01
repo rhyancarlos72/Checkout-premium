@@ -132,7 +132,7 @@ export function ProductBumpsModal({ product, products, onClose, onSaved }: { pro
                         <button key={p.id} onClick={() => toggle(p)} disabled={list.length >= 10} className="flex items-center gap-3 rounded-xl border border-dashed border-zinc-300 p-3 text-left transition hover:border-blue-500 hover:bg-blue-50/40 disabled:opacity-50">
                           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 border-zinc-300" />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-zinc-900">{p.name}</span>
+                            <span className="block truncate text-sm font-medium text-zinc-900">{p.number ? <span className="mr-1 font-mono text-xs text-zinc-500">#{p.number}</span> : null}{p.name}</span>
                             <span className={cn('block text-xs', p.active ? 'text-zinc-500' : 'text-amber-600')}>{brl(p.price_cents)}{!p.active && ' · inativo'}</span>
                           </span>
                         </button>

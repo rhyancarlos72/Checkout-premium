@@ -11,7 +11,7 @@ import { runJobs } from '../services/jobs.js';
 import { dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
-import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
+import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
 
@@ -204,7 +204,7 @@ const bumpSchema = z.object({
   image_url: urlOrEmpty,
   active: z.boolean().default(true),
 });
-crud('bumps', 'order_bumps', bumpSchema, '*, product:products(name)');
+crud('bumps', 'order_bumps', bumpSchema, '*, product:products(name, number)');
 
 const couponSchema = z.object({
   code: z.string().trim().toUpperCase().regex(/^[A-Z0-9_-]{3,40}$/, 'Use letras, números, _ ou -'),
@@ -262,7 +262,7 @@ const checkoutSchema = z.object({
   bump_ids: z.array(uuid).max(10).default([]),
 });
 
-const checkoutSelect = '*, product:products(name, price_cents), checkout_bumps(bump_id, sort)';
+const checkoutSelect = '*, product:products(name, price_cents, number), checkout_bumps(bump_id, sort)';
 
 adminRouter.get('/checkouts', async (_req, res) => {
   res.json(must(await supabase.from('checkouts').select(checkoutSelect).order('created_at', { ascending: false })));
@@ -328,7 +328,7 @@ function ordersQuery(f: z.infer<typeof orderListQuery>, select: string, count = 
   return q;
 }
 
-const orderListSelect = 'id, number, status, provider, total_cents, discount_cents, created_at, paid_at, tracking, customer:customers!inner(name, email, phone), checkout:checkouts(name, slug), items:order_items(kind, name, price_cents)';
+const orderListSelect = 'id, number, status, provider, total_cents, discount_cents, created_at, paid_at, tracking, customer:customers!inner(name, email, phone), checkout:checkouts(name, slug), items:order_items(kind, name, price_cents, product:products(number))';
 
 adminRouter.get('/orders', async (req, res) => {
   const f = orderListQuery.parse(req.query);
@@ -345,13 +345,13 @@ adminRouter.get('/orders/export.csv', async (req, res) => {
   if (error) throw new HttpError(500, error.message);
   const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const rows = (data as any[]).map((o) =>
-    [o.number, o.created_at, o.status, o.provider, (o.total_cents / 100).toFixed(2).replace('.', ','), o.customer?.name, o.customer?.email, o.customer?.phone, o.checkout?.name, o.tracking?.utm_source, o.tracking?.utm_campaign, o.paid_at]
+    [o.number, o.created_at, o.status, o.provider, (o.total_cents / 100).toFixed(2).replace('.', ','), o.items.map((i: any) => `${i.product?.number ? `#${i.product.number} ` : ''}${i.name}`).join(' + '), o.customer?.name, o.customer?.email, o.customer?.phone, o.checkout?.name, o.tracking?.utm_source, o.tracking?.utm_campaign, o.paid_at]
       .map(esc)
       .join(';'),
   );
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="pedidos.csv"');
-  res.send('﻿' + ['Pedido;Data;Status;Gateway;Total;Cliente;Email;Telefone;Checkout;utm_source;utm_campaign;Pago em', ...rows].join('\n'));
+  res.send('﻿' + ['Pedido;Data;Status;Gateway;Total;Produtos (ID);Cliente;Email;Telefone;Checkout;utm_source;utm_campaign;Pago em', ...rows].join('\n'));
 });
 
 adminRouter.get('/orders/:id', async (req, res) => {
@@ -359,7 +359,7 @@ adminRouter.get('/orders/:id', async (req, res) => {
   const order: any = must(
     await supabase
       .from('orders')
-      .select('*, customer:customers(*), checkout:checkouts(name, slug), coupon:coupons(code), items:order_items(*)')
+      .select('*, customer:customers(*), checkout:checkouts(name, slug), coupon:coupons(code), items:order_items(*, product:products(number))')
       .eq('id', id)
       .maybeSingle(),
   );
@@ -446,12 +446,12 @@ adminRouter.get('/dashboard', async (req, res) => {
   const [ordersRes, eventsRes, productsRes] = await Promise.all([
     supabase
       .from('orders')
-      .select('id, status, total_cents, provider, created_at, paid_at, recovery_sent_at, checkout_id, items:order_items(kind, product_id, name, price_cents)')
+      .select('id, status, total_cents, provider, created_at, paid_at, recovery_sent_at, checkout_id, items:order_items(kind, product_id, name, price_cents, product:products(number))')
       .gte('created_at', from.toISOString())
       .lt('created_at', to.toISOString())
       .limit(50000),
     supabase.from('events').select('type, checkout_id').gte('created_at', from.toISOString()).lt('created_at', to.toISOString()).in('type', ['page_view', 'initiate_checkout']).limit(200000),
-    supabase.from('products').select('id, name, checkouts(id)').order('created_at', { ascending: false }),
+    supabase.from('products').select('id, name, number, checkouts(id)').order('created_at', { ascending: false }),
   ]);
   if (ordersRes.error) throw new HttpError(500, ordersRes.error.message);
 
@@ -485,10 +485,10 @@ adminRouter.get('/dashboard', async (req, res) => {
     return { method: p, label: p === 'efi' ? 'Pix · Efí' : 'Pix · Woovi', count: list.length, revenue_cents: sum(list) };
   });
 
-  const top = new Map<string, { name: string; kind: string; count: number; revenue_cents: number }>();
+  const top = new Map<string, { name: string; kind: string; number: number | null; count: number; revenue_cents: number }>();
   for (const it of paid.flatMap((o) => o.items)) {
-    const k = `${it.kind}:${it.name}`;
-    const t = top.get(k) ?? { name: it.name, kind: it.kind, count: 0, revenue_cents: 0 };
+    const k = `${it.kind}:${it.product_id ?? it.name}`;
+    const t = top.get(k) ?? { name: it.name, kind: it.kind, number: it.product?.number ?? null, count: 0, revenue_cents: 0 };
     t.count++;
     t.revenue_cents += it.price_cents;
     top.set(k, t);
@@ -496,7 +496,7 @@ adminRouter.get('/dashboard', async (req, res) => {
 
   res.json({
     period: { from, to },
-    products: products.map((p) => ({ id: p.id, name: p.name })),
+    products: products.map((p) => ({ id: p.id, name: p.name, number: p.number ?? null })),
     kpis: {
       paid_cents: sum(paid),
       paid_count: paid.length,
@@ -671,7 +671,8 @@ adminRouter.post('/gateways/:name/test', async (req, res) => {
 // ------------------------------------------------------------------ WhatsApp (Evolution API)
 adminRouter.get('/whatsapp', async (_req, res) => {
   const cfg = await getWhatsAppConfig();
-  res.json({ ...cfg, instances: cfg.instances.map(({ token, ...i }) => ({ ...i, token_hint: gwMask(token), has_token: Boolean(token) })) });
+  const { globalApiKey, ...rest } = cfg;
+  res.json({ ...rest, globalApiKey: '', globalApiKey_hint: gwMask(globalApiKey), has_globalApiKey: Boolean(globalApiKey), instances: cfg.instances.map(({ token, ...i }) => ({ ...i, token_hint: gwMask(token), has_token: Boolean(token) })) });
 });
 
 /** Salva a configuração; instância com token vazio mantém o token já salvo (pelo nome). */
@@ -681,12 +682,41 @@ adminRouter.put('/whatsapp', async (req, res) => {
   const names = input.instances.map((i) => i.name);
   if (new Set(names).size !== names.length) throw new HttpError(400, 'Há instâncias com o mesmo nome');
   const instances = input.instances.map((i) => ({ ...i, token: i.token || cur.instances.find((c) => c.name === i.name)?.token || '' }));
-  if (input.enabled && (!input.apiUrl || !instances.some((i) => i.active && i.token))) throw new HttpError(400, 'Informe a URL da API e pelo menos uma instância ativa com token');
-  await saveWhatsAppConfig({ ...input, instances });
+  const globalApiKey = input.globalApiKey || cur.globalApiKey;
+  if (input.enabled && (!input.apiUrl || !instances.some((i) => i.active && (i.token || globalApiKey)))) throw new HttpError(400, 'Informe a URL da API e pelo menos uma instância ativa com token (ou a API Key global)');
+  await saveWhatsAppConfig({ ...input, globalApiKey, instances });
   res.json({ ok: true });
 });
 
 adminRouter.get('/whatsapp/status', async (_req, res) => res.json(await instancesStatus()));
+
+/** Busca as instâncias na Evolution (nome exato, status, número). Tokens não vão para o navegador. */
+adminRouter.post('/whatsapp/discover', async (req, res) => {
+  const b = z.object({ apiUrl: z.string().trim().optional(), apiKey: z.string().trim().optional() }).parse(req.body);
+  const cur = await getWhatsAppConfig();
+  const apiUrl = b.apiUrl ? whatsappSchema.shape.apiUrl.parse(b.apiUrl) : cur.apiUrl;
+  const key = b.apiKey || cur.globalApiKey || cur.instances.find((i) => i.token)?.token || '';
+  const r = await fetchEvolutionInstances(apiUrl, key);
+  if (!r.ok) return res.json(r);
+  res.json({ ok: true, items: r.items.map(({ token, ...i }) => ({ ...i, hasToken: Boolean(token) })) });
+});
+
+/** Importa instâncias escolhidas: salva nome exato e token vindo da Evolution (ou usa a API Key global). */
+adminRouter.post('/whatsapp/import', async (req, res) => {
+  const b = z.object({ apiUrl: z.string().trim().optional(), apiKey: z.string().trim().optional(), names: z.array(z.string().min(1)).min(1).max(20), replace: z.boolean().default(true) }).parse(req.body);
+  const cur = await getWhatsAppConfig();
+  const apiUrl = b.apiUrl ? whatsappSchema.shape.apiUrl.parse(b.apiUrl) : cur.apiUrl;
+  const key = b.apiKey || cur.globalApiKey || cur.instances.find((i) => i.token)?.token || '';
+  const r = await fetchEvolutionInstances(apiUrl, key);
+  if (!r.ok) throw new HttpError(400, r.error);
+  const chosen = r.items.filter((i) => b.names.includes(i.name));
+  if (!chosen.length) throw new HttpError(400, 'Nenhuma das instâncias escolhidas foi encontrada na Evolution');
+  const imported = chosen.map((i) => ({ name: i.name, token: i.token ?? '', active: true }));
+  const keep = b.replace ? [] : cur.instances.filter((c) => !imported.some((i) => i.name === c.name));
+  const globalApiKey = b.apiKey || cur.globalApiKey || (imported.some((i) => !i.token) ? key : '');
+  await saveWhatsAppConfig({ ...cur, apiUrl, globalApiKey, instances: [...keep, ...imported] });
+  res.json({ ok: true, count: imported.length });
+});
 adminRouter.get('/whatsapp/diagnose', async (_req, res) => res.json(await diagnoseWhatsApp({ jobsEnabled: env.JOBS_ENABLED, lastJobRunAt })));
 adminRouter.get('/whatsapp/logs', async (_req, res) => {
   const { data } = await supabase.from('integration_logs').select('event, ok, message, created_at, order_id').eq('integration', 'whatsapp').order('created_at', { ascending: false }).limit(15);

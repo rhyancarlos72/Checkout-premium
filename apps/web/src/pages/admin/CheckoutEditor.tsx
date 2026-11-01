@@ -24,7 +24,7 @@ export interface Checkout {
   tracking: { metaPixelId?: string };
   pix_expires_minutes: number;
   active: boolean;
-  product?: { name: string; price_cents: number };
+  product?: { name: string; price_cents: number; number?: number | null };
   checkout_bumps?: { bump_id: string; sort: number }[];
 }
 
@@ -240,7 +240,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                 </Group>
                 <Group title="Produto e preço">
                   <Field label="Produto principal">
-                    <Select value={f.product_id} onChange={(e) => set({ product_id: e.target.value })}>{products.map((p) => <option key={p.id} value={p.id}>{p.name} — {brl(p.price_cents)}</option>)}</Select>
+                    <Select value={f.product_id} onChange={(e) => set({ product_id: e.target.value })}>{products.map((p) => <option key={p.id} value={p.id}>{p.number ? `#${p.number} · ` : ''}{p.name} — {brl(p.price_cents)}</option>)}</Select>
                   </Field>
                   <Field label="Preço neste checkout" hint="Deixe vazio para usar o preço do produto"><Input value={f.price} onChange={(e) => set({ price: e.target.value })} inputMode="decimal" placeholder={product ? centsToInput(product.price_cents) : '97,00'} /></Field>
                 </Group>

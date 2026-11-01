@@ -38,7 +38,7 @@ export default function CheckoutsPage() {
                 </div>
                 <div className="absolute bottom-3 left-4 right-4">
                   <p className="truncate font-semibold text-white">{c.name}</p>
-                  <p className="truncate text-xs text-white/75">{c.product?.name} · {brl(c.price_cents ?? c.product?.price_cents ?? 0)}</p>
+                  <p className="truncate text-xs text-white/75">{c.product?.number ? `#${c.product.number} · ` : ''}{c.product?.name} · {brl(c.price_cents ?? c.product?.price_cents ?? 0)}</p>
                 </div>
               </button>
               <div className="space-y-3 p-4">

@@ -13,6 +13,19 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => (b += c));
   req.on('end', () => {
     calls.push({ path: req.url!, apikey: req.headers.apikey as string, body: b ? JSON.parse(b) : null });
+    if (req.url === '/instance/fetchInstances') {
+      if (req.headers.apikey !== 'GLOBAL' && req.headers.apikey !== 'V1') return res.writeHead(401).end('{}');
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return res.end(
+        req.headers.apikey === 'V1'
+          ? JSON.stringify([{ instance: { instanceName: 'vendas01', owner: '5511912345678@s.whatsapp.net', profileName: 'Loja', status: 'open', apikey: 'tok-v1' } }])
+          : JSON.stringify([
+              { name: 'Checkout-A', connectionStatus: 'open', ownerJid: '5521988887777@s.whatsapp.net', profileName: 'Loja A', token: 'tok-a' },
+              { name: 'checkout-b', connectionStatus: 'close', ownerJid: null, token: 'tok-b' },
+            ]),
+      );
+    }
+    if (req.url!.startsWith('/message/sendText/fantasma')) return res.writeHead(404, { 'Content-Type': 'application/json' }).end('{"status":404,"error":"Not Found","response":{"message":["The \\"fantasma\\" instance does not exist"]}}');
     if (req.headers.apikey === 'bad') return res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"message":"Unauthorized"}');
     if (req.url!.endsWith('/naoexiste')) return res.writeHead(404, { 'Content-Type': 'application/json' }).end('{"message":"not found"}');
     if (req.url!.includes('/sendText/') && req.body === undefined && JSON.stringify(b).includes('5511900000000')) {
@@ -142,5 +155,42 @@ describe('URL da Evolution', () => {
   it('completa http:// e tira a barra final', () => {
     expect(wa.whatsappSchema.parse({ apiUrl: '10.0.0.1:8082/' }).apiUrl).toBe('http://10.0.0.1:8082');
     expect(wa.whatsappSchema.parse({ apiUrl: 'https://evo.site.com' }).apiUrl).toBe('https://evo.site.com');
+  });
+});
+
+describe('buscar instâncias na Evolution (puxando nome e número)', () => {
+  it('lê o formato da Evolution v2 com nome exato, status e número', async () => {
+    const r = await wa.fetchEvolutionInstances(url, 'GLOBAL');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.items).toEqual([
+      { name: 'Checkout-A', status: 'open', connected: true, number: '5521988887777', profileName: 'Loja A', token: 'tok-a' },
+      { name: 'checkout-b', status: 'close', connected: false, number: null, profileName: null, token: 'tok-b' },
+    ]);
+  });
+  it('lê o formato da Evolution v1', async () => {
+    const r = await wa.fetchEvolutionInstances(url, 'V1');
+    expect(r.ok && r.items[0]).toMatchObject({ name: 'vendas01', number: '5511912345678', connected: true, token: 'tok-v1' });
+  });
+  it('explica chave recusada', async () => {
+    const r = await wa.fetchEvolutionInstances(url, 'errada');
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toMatch(/recusada/);
+  });
+  it('usa a API Key global quando a instância está sem token', async () => {
+    const c = wa.whatsappSchema.parse({ enabled: true, apiUrl: url, globalApiKey: 'GLOBALKEY', instances: [{ name: 'boa', token: '' }] });
+    calls.length = 0;
+    const r = await wa.sendWhatsAppText('11988887777', 'via chave global', c);
+    expect(r.ok).toBe(true);
+    expect(calls.find((x) => x.path === '/message/sendText/boa')?.apikey).toBe('GLOBALKEY');
+  });
+  it('404 ao enviar mostra a resposta da Evolution e orienta importar', async () => {
+    const r = await wa.sendWhatsAppText('11988887777', 'teste 404', cfg([{ name: 'fantasma', token: 't' }]));
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/404/);
+    expect(r.error).toMatch(/does not exist/);
+    expect(r.hint).toMatch(/Buscar instâncias/);
+    // tentou também o formato @s.whatsapp.net
+    expect(calls.some((x) => x.path === '/message/sendText/fantasma' && String(x.body?.number).endsWith('@s.whatsapp.net'))).toBe(true);
   });
 });

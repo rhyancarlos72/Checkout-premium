@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Eye, EyeOff, MessageCircle, Plus, Radio, Send, Stethoscope, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Eye, EyeOff, MessageCircle, Plus, Radio, Search, Send, Stethoscope, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button, cn, Field, Input, PageLoader, Select, Switch } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
@@ -8,6 +8,9 @@ interface Instance { name: string; token?: string; active: boolean; token_hint?:
 interface Config {
   enabled: boolean;
   apiUrl: string;
+  globalApiKey: string;
+  globalApiKey_hint?: string;
+  has_globalApiKey?: boolean;
   instances: Instance[];
   approved: { enabled: boolean };
   recovery: { enabled: boolean; firstMinutes: number; secondMinutes: number; includePix: boolean };
@@ -37,9 +40,33 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
   const [phone, setPhone] = useState('');
   const [kind, setKind] = useState<'approved' | 'recovery' | 'text'>('approved');
   const [tab, setTab] = useState<'approved' | 'recovery1' | 'recovery2'>('approved');
+  const [found, setFound] = useState<{ name: string; status: string | null; connected: boolean; number: string | null; profileName: string | null; hasToken: boolean }[] | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [discoverErr, setDiscoverErr] = useState<{ error: string; hint?: string } | null>(null);
+  const discover = useMutation({
+    mutationFn: () => adminApi.post<any>('/whatsapp/discover', { apiUrl: c?.apiUrl, apiKey: c?.globalApiKey || undefined }),
+    onSuccess: (r) => {
+      if (!r.ok) return (setFound(null), setDiscoverErr(r));
+      setDiscoverErr(null);
+      setFound(r.items);
+      setPicked(r.items.filter((i: any) => i.connected).map((i: any) => i.name));
+    },
+    onError: (e) => setDiscoverErr({ error: e instanceof ApiError ? e.message : 'Erro' }),
+  });
+  const importIt = useMutation({
+    mutationFn: () => adminApi.post<{ count: number }>('/whatsapp/import', { apiUrl: c?.apiUrl, apiKey: c?.globalApiKey || undefined, names: picked, replace: true }),
+    onSuccess: (r) => {
+      toast.ok(`${r.count} instância(s) importada(s) com o nome exato da Evolution`);
+      setFound(null);
+      setStatus({});
+      qc.invalidateQueries({ queryKey: ['whatsapp'] });
+    },
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
+  });
+  const fmtPhone = (n: string | null) => (n && n.length >= 12 ? `+${n.slice(0, 2)} (${n.slice(2, 4)}) ${n.slice(4, -4)}-${n.slice(-4)}` : n ?? 'sem número');
 
   useEffect(() => {
-    if (data) setC({ ...data, instances: data.instances.map((i) => ({ ...i, token: '' })) });
+    if (data) setC({ ...data, globalApiKey: '', instances: data.instances.map((i) => ({ ...i, token: '' })) });
   }, [data]);
 
   const save = useMutation({
@@ -123,6 +150,50 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
             <Input value={c.apiUrl} onChange={(e) => set({ apiUrl: e.target.value })} placeholder="http://0.0.0.0:8082" className="font-mono text-sm" />
           </Field>
 
+          <Field label="API Key global da Evolution (opcional, recomendado)" hint={c.has_globalApiKey ? `Salva: ${c.globalApiKey_hint} · deixe em branco para manter` : 'Variável AUTHENTICATION_API_KEY da Evolution. Vale para todas as instâncias e permite buscar a lista abaixo.'}>
+            <TokenInput value={c.globalApiKey} onChange={(v) => set({ globalApiKey: v })} placeholder={c.has_globalApiKey ? '••••••••' : 'API Key global'} />
+          </Field>
+
+          <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-zinc-700"><b>Buscar instâncias da Evolution</b><br /><span className="text-xs text-zinc-500">Puxa nome exato, status e número de cada instância — sem digitar.</span></p>
+              <Button size="sm" className="shrink-0 whitespace-nowrap" loading={discover.isPending} disabled={!c.apiUrl} onClick={() => discover.mutate()}><Search className="h-3.5 w-3.5" /> Buscar instâncias</Button>
+            </div>
+            {discoverErr && (
+              <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                {discoverErr.error}
+                {discoverErr.hint && <p className="mt-1 text-xs text-zinc-600">💡 {discoverErr.hint}</p>}
+              </div>
+            )}
+            {found && (
+              <div className="mt-3 space-y-2">
+                {found.length === 0 ? (
+                  <p className="text-sm text-zinc-500">Nenhuma instância encontrada nesta Evolution.</p>
+                ) : (
+                  found.map((f) => {
+                    const on = picked.includes(f.name);
+                    return (
+                      <button key={f.name} type="button" onClick={() => setPicked(on ? picked.filter((x) => x !== f.name) : [...picked, f.name])} className={cn('flex w-full items-center gap-3 rounded-lg border bg-white px-3 py-2.5 text-left text-sm transition', on ? 'border-blue-500' : 'border-zinc-200')}>
+                        <span className={cn('flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px]', on ? 'border-blue-600 bg-blue-600 text-white' : 'border-zinc-300')}>{on && '✓'}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate font-mono font-semibold text-zinc-900">{f.name}</span>
+                          <span className="block truncate text-xs text-zinc-500">{fmtPhone(f.number)}{f.profileName ? ` · ${f.profileName}` : ''}</span>
+                        </span>
+                        <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold', f.connected ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>{f.connected ? 'conectada' : f.status ?? 'desconectada'}</span>
+                      </button>
+                    );
+                  })
+                )}
+                {found.length > 0 && (
+                  <div className="flex items-center justify-between gap-2 pt-1">
+                    <p className="text-xs text-zinc-500">As selecionadas substituem a lista atual. Desconectadas precisam do QR Code na Evolution.</p>
+                    <Button size="sm" className="shrink-0 whitespace-nowrap" loading={importIt.isPending} disabled={!picked.length} onClick={() => importIt.mutate()}>Importar {picked.length || ''}</Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <div>
             <div className="mb-2 flex items-center justify-between">
               <p className="text-sm font-medium text-zinc-700">Instâncias (nome e token)</p>
@@ -132,7 +203,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
               {c.instances.map((inst, idx) => (
                 <div key={idx} className="grid grid-cols-[1fr_1.4fr_auto] items-center gap-2 rounded-xl border border-zinc-200 p-2">
                   <Input value={inst.name} onChange={(e) => setInst(idx, { name: e.target.value })} placeholder="checkout1" className="h-11" />
-                  <TokenInput value={inst.token ?? ''} onChange={(v) => setInst(idx, { token: v })} placeholder={saved(inst.name)?.has_token ? `salvo ${saved(inst.name)?.token_hint}` : 'token da instância'} />
+                  <TokenInput value={inst.token ?? ''} onChange={(v) => setInst(idx, { token: v })} placeholder={saved(inst.name)?.has_token ? `salvo ${saved(inst.name)?.token_hint}` : c.has_globalApiKey || c.globalApiKey ? 'usa a API Key global' : 'token da instância'} />
                   <div className="flex items-center gap-1">
                     {status[inst.name] !== undefined && (status[inst.name].ok ? <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-label="pronta" /> : <XCircle className="h-4 w-4 text-red-500" aria-label="com problema" />)}
                     <Switch checked={inst.active} onChange={(v) => setInst(idx, { active: v })} />

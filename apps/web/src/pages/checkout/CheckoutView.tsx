@@ -270,7 +270,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         )}
         <div className="min-w-0 flex-1">
           <p className="font-medium leading-snug">{checkout.product.name}</p>
-          <p className="mt-0.5 text-xs text-ck-muted">Acesso digital imediato</p>
+          <p className="mt-0.5 text-xs text-ck-muted">{checkout.product.number ? `Produto #${checkout.product.number} · ` : ''}Acesso digital imediato</p>
         </div>
         <p className="shrink-0 font-semibold tabular-nums">{brl(checkout.price_cents)}</p>
       </div>

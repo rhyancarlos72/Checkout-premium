@@ -20,7 +20,7 @@ export interface Bump {
   compare_at_cents: number | null;
   image_url: string | null;
   active: boolean;
-  product?: { name: string };
+  product?: { name: string; number?: number | null };
 }
 
 const schema = z.object({
@@ -54,7 +54,7 @@ export default function BumpsPage() {
                 {b.image_url ? <img src={b.image_url} alt="" className="h-12 w-12 rounded-lg object-cover" /> : <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100"><Sparkles className="h-5 w-5 text-gray-400" /></div>}
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{b.title}</p>
-                  <p className="truncate text-xs text-gray-500">Produto adicional: {b.product?.name ?? '—'}</p>
+                  <p className="truncate text-xs text-gray-500">Produto adicional: {b.product?.number ? `#${b.product.number} · ` : ''}{b.product?.name ?? '—'}</p>
                 </div>
                 <div className="text-right">
                   {b.compare_at_cents ? <p className="text-xs text-gray-400 line-through">{brl(b.compare_at_cents)}</p> : null}
@@ -118,7 +118,7 @@ function BumpForm({ bump, products, onClose, onSave }: { bump: Bump | null; prod
             })}
           >
             <option value="">Selecione…</option>
-            {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {products.map((p) => <option key={p.id} value={p.id}>{p.number ? `#${p.number} · ` : ''}{p.name}</option>)}
           </Select>
         </Field>
         <Field label="Título da oferta" error={e.title?.message}><Input {...register('title')} placeholder="Sim, quero adicionar o Pack Bônus!" /></Field>

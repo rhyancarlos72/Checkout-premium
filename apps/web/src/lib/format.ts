@@ -1,3 +1,6 @@
+/** Identificação do produto: "#1001" (vazio se ainda não tiver número) */
+export const pid = (n?: number | null) => (n ? `#${n}` : '');
+
 export const brl = (cents: number) => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 export const digits = (v: string) => v.replace(/\D/g, '');
 

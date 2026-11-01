@@ -28,6 +28,8 @@ export const whatsappSchema = z.object({
     .array(z.object({ name: z.string().trim().min(1).max(60), token: z.string().trim().max(300).default(''), active: z.boolean().default(true) }))
     .max(20)
     .default([]),
+  /** API Key global da Evolution (AUTHENTICATION_API_KEY): vale para todas as instâncias e permite buscar a lista */
+  globalApiKey: z.string().trim().max(300).default(''),
   approved: z.object({ enabled: z.boolean().default(true) }).default({ enabled: true }),
   recovery: z
     .object({
@@ -112,6 +114,8 @@ function pickFresh(pool: string[], phone: string, key: string) {
 
 // ------------------------------------------------------------------ Evolution API
 const base = (cfg: WhatsAppConfig) => cfg.apiUrl.replace(/\/+$/, '');
+/** Token usado para a instância: o dela ou, se vazio, a API Key global. */
+export const tokenFor = (cfg: WhatsAppConfig, inst: { token?: string }) => inst.token || cfg.globalApiKey || '';
 
 /** Traduz falhas de rede do Node em mensagens que dizem o que corrigir. */
 export function describeNetworkError(e: any, apiUrl: string): { message: string; hint: string } {
@@ -149,9 +153,10 @@ export interface InstanceCheck {
 }
 
 /** Verifica uma instância e explica o resultado (rede, token, nome, conexão do WhatsApp). */
-export async function checkInstance(cfg: WhatsAppConfig, inst: { name: string; token: string; active?: boolean }): Promise<InstanceCheck> {
+export async function checkInstance(cfg: WhatsAppConfig, instIn: { name: string; token: string; active?: boolean }): Promise<InstanceCheck> {
+  const inst = { ...instIn, token: tokenFor(cfg, instIn) };
   const r: InstanceCheck = { name: inst.name, active: inst.active !== false, ok: false, reachable: false, http: 0, state: null, message: '' };
-  if (!inst.token) return { ...r, message: 'Token não informado', hint: 'Cole o token (apikey) desta instância, que aparece no painel da Evolution. Não é o número do WhatsApp.' };
+  if (!inst.token) return { ...r, message: 'Token não informado', hint: 'Cole o token (apikey) desta instância ou a API Key global da Evolution. Não é o número do WhatsApp. Dica: use “Buscar instâncias da Evolution”.' };
   try {
     const res = await fetchWithTimeout(`${base(cfg)}/instance/connectionState/${encodeURIComponent(inst.name)}`, { headers: { apikey: inst.token }, timeoutMs: 8000 });
     r.reachable = true;
@@ -178,7 +183,14 @@ function explainSendError(http: number, body: any, raw: string): { error: string
   const flat = JSON.stringify(body ?? raw ?? '');
   if (http === 400 && /exists"?\s*:\s*false/i.test(flat)) return { error: 'Este número não tem WhatsApp', hint: 'Confira o DDD e o número do cliente.' };
   if (http === 401 || http === 403) return { error: `Token recusado ao enviar (HTTP ${http})`, hint: 'Copie de novo o token (apikey) da instância na Evolution.' };
-  if (http === 404) return { error: 'Instância não encontrada ao enviar (HTTP 404)', hint: 'Confira se o nome da instância está idêntico ao da Evolution.' };
+  if (http === 404) {
+    const said = body?.response?.message ?? body?.message ?? raw;
+    const txt = typeof said === 'string' ? said : JSON.stringify(said ?? '');
+    return {
+      error: `A Evolution respondeu 404 ao enviar${txt ? `: ${txt.slice(0, 160)}` : ''}`,
+      hint: 'O nome cadastrado não corresponde a uma instância da Evolution (ou o token é de outra instância). Clique em “Buscar instâncias da Evolution” e importe com o nome exato — informe a API Key global para listar todas.',
+    };
+  }
   const msg = body?.response?.message ?? body?.message ?? body?.error ?? raw;
   return { error: `HTTP ${http}${msg ? ` - ${typeof msg === 'string' ? msg.slice(0, 200) : JSON.stringify(msg).slice(0, 200)}` : ''}` };
 }
@@ -213,7 +225,7 @@ export type SendResult = { ok: boolean; error?: string; hint?: string; instance?
 export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?: WhatsAppConfig): Promise<SendResult> {
   const cfg = cfgIn ?? (await getWhatsAppConfig());
   if (!cfg.apiUrl) return { ok: false, error: 'URL da Evolution API não configurada', hint: 'Preencha a URL em Integrações → WhatsApp.' };
-  const instances = cfg.instances.filter((i) => i.active && i.name && i.token);
+  const instances = cfg.instances.filter((i) => i.active && i.name && tokenFor(cfg, i)).map((i) => ({ ...i, token: tokenFor(cfg, i) }));
   if (!instances.length) return { ok: false, error: 'Nenhuma instância ativa com token', hint: 'Adicione ao menos uma instância com nome e token e deixe-a ativa.' };
   const text = sanitizeText(message);
   if (!text) return { ok: false, error: 'Mensagem vazia' };
@@ -249,12 +261,15 @@ export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?
 
     let r: { ok: boolean; http: number; error: string; hint?: string } = { ok: false, http: 0, error: 'não enviado' };
     outer: for (const num of phoneVariants(phone)) {
-      for (const payload of [
-        { number: num, text, delay: 3500, linkPreview: false }, // Evolution v2
-        { number: num, options: { delay: 3500, presence: 'composing' }, textMessage: { text } }, // v1
-      ]) {
-        r = await post(cfg, chosen.name, chosen.token, payload);
-        if (r.ok || r.http === 401 || r.http === 403 || r.http === 0) break outer;
+      for (const n of [num, `${num}@s.whatsapp.net`]) {
+        for (const payload of [
+          { number: n, text, delay: 3500, linkPreview: false }, // Evolution v2
+          { number: n, options: { delay: 3500, presence: 'composing' }, textMessage: { text } }, // v1
+        ]) {
+          r = await post(cfg, chosen.name, chosen.token, payload);
+          if (r.ok || r.http === 401 || r.http === 403 || r.http === 0) break outer;
+        }
+        if (r.http !== 404) break; // formato @s.whatsapp.net só é tentado se a Evolution respondeu 404
       }
     }
     if (r.ok) {
@@ -265,6 +280,56 @@ export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?
     lastHint = r.hint ?? lastHint;
   }
   return { ok: false, error: reasons.length ? reasons.join(' | ') : 'Nenhuma instância disponível', hint: lastHint };
+}
+
+export interface EvolutionInstance {
+  name: string;
+  status: string | null;
+  connected: boolean;
+  number: string | null;
+  profileName: string | null;
+  token: string | null;
+}
+
+/** Lista as instâncias da Evolution (v1 e v2) com nome exato, status e número do WhatsApp. */
+export async function fetchEvolutionInstances(apiUrl: string, key: string): Promise<{ ok: true; items: EvolutionInstance[] } | { ok: false; error: string; hint?: string }> {
+  if (!apiUrl) return { ok: false, error: 'Informe a URL da Evolution API' };
+  if (!key) return { ok: false, error: 'Informe a API Key global (ou o token de uma instância)', hint: 'A API Key global fica na variável AUTHENTICATION_API_KEY da Evolution. Com o token de uma instância, só ela aparece.' };
+  try {
+    const res = await fetchWithTimeout(`${apiUrl.replace(/\/+$/, '')}/instance/fetchInstances`, { headers: { apikey: key }, timeoutMs: 10000 });
+    const raw = await res.text();
+    let j: any = null;
+    try {
+      j = JSON.parse(raw);
+    } catch {
+      /* não-JSON */
+    }
+    if (res.status === 401 || res.status === 403) return { ok: false, error: `Chave recusada pela Evolution (HTTP ${res.status})`, hint: 'Use a API Key global (AUTHENTICATION_API_KEY) da Evolution.' };
+    if (!res.ok) return { ok: false, error: `A Evolution respondeu HTTP ${res.status} ao listar instâncias`, hint: typeof j?.message === 'string' ? j.message : undefined };
+    const list: any[] = Array.isArray(j) ? j : Array.isArray(j?.instances) ? j.instances : j ? [j] : [];
+    const onlyDigits = (v: any) => (v ? String(v).split('@')[0].replace(/\D/g, '') || null : null);
+    const items = list
+      .map((x: any) => {
+        const i = x?.instance ?? x; // v1: { instance: {...} } | v2: {...}
+        const name = i?.name ?? i?.instanceName ?? null;
+        const status = i?.connectionStatus ?? i?.status ?? i?.state ?? null;
+        return name
+          ? {
+              name: String(name),
+              status: status ? String(status) : null,
+              connected: ['open', 'connected', 'online'].includes(String(status ?? '').toLowerCase()),
+              number: onlyDigits(i?.ownerJid ?? i?.owner ?? i?.number ?? i?.wuid),
+              profileName: i?.profileName ?? null,
+              token: i?.token ?? i?.apikey ?? i?.hash?.apikey ?? (typeof i?.hash === 'string' ? i.hash : null) ?? null,
+            }
+          : null;
+      })
+      .filter(Boolean) as EvolutionInstance[];
+    return { ok: true, items };
+  } catch (e) {
+    const d = describeNetworkError(e, apiUrl);
+    return { ok: false, error: d.message, hint: d.hint };
+  }
 }
 
 export async function instancesStatus() {
