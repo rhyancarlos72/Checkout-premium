@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.p12
+*.pem
+*.key
+*.log
+error_log
+certs/
+.DS_Store
+coverage/
