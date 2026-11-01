@@ -437,43 +437,36 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           {/* Banner no topo (celular) */}
           {banner && <img src={banner} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm @4xl:hidden" fetchPriority="high" />}
 
-          {/* Produto — estilo infoproduto, centralizado: imagem → selos → título → descrição → preço → benefícios */}
+          {/* Produto — compacto: imagem à esquerda, nome e preço ao lado */}
           <section className="ck-card overflow-hidden">
-            <div className="flex flex-col items-center px-5 pb-6 pt-6 text-center @lg:px-8 @lg:pt-8">
+            <div className="flex items-center gap-4 p-4 @lg:gap-5 @lg:p-5">
               {productImage ? (
-                <img src={productImage} alt="" className="h-20 w-20 rounded-[calc(var(--ck-r)*.7)] object-cover shadow-md ring-1 ring-ck-border @lg:h-24 @lg:w-24" />
+                <div className="flex h-[84px] w-[84px] shrink-0 items-center justify-center overflow-hidden rounded-[calc(var(--ck-r)*.6)] border border-ck-border bg-[#fff] p-1 @lg:h-24 @lg:w-24">
+                  <img src={productImage} alt={checkout.product.name} className="h-full w-full object-contain" />
+                </div>
               ) : (
-                <div className="flex h-20 w-20 items-center justify-center rounded-[calc(var(--ck-r)*.7)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg shadow-md @lg:h-24 @lg:w-24"><Gift className="h-8 w-8" /></div>
+                <div className="flex h-[84px] w-[84px] shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg @lg:h-24 @lg:w-24"><Gift className="h-8 w-8" /></div>
               )}
-              <div className="mt-4 flex flex-wrap justify-center gap-1.5">
-                <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand"><Gift className="h-3 w-3" /> Produto digital</span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-amber-600"><Zap className="h-3 w-3" /> Acesso imediato</span>
-              </div>
-              <h1 className="mt-3 max-w-xl font-display text-[22px] font-bold leading-snug tracking-tight @lg:text-[28px]">{t.headline || checkout.product.name}</h1>
-              {t.producerName && (
-                <p className="mt-1 flex items-center justify-center gap-1 text-[13px] text-ck-muted">por <span className="font-semibold text-ck-text">{t.producerName}</span> <BadgeCheck className="h-3.5 w-3.5 text-sky-500" /></p>
-              )}
-              {(t.subheadline || checkout.product.description) && (
-                <p className="mt-3 max-w-lg text-[15px] leading-relaxed text-ck-muted">{t.subheadline || checkout.product.description}</p>
-              )}
-
-              {/* preço */}
-              <div className="mt-5 w-full max-w-sm rounded-[calc(var(--ck-r)*.8)] border border-ck-border bg-ck-surface-2 px-4 py-4">
+              <div className="min-w-0 flex-1">
+                <h1 className="font-display text-[19px] font-bold leading-snug tracking-tight @lg:text-[24px]">{t.headline || checkout.product.name}</h1>
+                {t.producerName && (
+                  <p className="mt-0.5 flex items-center gap-1 text-[12px] text-ck-muted">por <span className="font-semibold text-ck-text">{t.producerName}</span> <BadgeCheck className="h-3.5 w-3.5 text-sky-500" /></p>
+                )}
                 {compareAt > checkout.price_cents && (
-                  <p className="flex items-center justify-center gap-2 text-[13px] text-ck-muted">
+                  <p className="mt-1.5 flex items-center gap-2 text-[12px] text-ck-muted">
                     De <span className="line-through">{brl(compareAt)}</span>
                     <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-bold text-emerald-600">-{Math.round((1 - checkout.price_cents / compareAt) * 100)}%</span>
                   </p>
                 )}
-                <p className="flex items-baseline justify-center gap-x-2">
-                  {compareAt > checkout.price_cents && <span className="text-sm font-medium text-ck-muted">por</span>}
-                  <span className="font-display text-[34px] font-extrabold leading-tight tracking-tight text-brand tabular-nums">{brl(checkout.price_cents)}</span>
-                </p>
-                <p className="mt-0.5 text-xs text-ck-muted">
-                  à vista no <PixIcon className="inline h-3 w-3 align-[-1px]" /> Pix · pagamento único
+                <p className={cn('flex flex-wrap items-baseline gap-x-2', compareAt > checkout.price_cents ? 'mt-0.5' : 'mt-1.5')}>
+                  <span className="font-display text-[24px] font-extrabold leading-tight tracking-tight text-brand tabular-nums @lg:text-[28px]">{brl(checkout.price_cents)}</span>
+                  <span className="text-[13px] text-ck-muted">à vista no Pix</span>
                 </p>
               </div>
             </div>
+            {(t.subheadline || checkout.product.description) && (
+              <p className="border-t border-ck-border px-4 py-3 text-[13px] leading-relaxed text-ck-muted @lg:px-5">{t.subheadline || checkout.product.description}</p>
+            )}
 
             {(t.benefits?.filter(Boolean).length ?? 0) > 0 && (
               <div className="border-t border-ck-border bg-ck-surface-2/60 px-5 py-5 @lg:px-8">
