@@ -347,7 +347,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
             )}
 
             {tab === 'Ofertas' && (
-              <Group title="Order bumps" desc="Ofertas de 1 clique exibidas antes do botão. A ordem aqui é a ordem no checkout.">
+              <Group title="Produtos adicionais (order bumps)" desc="Outros produtos oferecidos com 1 clique antes do botão. A ordem aqui é a ordem no checkout. Também dá para configurar no card do produto, em Produtos.">
                 {bumps.length === 0 ? (
                   <p className="rounded-xl bg-zinc-50 p-4 text-sm text-zinc-500">Nenhum order bump cadastrado. Crie em “Order bumps” no menu.</p>
                 ) : (

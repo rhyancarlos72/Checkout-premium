@@ -41,7 +41,7 @@ export default function BumpsPage() {
 
   return (
     <>
-      <PageHeader title="Order bumps" subtitle="Ofertas adicionais exibidas no checkout com um clique" action={<Button onClick={() => setEditing('new')}><Plus className="h-4 w-4" /> Novo order bump</Button>} />
+      <PageHeader title="Order bumps" subtitle="Produtos adicionais oferecidos no checkout com um clique. Dica: configure direto no card de cada produto, em Produtos." action={<Button onClick={() => setEditing('new')}><Plus className="h-4 w-4" /> Novo order bump</Button>} />
       {list.isLoading ? (
         <PageLoader />
       ) : !list.data?.length ? (
@@ -54,7 +54,7 @@ export default function BumpsPage() {
                 {b.image_url ? <img src={b.image_url} alt="" className="h-12 w-12 rounded-lg object-cover" /> : <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100"><Sparkles className="h-5 w-5 text-gray-400" /></div>}
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-medium">{b.title}</p>
-                  <p className="truncate text-xs text-gray-500">Entrega: {b.product?.name ?? '—'}</p>
+                  <p className="truncate text-xs text-gray-500">Produto adicional: {b.product?.name ?? '—'}</p>
                 </div>
                 <div className="text-right">
                   {b.compare_at_cents ? <p className="text-xs text-gray-400 line-through">{brl(b.compare_at_cents)}</p> : null}
@@ -78,7 +78,7 @@ export default function BumpsPage() {
 
 function BumpForm({ bump, products, onClose, onSave }: { bump: Bump | null; products: Product[]; onClose: () => void; onSave: (b: any) => Promise<void> }) {
   const [error, setError] = useState<string | null>(null);
-  const { register, handleSubmit, control, formState } = useForm<z.infer<typeof schema>>({
+  const { register, handleSubmit, control, formState, setValue, getValues } = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
     defaultValues: {
       product_id: bump?.product_id ?? '',
@@ -104,8 +104,19 @@ function BumpForm({ bump, products, onClose, onSave }: { bump: Bump | null; prod
           }
         })}
       >
-        <Field label="Produto entregue" error={e.product_id?.message} hint="O comprador recebe o acesso deste produto">
-          <Select {...register('product_id')}>
+        <Field label="Produto adicional oferecido" error={e.product_id?.message} hint="Outro produto seu: quem aceitar a oferta recebe o acesso dele junto com o principal">
+          <Select
+            {...register('product_id', {
+              onChange: (ev) => {
+                const p = products.find((x) => x.id === ev.target.value);
+                if (!p) return;
+                if (!getValues('title')) setValue('title', `Leve também: ${p.name}`);
+                if (!getValues('description')) setValue('description', p.description ?? '');
+                if (!getValues('price')) setValue('price', centsToInput(p.price_cents));
+                if (!getValues('image_url') && p.image_url) setValue('image_url', p.image_url);
+              },
+            })}
+          >
             <option value="">Selecione…</option>
             {products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>

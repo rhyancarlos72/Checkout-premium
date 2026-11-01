@@ -45,7 +45,7 @@ export async function loadCheckout(slug: string) {
   const checkout = must(
     await supabase
       .from('checkouts')
-      .select('*, product:products(*), checkout_bumps(sort, bump:order_bumps(*))')
+      .select('*, product:products(*), checkout_bumps(sort, bump:order_bumps(*, product:products(name, description, image_url, active)))')
       .eq('slug', slug)
       .eq('active', true)
       .maybeSingle(),
@@ -53,9 +53,15 @@ export async function loadCheckout(slug: string) {
   ) as any;
   if (!checkout.product?.active) throw new HttpError(404, 'Produto indisponível');
   const bumps = (checkout.checkout_bumps ?? [])
-    .filter((cb: any) => cb.bump?.active)
+    // order bump = outro produto oferecido junto; o produto adicional também precisa estar ativo
+    .filter((cb: any) => cb.bump?.active && cb.bump.product?.active !== false && cb.bump.product_id !== checkout.product_id)
     .sort((a: any, b: any) => a.sort - b.sort)
-    .map((cb: any) => cb.bump);
+    .map((cb: any) => ({
+      ...cb.bump,
+      title: cb.bump.title || cb.bump.product?.name,
+      description: cb.bump.description ?? cb.bump.product?.description ?? null,
+      image_url: cb.bump.image_url || cb.bump.product?.image_url || null,
+    }));
   return { ...checkout, bumps, price_cents: checkout.price_cents ?? checkout.product.price_cents };
 }
 

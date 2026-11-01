@@ -97,6 +97,79 @@ adminRouter.post('/products/:id/checkout', async (req, res) => {
   res.status(201).json(await createDefaultCheckout(product));
 });
 
+// ------------------------------------------------------------------ produtos adicionais (order bumps) do produto principal
+const productBumpsSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        product_id: uuid,
+        price_cents: z.number().int().min(1),
+        compare_at_cents: z.number().int().min(0).nullable().optional(),
+        title: z.string().trim().max(120).optional(),
+        description: z.string().max(600).nullable().optional(),
+      }),
+    )
+    .max(10),
+});
+
+/** Produtos adicionais oferecidos junto com este produto (via checkouts dele). */
+adminRouter.get('/products/:id/bumps', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const { data } = await supabase
+    .from('checkouts')
+    .select('id, checkout_bumps(sort, bump:order_bumps(id, product_id, title, description, price_cents, compare_at_cents, image_url, active, product:products(name, price_cents, image_url)))')
+    .eq('product_id', id)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const items = [...(((data as any)?.checkout_bumps ?? []) as any[])].sort((a, b) => a.sort - b.sort).map((cb) => cb.bump).filter(Boolean);
+  res.json(items);
+});
+
+/**
+ * Define os produtos adicionais do produto principal: cria/atualiza um order bump
+ * por produto oferecido e aplica a lista (na ordem) em TODOS os checkouts do produto.
+ */
+adminRouter.put('/products/:id/bumps', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const { items } = productBumpsSchema.parse(req.body);
+  if (items.some((i) => i.product_id === id)) throw new HttpError(400, 'O produto principal não pode ser oferecido como adicional dele mesmo');
+  if (new Set(items.map((i) => i.product_id)).size !== items.length) throw new HttpError(400, 'Produto adicional repetido');
+
+  const offered = items.length
+    ? ((must(await supabase.from('products').select('id, name, description, image_url').in('id', items.map((i) => i.product_id))) as any[]) ?? [])
+    : [];
+  const { data: checkouts } = await supabase.from('checkouts').select('id, checkout_bumps(bump:order_bumps(id, product_id))').eq('product_id', id);
+  if (!checkouts?.length) throw new HttpError(400, 'Gere o link de checkout deste produto primeiro');
+
+  // reaproveita os bumps já ligados a este produto principal (mesmo produto oferecido)
+  const existing = new Map<string, string>();
+  for (const c of checkouts as any[]) for (const cb of c.checkout_bumps ?? []) if (cb.bump) existing.set(cb.bump.product_id, cb.bump.id);
+
+  const bumpIds: string[] = [];
+  for (const it of items) {
+    const p = offered.find((o) => o.id === it.product_id);
+    if (!p) throw new HttpError(400, 'Produto adicional não encontrado');
+    const row = {
+      product_id: it.product_id,
+      title: it.title || `Leve também: ${p.name}`,
+      description: it.description ?? p.description ?? null,
+      price_cents: it.price_cents,
+      compare_at_cents: it.compare_at_cents ?? null,
+      image_url: p.image_url ?? null,
+      active: true,
+    };
+    const prevId = existing.get(it.product_id);
+    const r = prevId
+      ? await supabase.from('order_bumps').update(row).eq('id', prevId).select('id').single()
+      : await supabase.from('order_bumps').insert(row).select('id').single();
+    if (r.error) throw new HttpError(500, r.error.message);
+    bumpIds.push(r.data.id);
+  }
+  for (const c of checkouts as any[]) await saveBumps(c.id, bumpIds);
+  res.json({ ok: true, count: bumpIds.length });
+});
+
 /** Duplica o produto e o checkout principal dele (visual, campos e order bumps), com novo código de link. */
 adminRouter.post('/products/:id/duplicate', async (req, res) => {
   const id = uuid.parse(req.params.id);
@@ -116,7 +189,7 @@ adminRouter.post('/products/:id/duplicate', async (req, res) => {
   const checkout = await createDefaultCheckout(copy, tpl);
   res.status(201).json({ ...copy, checkout });
 });
-crud('products', 'products', productSchema, '*, checkouts(id, slug, name, active)', 'created_at');
+crud('products', 'products', productSchema, '*, checkouts(id, slug, name, active, created_at, checkout_bumps(sort, bump:order_bumps(id, product_id, title, price_cents)))', 'created_at');
 
 const bumpSchema = z.object({
   product_id: uuid,

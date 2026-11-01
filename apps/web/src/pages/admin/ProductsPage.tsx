@@ -1,7 +1,7 @@
 import { ImageUpload } from '@/components/ImageUpload';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Boxes, Check, Copy, CopyPlus, ExternalLink, Link2, Palette, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Boxes, Check, Copy, CopyPlus, ExternalLink, Link2, Palette, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
@@ -11,6 +11,7 @@ import { adminApi, ApiError } from '@/lib/api';
 import { checkoutUrl } from '@/lib/links';
 import { brl, centsToInput, parseMoney } from '@/lib/format';
 import { PageHeader } from './AdminApp';
+import { ProductBumpsModal } from './ProductBumpsModal';
 import { useCrud } from './crud';
 
 export interface Product {
@@ -25,7 +26,38 @@ export interface Product {
   delivery_url: string | null;
   delivery_note: string | null;
   active: boolean;
-  checkouts?: { id: string; slug: string; name: string; active: boolean }[];
+  checkouts?: { id: string; slug: string; name: string; active: boolean; created_at?: string; checkout_bumps?: { sort: number; bump: { id: string; product_id: string; title: string; price_cents: number } | null }[] }[];
+}
+
+/** Produtos adicionais (order bump) oferecidos junto com este produto. */
+function AdditionalProducts({ product, products, onEdit }: { product: Product; products: Product[]; onEdit: () => void }) {
+  const main = [...(product.checkouts ?? [])].sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''))[0];
+  const bumps = [...(main?.checkout_bumps ?? [])].sort((a, b) => a.sort - b.sort).map((cb) => cb.bump).filter(Boolean) as NonNullable<NonNullable<Product['checkouts']>[number]['checkout_bumps']>[number]['bump'][];
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Produtos adicionais (order bump)</p>
+        {main && <button onClick={onEdit} className="text-xs font-semibold text-blue-600 hover:underline">{bumps.length ? 'Editar' : 'Adicionar'}</button>}
+      </div>
+      {!main ? (
+        <p className="text-xs text-zinc-400">Gere o link de checkout para oferecer adicionais.</p>
+      ) : bumps.length === 0 ? (
+        <button onClick={onEdit} className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 py-2.5 text-xs font-medium text-zinc-500 transition hover:border-blue-500 hover:text-blue-600">
+          <Plus className="h-3.5 w-3.5" /> Oferecer outro produto junto
+        </button>
+      ) : (
+        <ul className="space-y-1.5">
+          {bumps.map((b) => (
+            <li key={b!.id} className="flex items-center gap-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs">
+              <Zap className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+              <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{products.find((p) => p.id === b!.product_id)?.name ?? b!.title}</span>
+              <span className="shrink-0 font-semibold tabular-nums text-zinc-700">+ {brl(b!.price_cents)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 /** Link de checkout do produto, com copiar/abrir. */
@@ -77,6 +109,7 @@ export default function ProductsPage() {
   const toast = useToast();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [bumpsFor, setBumpsFor] = useState<Product | null>(null);
   const duplicate = useMutation({
     mutationFn: (id: string) => adminApi.post<any>(`/products/${id}/duplicate`),
     onSuccess: (r) => {
@@ -118,6 +151,7 @@ export default function ProductsPage() {
                 <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Link de checkout</p>
                 <ProductLink product={p} onCreated={() => (qc.invalidateQueries({ queryKey: ['products'] }), qc.invalidateQueries({ queryKey: ['checkouts'] }), toast.ok('Link criado'))} />
               </div>
+              <AdditionalProducts product={p} products={list.data ?? []} onEdit={() => setBumpsFor(p)} />
               <div className="mt-auto flex flex-wrap items-center gap-1 whitespace-nowrap border-t border-zinc-100 pt-3">
                 <Button size="sm" variant="secondary" onClick={() => setEditing(p)}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
                 <Button size="sm" variant="ghost" onClick={() => navigate('/admin/checkouts')}><Palette className="h-3.5 w-3.5" /> Personalizar</Button>
@@ -130,6 +164,20 @@ export default function ProductsPage() {
             </div>
           ))}
         </div>
+      )}
+      {bumpsFor && (
+        <ProductBumpsModal
+          product={bumpsFor}
+          products={list.data ?? []}
+          onClose={() => setBumpsFor(null)}
+          onSaved={() => {
+            setBumpsFor(null);
+            qc.invalidateQueries({ queryKey: ['products'] });
+            qc.invalidateQueries({ queryKey: ['checkouts'] });
+            qc.invalidateQueries({ queryKey: ['product-bumps'] });
+            toast.ok('Produtos adicionais salvos');
+          }}
+        />
       )}
       {editing && (
         <ProductForm
