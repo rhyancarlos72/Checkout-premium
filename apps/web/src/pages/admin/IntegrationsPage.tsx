@@ -6,6 +6,7 @@ import { Button, Card, cn, Field, Input, PageLoader, Switch, useToast } from '@/
 import { adminApi, ApiError } from '@/lib/api';
 import { dateTime } from '@/lib/format';
 import { PageHeader } from './AdminApp';
+import { WebhooksCard } from './WebhooksCard';
 
 interface Integrations {
   providers: { name: string; configured: boolean }[];
@@ -49,7 +50,7 @@ export default function IntegrationsPage() {
 
   return (
     <>
-      <PageHeader title="Integrações" subtitle="Credenciais ficam somente nas variáveis de ambiente do servidor — nunca no navegador ou no banco." />
+      <PageHeader title="Integrações" subtitle="Gateways de pagamento usam as variáveis de ambiente do servidor. Webhooks (PayTracking e outros) são configurados aqui, com token e segredo protegidos." />
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title="Woovi (OpenPix)" action={<Status ok={prov('woovi')} />}>
           <div className="space-y-3 text-sm">
@@ -71,13 +72,7 @@ export default function IntegrationsPage() {
           </div>
         </Card>
 
-        <Card title="PayTracking" action={<Status ok={data.paytracking.configured} />}>
-          <div className="space-y-3 text-sm">
-            <p className="text-gray-600">Envia <b>sale.pending</b> (PIX gerado), <b>sale.approved</b> (Purchase com order bumps), <b>sale.canceled</b> e <b>sale.refunded</b>, assinados com HMAC-SHA256.</p>
-            <p className="text-gray-600">Variáveis: <code>PAYTRACKING_URL</code>, <code>PAYTRACKING_TOKEN</code>, <code>PAYTRACKING_SECRET</code>. <Status ok={data.paytracking.signed} label={data.paytracking.signed ? 'assinatura ativa' : 'sem assinatura'} /></p>
-            <Button size="sm" disabled={!data.paytracking.configured} loading={run.isPending && run.variables?.path.includes('paytracking')} onClick={() => run.mutate({ path: '/integrations/paytracking/test' })}><PlugZap className="h-3.5 w-3.5" /> Testar conexão</Button>
-          </div>
-        </Card>
+        <WebhooksCard toast={toast} />
 
         <Card title="E-mail (entrega e recuperação)" action={<Status ok={data.email.configured} />}>
           <div className="space-y-3 text-sm">

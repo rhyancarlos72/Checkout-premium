@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
-import { env, features } from '../config/env.js';
+import { env } from '../config/env.js';
 import { fetchWithTimeout, logger, sleep, supabase } from '../lib/core.js';
+import { allWebhooks, targetsFor } from './webhooks.js';
 
 /**
  * PayTracking — porta em TypeScript do `paytracking.php` (v2.0).
@@ -103,19 +104,22 @@ export function signPayTracking(body: string, secret: string, ts = Math.floor(Da
   return { ts, signature: `sha256=${crypto.createHmac('sha256', secret).update(`${ts}.${body}`).digest('hex')}` };
 }
 
-async function transmit(payload: Record<string, unknown>, extraHeaders: Record<string, string> = {}) {
+type Target = { url: string; token: string; secret: string };
+
+async function transmit(target: Target, payload: Record<string, unknown>, extraHeaders: Record<string, string> = {}) {
   const body = JSON.stringify(payload);
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json',
-    Authorization: `Bearer ${env.PAYTRACKING_TOKEN}`,
     'User-Agent': 'PayTracking-Node/2.0.0 (+checkout-proprio)',
     ...extraHeaders,
   };
-  if (env.PAYTRACKING_SECRET) {
-    const { ts, signature } = signPayTracking(body, env.PAYTRACKING_SECRET);
+  if (target.token) headers.Authorization = `Bearer ${target.token}`;
+  if (target.secret) {
+    const { ts, signature } = signPayTracking(body, target.secret);
     headers['X-Paytrack-Timestamp'] = ts;
     headers['X-Paytrack-Signature'] = signature;
+    headers['X-Webhook-Signature'] = signature; // mesmo valor, nome genérico para outros sistemas
   }
   const started = Date.now();
   let status = 0;
@@ -123,7 +127,7 @@ async function transmit(payload: Record<string, unknown>, extraHeaders: Record<s
   let error = '';
   for (let i = 1; i <= 3; i++) {
     try {
-      const res = await fetchWithTimeout(env.PAYTRACKING_URL!, { method: 'POST', headers, body, timeoutMs: 8000, redirect: 'manual' });
+      const res = await fetchWithTimeout(target.url, { method: 'POST', headers, body, timeoutMs: 8000, redirect: 'manual' });
       status = res.status;
       json = await res.json().catch(() => ({}));
       error = '';
@@ -138,41 +142,57 @@ async function transmit(payload: Record<string, unknown>, extraHeaders: Record<s
   return { ok: status >= 200 && status < 300, status, json, error };
 }
 
+/** Envia o evento da venda para todos os webhooks ativos inscritos nele (PayTracking e outros). */
 export async function sendPayTracking(order: OrderForTracking, event: PayTrackingEvent): Promise<boolean> {
-  if (!features.paytracking) return false;
   try {
-    const r = await transmit(buildPayload(order, event));
-    const message = r.ok
-      ? r.json?.duplicate
-        ? 'duplicado (já recebido)'
-        : String(r.json?.status ?? 'processado')
-      : `${r.error} ${r.json?.error ?? ''} ${r.json?.reason ? `(${r.json.reason})` : ''}`.trim();
-    await supabase.from('integration_logs').insert({
-      integration: 'paytracking',
-      order_id: order.id,
-      event,
-      ok: r.ok,
-      http_status: r.status,
-      message: message.slice(0, 500),
-    });
-    return r.ok;
+    const targets = await targetsFor(event);
+    if (!targets.length) return false;
+    const payload = buildPayload(order, event);
+    const results = await Promise.all(
+      targets.map(async (w) => {
+        const r = await transmit(w, payload);
+        const message = r.ok
+          ? r.json?.duplicate
+            ? 'duplicado (já recebido)'
+            : String(r.json?.status ?? 'processado')
+          : `${r.error} ${r.json?.error ?? ''} ${r.json?.reason ? `(${r.json.reason})` : ''}`.trim() || `HTTP ${r.status}`;
+        await supabase.from('integration_logs').insert({
+          integration: `webhook:${w.id}`,
+          order_id: order.id,
+          event,
+          ok: r.ok,
+          http_status: r.status,
+          message: `${w.name}: ${message}`.slice(0, 500),
+        });
+        return r.ok;
+      }),
+    );
+    return results.some(Boolean);
   } catch (e) {
-    logger.error({ err: e, orderId: order.id }, 'PayTracking falhou');
+    logger.error({ err: e, orderId: order.id }, 'Webhook de venda falhou');
     return false;
   }
 }
 
-export async function testPayTracking() {
-  if (!features.paytracking) return { ok: false, message: 'PAYTRACKING_URL / PAYTRACKING_TOKEN não configurados' };
-  const r = await transmit({ event: 'connection_test', transaction_id: 'teste-de-conexao' }, { 'X-Paytrack-Test': '1' });
+/** Testa URL/token/segredo SEM registrar venda (o PayTracking não envia nada à Meta no teste). */
+export async function testWebhook(target: Target & { name?: string }) {
+  const r = await transmit(target, { event: 'connection_test', transaction_id: 'teste-de-conexao' }, { 'X-Paytrack-Test': '1' });
   if (r.ok) {
-    return {
-      ok: true,
-      message: `Conexão OK${r.json?.signature === 'valid' ? ', assinatura válida' : ' (sem segredo de assinatura)'}. Nenhum evento foi enviado à Meta.`,
-    };
+    const sig = r.json?.signature === 'valid' ? ', assinatura válida' : target.secret ? '' : ' (sem segredo de assinatura)';
+    return { ok: true, status: r.status, message: `Conexão OK${sig}. Nenhuma venda foi registrada.` };
   }
-  if (r.status === 401) return { ok: false, message: 'Token ou segredo inválido no PayTracking.' };
-  if (r.status === 404) return { ok: false, message: 'URL do PayTracking não encontrada.' };
-  if (r.status === 0) return { ok: false, message: `Sem conexão com o PayTracking: ${r.error}` };
-  return { ok: false, message: `PayTracking respondeu HTTP ${r.status}` };
+  if (r.status === 401 || r.status === 403) {
+    const reason = String(r.json?.reason ?? '');
+    return { ok: false, status: r.status, message: reason.includes('signature') ? 'Segredo de assinatura diferente do configurado no destino.' : 'Token inválido ou integração pausada no destino.' };
+  }
+  if (r.status === 404) return { ok: false, status: r.status, message: 'URL não encontrada (404). Confira o endereço do webhook.' };
+  if (r.status === 0) return { ok: false, status: 0, message: `Sem conexão: ${r.error}` };
+  return { ok: false, status: r.status, message: `O destino respondeu HTTP ${r.status}` };
+}
+
+/** Compatibilidade: testa o primeiro webhook ativo. */
+export async function testPayTracking() {
+  const [first] = (await allWebhooks()).filter((w) => w.active);
+  if (!first) return { ok: false, message: 'Nenhum webhook configurado. Adicione em Integrações → Webhooks.' };
+  return testWebhook(first);
 }

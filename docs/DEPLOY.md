@@ -67,9 +67,15 @@ Nunca coloque o certificado em `public_html` nem no repositório.
 
 > Os webhooks do sistema PHP antigo continuam apontando para o servidor antigo. Troque para as URLs novas só quando migrar o tráfego.
 
-## 5. PayTracking
+## 5. PayTracking (webhook)
 
-Use a URL, o token e o segredo da integração “Checkout próprio” em `PAYTRACKING_URL`, `PAYTRACKING_TOKEN`, `PAYTRACKING_SECRET`. Teste em **Integrações → Testar conexão** (nenhum evento vai para a Meta no teste).
+No painel: **Integrações → Webhooks → Adicionar webhook → PayTracking**. A URL já vem preenchida; cole o **token** e o **segredo** da sua integração “Checkout próprio” e clique em **Testar** (o teste não registra venda nem envia nada à Meta).
+
+- Eventos: Pix gerado (`sale.pending`), venda aprovada com order bumps (`sale.approved`), Pix expirado (`sale.canceled`) e reembolso (`sale.refunded`). Escolha quais enviar.
+- Cada envio é assinado com HMAC-SHA256 (`X-Paytrack-Signature` + `X-Paytrack-Timestamp`) e tem novas tentativas em falha.
+- Dá para adicionar outros webhooks (CRM, planilhas, automações) com o mesmo formato.
+- Token e segredo ficam no banco (tabela `settings`, só admins/servidor) e o painel mostra apenas os 4 últimos caracteres.
+- As variáveis `PAYTRACKING_*` continuam funcionando como alternativa; se existirem, aparecem na lista como “variáveis de ambiente”.
 
 ## 6. Ambientes
 

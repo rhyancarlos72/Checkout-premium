@@ -1,14 +1,15 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
-import { env, features } from '../config/env.js';
+import { env, features, isProd } from '../config/env.js';
 import { HttpError, must, supabase } from '../lib/core.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
 import { testEmail } from '../services/email.js';
 import { runJobs } from '../services/jobs.js';
 import { dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
-import { testPayTracking } from '../services/paytracking.js';
+import { testPayTracking, testWebhook } from '../services/paytracking.js';
+import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
 
 export const adminRouter = Router();
@@ -533,7 +534,7 @@ adminRouter.get('/integrations', async (_req, res) => {
   const lastLogs = await supabase.from('integration_logs').select('integration, event, ok, http_status, message, created_at').order('created_at', { ascending: false }).limit(20);
   res.json({
     providers: providerStatus(),
-    paytracking: { configured: features.paytracking, signed: Boolean(env.PAYTRACKING_SECRET) },
+    paytracking: { configured: (await allWebhooks()).some((w) => w.active), signed: (await allWebhooks()).some((w) => w.active && Boolean(w.secret)) },
     email: { configured: features.email, from: env.MAIL_FROM ?? null },
     webhooks: {
       woovi: `${env.PUBLIC_URL}/api/webhooks/woovi`,
@@ -549,6 +550,85 @@ adminRouter.get('/integrations', async (_req, res) => {
 });
 
 adminRouter.post('/integrations/paytracking/test', async (_req, res) => res.json(await testPayTracking()));
+
+// ------------------------------------------------------------------ webhooks de saída (PayTracking e outros)
+const webhookInput = z.object({
+  name: z.string().trim().min(2, 'Dê um nome ao webhook').max(60),
+  preset: z.enum(['paytracking', 'custom']).default('custom'),
+  url: z
+    .string()
+    .trim()
+    .url('URL inválida')
+    .refine((u) => u.startsWith('https://') || !isProd, 'Use uma URL com https://'),
+  token: z.string().trim().max(500).optional(),
+  secret: z.string().trim().max(500).optional(),
+  events: z.array(z.enum(WEBHOOK_EVENTS)).min(1, 'Escolha pelo menos um evento'),
+  active: z.boolean().default(true),
+});
+
+async function lastLogs() {
+  const { data } = await supabase.from('integration_logs').select('integration, ok, http_status, message, created_at').like('integration', 'webhook:%').order('created_at', { ascending: false }).limit(200);
+  const map = new Map<string, any>();
+  for (const l of data ?? []) if (!map.has(l.integration)) map.set(l.integration, l);
+  return map;
+}
+
+/** Lista com token/segredo mascarados — nunca devolve os valores. */
+adminRouter.get('/webhooks', async (_req, res) => {
+  const [items, last] = await Promise.all([allWebhooks(), lastLogs()]);
+  res.json({
+    url: `${env.PUBLIC_URL}`,
+    events: WEBHOOK_EVENTS,
+    items: items.map(({ token, secret, ...w }) => ({ ...w, token_hint: mask(token), has_secret: Boolean(secret), last: last.get(`webhook:${w.id}`) ?? null })),
+  });
+});
+
+adminRouter.post('/webhooks', async (req, res) => {
+  const input = webhookInput.parse(req.body);
+  const items = await listWebhooks();
+  if (items.length >= 20) throw new HttpError(400, 'Limite de 20 webhooks');
+  const w: Webhook = { id: newWebhookId(), name: input.name, preset: input.preset, url: input.url, token: input.token ?? '', secret: input.secret ?? '', events: input.events, active: input.active, created_at: new Date().toISOString() };
+  await saveWebhooks([...items, w]);
+  res.status(201).json({ id: w.id });
+});
+
+/** Atualiza; token/segredo vazios ou ausentes mantêm o valor salvo (use clear_secret para remover). */
+adminRouter.put('/webhooks/:id', async (req, res) => {
+  const id = String(req.params.id);
+  if (id === 'env') throw new HttpError(400, 'Este webhook vem das variáveis de ambiente. Crie um no painel para editar por aqui.');
+  const input = webhookInput.extend({ clear_secret: z.boolean().optional() }).parse(req.body);
+  const items = await listWebhooks();
+  const cur = items.find((w) => w.id === id);
+  if (!cur) throw new HttpError(404, 'Webhook não encontrado');
+  const next: Webhook = {
+    ...cur,
+    name: input.name,
+    preset: input.preset,
+    url: input.url,
+    events: input.events,
+    active: input.active,
+    token: input.token ? input.token : cur.token,
+    secret: input.clear_secret ? '' : input.secret ? input.secret : cur.secret,
+  };
+  await saveWebhooks(items.map((w) => (w.id === id ? next : w)));
+  res.json({ ok: true });
+});
+
+adminRouter.delete('/webhooks/:id', async (req, res) => {
+  const id = String(req.params.id);
+  if (id === 'env') throw new HttpError(400, 'Remova as variáveis PAYTRACKING_* na Hostinger para desativar este webhook.');
+  const items = await listWebhooks();
+  await saveWebhooks(items.filter((w) => w.id !== id));
+  res.status(204).end();
+});
+
+adminRouter.post('/webhooks/:id/test', async (req, res) => {
+  const w = (await allWebhooks()).find((x) => x.id === String(req.params.id));
+  if (!w) throw new HttpError(404, 'Webhook não encontrado');
+  const r = await testWebhook(w);
+  await supabase.from('integration_logs').insert({ integration: `webhook:${w.id}`, event: 'connection_test', ok: r.ok, http_status: r.status, message: `${w.name}: ${r.message}`.slice(0, 500) });
+  res.json(r);
+});
 adminRouter.post('/integrations/email/test', async (req, res) => {
   const to = z.object({ to: z.string().email() }).parse(req.body).to;
   res.json(await testEmail(to));
