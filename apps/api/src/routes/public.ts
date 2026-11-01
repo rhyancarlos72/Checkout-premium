@@ -15,7 +15,9 @@ const eventLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders
 publicRouter.get('/checkouts/:slug', async (req, res) => {
   const c = await loadCheckout(String(req.params.slug));
   const s = await getSettings();
-  res.set('Cache-Control', 'public, max-age=30');
+  // Sem cache: alterações no painel (bumps, preço, visual) aparecem na hora,
+  // inclusive atrás do cache da hospedagem (LiteSpeed/Hostinger)
+  res.set('Cache-Control', 'no-store, max-age=0');
   res.json({
     id: c.id,
     slug: c.slug,

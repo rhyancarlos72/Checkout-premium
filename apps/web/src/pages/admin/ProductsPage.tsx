@@ -6,7 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageLoader, Select, Switch, Textarea, useToast } from '@/components/ui';
+import { Badge, Button, cn, Card, EmptyState, Field, Input, Modal, PageLoader, Select, Switch, Textarea, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { checkoutUrl } from '@/lib/links';
 import { brl, centsToInput, parseMoney } from '@/lib/format';
@@ -48,10 +48,13 @@ function AdditionalProducts({ product, products, onEdit }: { product: Product; p
       ) : (
         <ul className="space-y-1.5">
           {bumps.map((b) => (
-            <li key={b!.id} className="flex items-center gap-2 rounded-lg bg-amber-50 px-2.5 py-1.5 text-xs">
-              <Zap className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-              <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{products.find((p) => p.id === b!.product_id)?.name ?? b!.title}</span>
-              <span className="shrink-0 font-semibold tabular-nums text-zinc-700">+ {brl(b!.price_cents)}</span>
+            <li key={b!.id} className={cn('rounded-lg px-2.5 py-1.5 text-xs', b!.product_id === product.id ? 'bg-red-50' : 'bg-amber-50')}>
+              <div className="flex items-center gap-2">
+                <Zap className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{products.find((p) => p.id === b!.product_id)?.name ?? b!.title}</span>
+                <span className="shrink-0 font-semibold tabular-nums text-zinc-700">+ {brl(b!.price_cents)}</span>
+              </div>
+              {b!.product_id === product.id && <p className="mt-1 text-[11px] font-medium text-red-700">Este bump entrega o próprio produto. Clique em Editar e escolha outro produto.</p>}
             </li>
           ))}
         </ul>

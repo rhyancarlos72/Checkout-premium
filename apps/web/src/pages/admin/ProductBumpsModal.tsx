@@ -26,7 +26,12 @@ export function ProductBumpsModal({ product, products, onClose, onSaved }: { pro
 
   useEffect(() => {
     if (current.data && !items)
-      setItems(current.data.map((b) => ({ product_id: b.product_id, price: centsToInput(b.price_cents), compare: centsToInput(b.compare_at_cents), title: b.title })));
+      setItems(
+        current.data
+          // bumps antigos que entregavam o próprio produto principal são substituídos
+          .filter((b) => b.product_id !== product.id)
+          .map((b) => ({ product_id: b.product_id, price: centsToInput(b.price_cents), compare: centsToInput(b.compare_at_cents), title: b.title })),
+      );
   }, [current.data, items]);
 
   const list = items ?? [];
@@ -71,6 +76,11 @@ export function ProductBumpsModal({ product, products, onClose, onSaved }: { pro
         <PageLoader />
       ) : (
         <div className="space-y-5">
+          {current.data?.some((b) => b.product_id === product.id) && (
+            <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">
+              Havia um order bump antigo entregando o <b>próprio produto principal</b>. Escolha abaixo o produto adicional certo e salve: o antigo será substituído.
+            </p>
+          )}
           <p className="rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-700">
             Escolha outros produtos para oferecer como <b>order bump</b> no checkout de <b>{product.name}</b>. Quem marcar a oferta recebe o acesso do produto adicional junto com o principal.
           </p>

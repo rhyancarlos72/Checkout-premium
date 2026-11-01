@@ -40,6 +40,24 @@ function sanitizeTracking(raw: Record<string, unknown>) {
   return out;
 }
 
+/**
+ * Order bumps exibidos no checkout: todo bump ATIVO ligado ao checkout, na ordem definida.
+ * O produto adicional pode estar inativo (vendido só como adicional) e bumps antigos podem
+ * apontar para o próprio produto principal — nenhum desses casos esconde a oferta.
+ * Nome/descrição/imagem vêm do produto adicional quando o bump não define.
+ */
+export function visibleBumps(rows: any[] | null | undefined) {
+  return (rows ?? [])
+    .filter((cb) => cb?.bump?.active)
+    .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
+    .map((cb) => ({
+      ...cb.bump,
+      title: cb.bump.title || cb.bump.product?.name || 'Oferta especial',
+      description: cb.bump.description ?? cb.bump.product?.description ?? null,
+      image_url: cb.bump.image_url || cb.bump.product?.image_url || null,
+    }));
+}
+
 /** Carrega checkout ativo com produto e bumps vinculados. */
 export async function loadCheckout(slug: string) {
   const checkout = must(
@@ -52,16 +70,7 @@ export async function loadCheckout(slug: string) {
     'Checkout não encontrado',
   ) as any;
   if (!checkout.product?.active) throw new HttpError(404, 'Produto indisponível');
-  const bumps = (checkout.checkout_bumps ?? [])
-    // order bump = outro produto oferecido junto; o produto adicional também precisa estar ativo
-    .filter((cb: any) => cb.bump?.active && cb.bump.product?.active !== false && cb.bump.product_id !== checkout.product_id)
-    .sort((a: any, b: any) => a.sort - b.sort)
-    .map((cb: any) => ({
-      ...cb.bump,
-      title: cb.bump.title || cb.bump.product?.name,
-      description: cb.bump.description ?? cb.bump.product?.description ?? null,
-      image_url: cb.bump.image_url || cb.bump.product?.image_url || null,
-    }));
+  const bumps = visibleBumps(checkout.checkout_bumps);
   return { ...checkout, bumps, price_cents: checkout.price_cents ?? checkout.product.price_cents };
 }
 
