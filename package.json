@@ -3,14 +3,20 @@
   "private": true,
   "version": "1.0.0",
   "description": "Checkout próprio com PIX (Woovi e Efí), painel admin, Supabase e Node.js",
-  "workspaces": ["apps/api", "apps/web"],
-  "engines": { "node": ">=20" },
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev:api": "npm run dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
     "build": "npm run build -w apps/web && npm run build -w apps/api",
-    "start": "node apps/api/dist/server.js",
+    "start": "node server.js",
     "typecheck": "npm run typecheck -w apps/api && npm run typecheck -w apps/web",
     "test": "npm run test -w apps/api"
-  }
+  },
+  "main": "server.js"
 }

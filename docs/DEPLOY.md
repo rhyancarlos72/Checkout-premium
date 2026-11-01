@@ -22,10 +22,14 @@ O repositório não contém credenciais. `.env`, certificados `.p12/.pem` e logs
 
 | Campo | Valor |
 |---|---|
-| Versão do Node | 22 (mínimo 20) |
-| Comando de build | `npm ci && npm run build` |
-| Comando de start / arquivo de entrada | `npm start` (ou `apps/api/dist/server.js`) |
-| Variáveis de ambiente | todas do `.env.example` (as `VITE_*` precisam existir **no build**) |
+| Framework | **Express** |
+| Versão do Node | **22** (obrigatório; Vite 8 e Supabase exigem Node 22) |
+| Comando de build | `npm run build` |
+| Arquivo de entrada | `server.js` (está na raiz do repositório) |
+| Gerenciador de pacotes | npm |
+| Variáveis de ambiente | todas do `.env.example` (as `VITE_*` precisam existir **antes do build**) |
+
+O `server.js` da raiz carrega a API compilada (`apps/api/dist/server.js`), que serve o site e a API na porta definida pela Hostinger (`PORT`). As ferramentas de build ficam em `dependencies`, então o build funciona mesmo com `NODE_ENV=production`.
 
 Depois, aponte o domínio/subdomínio (ex.: `checkout.seudominio.com.br`) e ative o SSL (HTTPS é obrigatório para os webhooks).
 
