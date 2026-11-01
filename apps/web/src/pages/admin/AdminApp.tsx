@@ -1,5 +1,5 @@
-import { BarChart3, Boxes, CreditCard, LogOut, Menu, PlugZap, ShoppingBag, Sparkles, Ticket, Users, X } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { BarChart3, Boxes, CreditCard, LogOut, Menu, Moon, PlugZap, ShoppingBag, Sparkles, Sun, Ticket, Users, X } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { cn, PageLoader } from '@/components/ui';
 import { AuthProvider, useAuth } from '@/lib/auth';
@@ -36,7 +36,39 @@ const groups = [
   { label: 'Sistema', items: [{ to: '/admin/integracoes', label: 'Integrações', icon: PlugZap }] },
 ];
 
-function Sidebar({ email, onNavigate }: { email: string; onNavigate?: () => void }) {
+type AdminTheme = 'light' | 'dark';
+/** Tema do painel: salvo no navegador; padrão = preferência do aparelho. */
+function useAdminTheme(): [AdminTheme, () => void] {
+  const [theme, setTheme] = useState<AdminTheme>(() => {
+    try {
+      const saved = localStorage.getItem('ck_admin_theme');
+      if (saved === 'light' || saved === 'dark') return saved;
+    } catch {
+      /* ignore */
+    }
+    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle('admin-dark', theme === 'dark');
+    try {
+      localStorage.setItem('ck_admin_theme', theme);
+    } catch {
+      /* ignore */
+    }
+    return () => document.documentElement.classList.remove('admin-dark');
+  }, [theme]);
+  return [theme, () => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))];
+}
+
+function ThemeToggle({ theme, onToggle }: { theme: AdminTheme; onToggle: () => void }) {
+  return (
+    <button onClick={onToggle} className="rounded-lg p-2 text-zinc-500 transition hover:bg-white/5 hover:text-white" aria-label={theme === 'dark' ? 'Usar modo claro' : 'Usar modo escuro'} title={theme === 'dark' ? 'Modo claro' : 'Modo escuro'}>
+      {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+    </button>
+  );
+}
+
+function Sidebar({ email, onNavigate, theme, onToggleTheme }: { email: string; onNavigate?: () => void; theme: AdminTheme; onToggleTheme: () => void }) {
   const initial = (email[0] ?? '?').toUpperCase();
   return (
     <nav className="relative flex h-full flex-col overflow-hidden bg-[#07090f] text-zinc-300">
@@ -89,6 +121,7 @@ function Sidebar({ email, onNavigate }: { email: string; onNavigate?: () => void
             <p className="truncate text-sm font-medium text-white">Administrador</p>
             <p className="truncate text-xs text-zinc-500">{email}</p>
           </div>
+          <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           <button onClick={() => supabase.auth.signOut()} className="rounded-lg p-2 text-zinc-500 transition hover:bg-white/5 hover:text-white" aria-label="Sair" title="Sair">
             <LogOut className="h-4 w-4" />
           </button>
@@ -100,16 +133,20 @@ function Sidebar({ email, onNavigate }: { email: string; onNavigate?: () => void
 
 function Shell() {
   const { session, loading } = useAuth();
-  const [open, setOpen] = useState(false);
-  const location = useLocation();
   if (loading) return <div className="bg-aurora min-h-screen"><PageLoader /></div>;
   if (!session) return <LoginPage />;
-  const email = session.user.email ?? '';
+  return <AuthedShell email={session.user.email ?? ''} />;
+}
+
+function AuthedShell({ email }: { email: string }) {
+  const [open, setOpen] = useState(false);
+  const location = useLocation();
+  const [theme, toggleTheme] = useAdminTheme();
 
   return (
     <div className="min-h-screen bg-[#f6f7fb]">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[264px] lg:block">
-        <Sidebar email={email} />
+        <Sidebar email={email} theme={theme} onToggleTheme={toggleTheme} />
       </aside>
       {open && (
         <div className="fixed inset-0 z-40 lg:hidden">
@@ -118,7 +155,7 @@ function Shell() {
             <button className="absolute right-3 top-4 z-10 rounded-lg p-1.5 text-zinc-400" onClick={() => setOpen(false)} aria-label="Fechar menu">
               <X className="h-5 w-5" />
             </button>
-            <Sidebar email={email} onNavigate={() => setOpen(false)} />
+            <Sidebar email={email} onNavigate={() => setOpen(false)} theme={theme} onToggleTheme={toggleTheme} />
           </aside>
         </div>
       )}
@@ -128,7 +165,8 @@ function Shell() {
             <Menu className="h-5 w-5" />
           </button>
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-cyan-500"><CreditCard className="h-4 w-4" /></div>
-          <span className="font-semibold">Checkout</span>
+          <span className="flex-1 font-semibold">Checkout</span>
+          <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </header>
         <main key={location.pathname} className="animate-fade-in mx-auto max-w-7xl p-4 sm:p-6 lg:p-10">
           <Routes>

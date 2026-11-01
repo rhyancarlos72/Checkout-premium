@@ -6,8 +6,8 @@ import { cn } from '@/components/ui';
 import { publicApi } from '@/lib/api';
 import { brl } from '@/lib/format';
 import { initMetaPixel, pixel, track } from '@/lib/tracking';
-import { PixIcon } from './CheckoutView';
-import { themeDefaults, themeStyle, type Theme } from './theme';
+import { PixIcon, PixLogo } from './CheckoutView';
+import { themeDefaults, themeStyle, usePrefersDark, type Theme } from './theme';
 
 interface PublicOrder {
   number: number;
@@ -82,11 +82,12 @@ function Confetti() {
 
 function Shell({ theme, children }: { theme: Theme; children: ReactNode }) {
   const t = { ...themeDefaults, ...theme };
+  const prefersDark = usePrefersDark();
   return (
-    <div style={themeStyle(t)} className="min-h-screen bg-ck-bg font-sans text-ck-text antialiased">
+    <div style={themeStyle(t, prefersDark)} className="min-h-screen bg-ck-bg font-sans text-ck-text antialiased">
       <header className="border-b border-ck-border bg-ck-surface/80 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-2xl items-center justify-between px-4">
-          {t.logoUrl ? <img src={t.logoUrl} alt="" className="h-8 w-auto max-w-[150px] object-contain" /> : <span className="text-[15px] font-bold tracking-tight">Pagamento</span>}
+          {t.logoUrl ? <img src={t.logoUrl} alt="" className="h-8 w-auto max-w-[150px] object-contain" /> : <PixLogo className="text-base" />}
           <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-600"><Lock className="h-3.5 w-3.5" /> Ambiente seguro</span>
         </div>
       </header>

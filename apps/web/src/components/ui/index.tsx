@@ -26,7 +26,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           lg: 'h-14 px-6 text-base',
         }[size],
         {
-          primary: 'bg-zinc-900 text-white shadow-sm shadow-zinc-900/20 hover:bg-zinc-800',
+          primary: 'bg-zinc-900 text-zinc-50 shadow-sm shadow-zinc-900/20 hover:bg-zinc-800',
           brand: 'bg-brand text-brand-fg shadow-sm hover:brightness-110',
           secondary: 'border border-gray-200 bg-white text-gray-800 hover:bg-gray-50',
           ghost: 'text-gray-600 hover:bg-gray-100',
@@ -85,7 +85,7 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
   return (
     <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex items-center gap-3 text-sm text-gray-700">
       <span className={cn('relative h-6 w-11 rounded-full transition', checked ? 'bg-emerald-600' : 'bg-gray-300')}>
-        <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition', checked ? 'left-[22px]' : 'left-0.5')} />
+        <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-[#fff] shadow transition', checked ? 'left-[22px]' : 'left-0.5')} />
       </span>
       {label}
     </button>
@@ -166,7 +166,7 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   if (!open) return null;
   // Portal no <body>: evita que ancestrais com transform/animação prendam o position:fixed
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-900/40 backdrop-blur-[2px] sm:items-center sm:p-4" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 backdrop-blur-[2px] sm:items-center sm:p-4" onMouseDown={onClose}>
       <div
         role="dialog"
         aria-modal="true"
@@ -195,7 +195,7 @@ export function useToast() {
     return () => clearTimeout(t);
   }, [toast]);
   const node = toast ? (
-    <div className={cn('animate-fade-in fixed bottom-4 left-1/2 z-[60] -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg', toast.tone === 'ok' ? 'bg-gray-900' : 'bg-red-600')}>
+    <div className={cn('animate-fade-in fixed bottom-4 left-1/2 z-[60] -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg', toast.tone === 'ok' ? 'bg-zinc-900 text-zinc-50' : 'bg-red-600')}>
       {toast.msg}
     </div>
   ) : null;

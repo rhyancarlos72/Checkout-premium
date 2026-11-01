@@ -71,7 +71,7 @@ export default function DashboardPage() {
   const range = (
     <div className="inline-flex rounded-xl border border-zinc-200 bg-white p-1 text-sm shadow-sm">
       {[7, 30, 90].map((d) => (
-        <button key={d} onClick={() => setDays(d)} className={cn('rounded-lg px-3.5 py-1.5 font-medium transition', days === d ? 'bg-zinc-900 text-white shadow' : 'text-zinc-600 hover:bg-zinc-100')}>
+        <button key={d} onClick={() => setDays(d)} className={cn('rounded-lg px-3.5 py-1.5 font-medium transition', days === d ? 'bg-zinc-900 text-zinc-50 shadow' : 'text-zinc-600 hover:bg-zinc-100')}>
           {d}d
         </button>
       ))}

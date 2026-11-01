@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { Router } from 'express';
 import { z } from 'zod';
 import { env, features } from '../config/env.js';
@@ -50,21 +51,41 @@ const productSchema = z.object({
   delivery_note: z.string().max(1000).nullable().optional(),
   active: z.boolean().default(true),
 });
-// Cada produto tem seu link de checkout: criado automaticamente junto com o produto
-async function createDefaultCheckout(product: { id: string; name: string }) {
-  const base = product.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 48) || 'produto';
-  const provider = woovi.isConfigured() ? 'woovi' : efi.isConfigured() ? 'efi' : 'woovi';
-  for (let i = 0; i < 6; i++) {
-    const slug = (i === 0 ? base : `${base}-${Math.random().toString(36).slice(2, 6)}`).padEnd(3, '0');
+// Cada produto tem seu link de checkout com um CÓDIGO próprio (ex.: /c/k7x9p2qa),
+// criado automaticamente junto com o produto.
+const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // sem 0/o/1/l/i para não confundir
+function linkCode(len = 8) {
+  const bytes = crypto.randomBytes(len);
+  return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+}
+
+type CheckoutTemplate = { theme?: unknown; fields?: unknown; tracking?: unknown; provider?: string; price_cents?: number | null; pix_expires_minutes?: number; bumpIds?: string[] };
+
+async function createDefaultCheckout(product: { id: string; name: string }, template: CheckoutTemplate = {}) {
+  const provider = template.provider ?? (woovi.isConfigured() ? 'woovi' : efi.isConfigured() ? 'efi' : 'woovi');
+  for (let i = 0; i < 8; i++) {
     const r = await supabase
       .from('checkouts')
-      .insert({ slug, name: product.name, product_id: product.id, provider, fields: { phone: true, document: false }, theme: {} })
+      .insert({
+        slug: linkCode(),
+        name: product.name,
+        product_id: product.id,
+        provider,
+        price_cents: template.price_cents ?? null,
+        pix_expires_minutes: template.pix_expires_minutes ?? 30,
+        fields: template.fields ?? { phone: true, document: false },
+        theme: template.theme ?? {},
+        tracking: template.tracking ?? {},
+      })
       .select('id, slug')
       .single();
-    if (!r.error) return r.data;
+    if (!r.error) {
+      if (template.bumpIds?.length) await saveBumps(r.data.id, template.bumpIds);
+      return r.data;
+    }
     if (r.error.code !== '23505') throw new HttpError(500, r.error.message);
   }
-  throw new HttpError(500, 'Não foi possível gerar um link único');
+  throw new HttpError(500, 'Não foi possível gerar um código único');
 }
 
 adminRouter.post('/products', async (req, res) => {
@@ -76,7 +97,27 @@ adminRouter.post('/products/:id/checkout', async (req, res) => {
   const product = must(await supabase.from('products').select('id, name').eq('id', uuid.parse(req.params.id)).maybeSingle(), 'Produto não encontrado') as any;
   res.status(201).json(await createDefaultCheckout(product));
 });
-crud('products', 'products', productSchema, '*, checkouts(id, slug, name, active)');
+
+/** Duplica o produto e o checkout principal dele (visual, campos e order bumps), com novo código de link. */
+adminRouter.post('/products/:id/duplicate', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const src = must(await supabase.from('products').select('*').eq('id', id).maybeSingle(), 'Produto não encontrado') as any;
+  const { id: _id, number: _n, created_at: _c, updated_at: _u, ...data } = src;
+  const copy = must(await supabase.from('products').insert({ ...data, name: `${src.name} (cópia)`.slice(0, 120) }).select().single()) as any;
+  const { data: ck } = await supabase
+    .from('checkouts')
+    .select('theme, fields, tracking, provider, price_cents, pix_expires_minutes, checkout_bumps(bump_id, sort)')
+    .eq('product_id', id)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const tpl: CheckoutTemplate = ck
+    ? { ...(ck as any), bumpIds: [...((ck as any).checkout_bumps ?? [])].sort((a: any, b: any) => a.sort - b.sort).map((b: any) => b.bump_id) }
+    : {};
+  const checkout = await createDefaultCheckout(copy, tpl);
+  res.status(201).json({ ...copy, checkout });
+});
+crud('products', 'products', productSchema, '*, checkouts(id, slug, name, active)', 'created_at');
 
 const bumpSchema = z.object({
   product_id: uuid,
@@ -105,12 +146,15 @@ crud('coupons', 'coupons', couponSchema, '*, checkout:checkouts(name)');
 const hex = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Cor inválida (use #RRGGBB)');
 const themeSchema = z
   .object({
-    mode: z.enum(['light', 'dark']).default('light'),
+    mode: z.enum(['light', 'dark', 'auto']).default('light'),
     primaryColor: hex.default('#059669'),
     backgroundColor: hex.default('#f4f5f7'),
     radius: z.enum(['sharp', 'soft', 'round']).default('soft'),
     headline: z.string().max(140).optional(),
     subheadline: z.string().max(400).optional(),
+    producerName: z.string().max(80).optional(),
+    compareAtCents: z.number().int().min(0).nullable().optional(),
+    benefits: z.array(z.string().max(120)).max(8).default([]),
     buttonText: z.string().max(40).default('Finalizar compra'),
     logoUrl: urlOrEmpty,
     bannerUrl: urlOrEmpty,

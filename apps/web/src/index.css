@@ -118,3 +118,37 @@ input, select, textarea { font-size: 16px; }
 @keyframes ck-pulse-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent) } 100% { box-shadow: 0 0 0 12px transparent } }
 .animate-pulse-ring { animation: ck-pulse-ring 1.6s ease-out infinite; }
 @media (prefers-reduced-motion: reduce) { .ck-cta::after, .animate-pop, .animate-pulse-ring { animation: none; } }
+
+/* ---------- Painel: modo escuro (classe .admin-dark no <html>) ----------
+   Remapeia as escalas zinc/gray e as superfícies brancas: todas as telas do
+   painel (inclusive modais e o editor) ficam escuras sem duplicar classes.
+   O checkout público não é afetado (usa seus próprios tokens --ck-*). */
+html.admin-dark {
+  color-scheme: dark;
+  --color-zinc-50: #14161c; --color-gray-50: #14161c;
+  --color-zinc-100: #1a1d24; --color-gray-100: #1a1d24;
+  --color-zinc-200: #262a33; --color-gray-200: #262a33;
+  --color-zinc-300: #353a45; --color-gray-300: #353a45;
+  --color-zinc-400: #737a87; --color-gray-400: #737a87;
+  --color-zinc-500: #9aa1ad; --color-gray-500: #9aa1ad;
+  --color-zinc-600: #b3b8c2; --color-gray-600: #b3b8c2;
+  --color-zinc-700: #d1d5db; --color-gray-700: #d1d5db;
+  --color-zinc-800: #e5e7eb; --color-gray-800: #e5e7eb;
+  --color-zinc-900: #f3f4f6; --color-gray-900: #f3f4f6;
+  --color-zinc-950: #fafafa; --color-gray-950: #fafafa;
+  /* tons claros de destaque → versões translúcidas */
+  --color-emerald-50: rgb(16 185 129 / .14); --color-emerald-100: rgb(16 185 129 / .2); --color-emerald-200: rgb(16 185 129 / .3);
+  --color-emerald-700: #6ee7b7; --color-emerald-800: #a7f3d0; --color-emerald-900: #d1fae5;
+  --color-amber-50: rgb(245 158 11 / .14); --color-amber-100: rgb(245 158 11 / .2); --color-amber-700: #fcd34d; --color-amber-800: #fde68a;
+  --color-red-50: rgb(239 68 68 / .14); --color-red-200: rgb(239 68 68 / .3); --color-red-700: #fca5a5;
+  --color-violet-50: rgb(139 92 246 / .16); --color-violet-700: #c4b5fd;
+  --color-orange-100: rgb(249 115 22 / .2); --color-orange-700: #fdba74;
+  --color-sky-50: rgb(14 165 233 / .14);
+}
+html.admin-dark body { background: #0b0c10; }
+html.admin-dark .bg-white,
+html.admin-dark .hover\:bg-white:hover { background-color: #111319; }
+html.admin-dark .bg-white\/90 { background-color: rgb(17 19 25 / .9); }
+html.admin-dark .bg-\[\#f6f7fb\] { background-color: #0b0c10; }
+html.admin-dark .shadow-\[0_1px_2px_rgba\(16\,24\,40\,\.04\)\,0_8px_24px_-12px_rgba\(16\,24\,40\,\.08\)\] { box-shadow: 0 1px 0 rgb(255 255 255 / .03) inset, 0 12px 32px -16px rgb(0 0 0 / .6); }
+html.admin-dark ::selection { background: rgb(16 185 129 / .35); }

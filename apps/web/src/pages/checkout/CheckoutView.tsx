@@ -9,7 +9,7 @@ import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
 import { brl, digits, maskPhone } from '@/lib/format';
 import { collectTracking, initMetaPixel, pixel, track } from '@/lib/tracking';
-import { themeDefaults, themeStyle, type PublicCheckout } from './theme';
+import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
 
 function makeSchema(fields: PublicCheckout['fields']) {
   return z.object({
@@ -133,6 +133,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const t = { ...themeDefaults, ...checkout.theme };
+  const prefersDark = usePrefersDark();
   const [bumps, setBumps] = useState<string[]>([]);
   const [couponInput, setCouponInput] = useState('');
   const [coupon, setCoupon] = useState<{ code: string; discount: number } | null>(null);
@@ -252,6 +253,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     return s.isTouched && !s.invalid && Boolean(values[name]);
   };
   const banner = t.bannerUrl || t.mockupUrl;
+  const compareAt = t.compareAtCents ?? 0;
   const productImage = checkout.product.image_url || t.mockupUrl;
   const busy = submit.isPending;
   const showSticky = !ctaVisible && !footerVisible;
@@ -386,7 +388,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   );
 
   return (
-    <div style={themeStyle(t)} className={cn('@container relative bg-ck-bg font-sans text-ck-text antialiased [overflow:clip]', preview ? 'min-h-full' : 'min-h-screen')}>
+    <div style={themeStyle(t, prefersDark)} className={cn('@container relative bg-ck-bg font-sans text-ck-text antialiased [overflow:clip]', preview ? 'min-h-full' : 'min-h-screen')}>
       {/* Barra de anúncio / cronômetro */}
       {(t.showTimer || t.announcement) && (
         <div className="bg-brand text-brand-fg">
@@ -400,9 +402,13 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
       {/* Cabeçalho */}
       <header className="border-b border-ck-border bg-ck-surface/80 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-[1120px] items-center justify-between gap-4 px-4">
-          {t.logoUrl ? <img src={t.logoUrl} alt={checkout.store.name} className="h-8 w-auto max-w-[150px] object-contain" /> : <span className="truncate text-[15px] font-bold tracking-tight">{checkout.store.name}</span>}
-          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-600">
-            <Lock className="h-3.5 w-3.5" /> <span className="hidden @sm:inline">Pagamento</span> 100% seguro
+          {t.logoUrl ? (
+            <img src={t.logoUrl} alt="" className="h-8 w-auto max-w-[150px] object-contain" />
+          ) : (
+            <span className="flex items-center gap-2 text-sm font-semibold"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600"><Lock className="h-4 w-4" /></span> Checkout seguro</span>
+          )}
+          <span className="flex shrink-0 items-center gap-2 text-xs font-medium text-ck-muted">
+            <span className="hidden @sm:inline">Pagamento via</span> <PixLogo className="text-sm" />
           </span>
         </div>
       </header>
@@ -430,25 +436,56 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           {/* Banner no topo (celular) */}
           {banner && <img src={banner} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm @4xl:hidden" fetchPriority="high" />}
 
-          {/* Produto */}
+          {/* Produto — estilo infoproduto */}
           <section className="ck-card overflow-hidden">
-            <div className="flex gap-4 p-5 @lg:p-7">
-              {productImage && <img src={productImage} alt="" className="hidden h-24 w-24 shrink-0 rounded-[calc(var(--ck-r)*.7)] object-cover ring-1 ring-ck-border @md:block" />}
+            <div className="flex gap-4 p-5 @lg:gap-5 @lg:p-6">
+              {productImage ? (
+                <img src={productImage} alt="" className="h-24 w-24 shrink-0 rounded-[calc(var(--ck-r)*.7)] object-cover shadow-md ring-1 ring-ck-border @lg:h-28 @lg:w-28" />
+              ) : (
+                <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.7)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg shadow-md @lg:h-28 @lg:w-28"><Gift className="h-9 w-9" /></div>
+              )}
               <div className="min-w-0 flex-1">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-brand">
-                  <Gift className="h-3 w-3" /> Você está adquirindo
-                </span>
-                <h1 className="mt-3 text-[22px] font-bold leading-tight tracking-tight @lg:text-[26px]">{t.headline || checkout.product.name}</h1>
-                {(t.subheadline || checkout.product.description) && <p className="mt-2 text-[15px] leading-relaxed text-ck-muted">{t.subheadline || checkout.product.description}</p>}
-                <div className="mt-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                  <span className="text-2xl font-bold tracking-tight tabular-nums">{brl(checkout.price_cents)}</span>
-                  <span className="text-sm text-ck-muted">pagamento único · <PixIcon className="inline h-3.5 w-3.5 align-[-2px]" /> Pix</span>
+                <div className="flex flex-wrap gap-1.5">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-brand"><Gift className="h-3 w-3" /> Produto digital</span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-600"><Zap className="h-3 w-3" /> Acesso imediato</span>
+                </div>
+                <h1 className="mt-2 text-[19px] font-bold leading-snug tracking-tight @lg:text-[24px]">{t.headline || checkout.product.name}</h1>
+                {t.producerName && (
+                  <p className="mt-1 flex items-center gap-1 text-[13px] text-ck-muted">por <span className="font-semibold text-ck-text">{t.producerName}</span> <BadgeCheck className="h-3.5 w-3.5 text-sky-500" /></p>
+                )}
+                <div className="mt-3">
+                  {compareAt > checkout.price_cents && (
+                    <p className="flex items-center gap-2 text-[13px] text-ck-muted">
+                      De <span className="line-through">{brl(compareAt)}</span>
+                      <span className="rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[11px] font-bold text-emerald-600">-{Math.round((1 - checkout.price_cents / compareAt) * 100)}%</span>
+                    </p>
+                  )}
+                  <p className="flex flex-wrap items-baseline gap-x-2">
+                    {compareAt > checkout.price_cents && <span className="text-sm font-medium text-ck-muted">por</span>}
+                    <span className="text-[28px] font-extrabold leading-tight tracking-tight text-brand tabular-nums">{brl(checkout.price_cents)}</span>
+                  </p>
+                  <p className="mt-0.5 text-xs text-ck-muted">à vista no <PixIcon className="inline h-3 w-3 align-[-1px]" /> Pix · pagamento único</p>
                 </div>
               </div>
             </div>
+            {(t.subheadline || checkout.product.description || (t.benefits?.filter(Boolean).length ?? 0) > 0) && (
+              <div className="space-y-4 border-t border-ck-border bg-ck-surface-2/60 p-5 @lg:px-6">
+                {(t.subheadline || checkout.product.description) && <p className="text-[15px] leading-relaxed text-ck-muted">{t.subheadline || checkout.product.description}</p>}
+                {(t.benefits?.filter(Boolean).length ?? 0) > 0 && (
+                  <ul className="grid gap-2.5 @lg:grid-cols-2">
+                    {t.benefits!.filter(Boolean).map((b, i) => (
+                      <li key={i} className="flex items-start gap-2.5 text-sm">
+                        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand text-brand-fg"><Check className="h-3 w-3" strokeWidth={3.5} /></span>
+                        <span className="leading-snug">{b}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
           </section>
 
-          <Section step={1} title="Seus dados">
+          <Section step={1} title="Identificação">
             <div className="grid gap-4 @lg:grid-cols-2">
               <CkField className="@lg:col-span-2" label="Nome completo" icon={<User className="h-[18px] w-[18px]" />} reg={register('name')} error={err.name?.message} valid={isValid('name')} autoComplete="name" placeholder="Seu nome e sobrenome" enterKeyHint="next" />
               <CkField className="@lg:col-span-2" label="E-mail" icon={<Mail className="h-[18px] w-[18px]" />} reg={register('email')} error={err.email?.message} valid={isValid('email')} hint="Seu acesso será enviado para este e-mail" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="voce@email.com" enterKeyHint="next" />
@@ -564,13 +601,15 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
       </main>
 
       <footer ref={footerRef} className="border-t border-ck-border">
-        <div className="mx-auto max-w-[1120px] space-y-1 px-4 py-8 text-center text-xs leading-relaxed text-ck-muted">
+        <div className="mx-auto max-w-[1120px] space-y-2 px-4 py-8 text-center text-xs leading-relaxed text-ck-muted">
+          <p className="flex items-center justify-center gap-1.5 font-medium"><ShieldCheck className="h-3.5 w-3.5 text-emerald-500" /> Compra protegida · dados criptografados · pagamento via <PixIcon className="h-3 w-3" /> Pix</p>
           {t.footerText && <p className="whitespace-pre-line">{t.footerText}</p>}
-          <p>
-            © {new Date().getFullYear()} {checkout.store.name}
-            {checkout.store.document && ` · ${checkout.store.document}`}
-            {checkout.store.supportEmail && <> · <a className="underline underline-offset-2" href={`mailto:${checkout.store.supportEmail}`}>{checkout.store.supportEmail}</a></>}
-          </p>
+          {(t.producerName || checkout.store.document || checkout.store.supportEmail) && (
+            <p>
+              {[t.producerName && `© ${new Date().getFullYear()} ${t.producerName}`, checkout.store.document].filter(Boolean).join(' · ')}
+              {checkout.store.supportEmail && <>{(t.producerName || checkout.store.document) && ' · '}Suporte: <a className="underline underline-offset-2" href={`mailto:${checkout.store.supportEmail}`}>{checkout.store.supportEmail}</a></>}
+            </p>
+          )}
         </div>
       </footer>
 

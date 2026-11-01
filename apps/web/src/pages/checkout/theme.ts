@@ -3,13 +3,17 @@ import { contrastText } from '@/lib/format';
 
 export interface Theme {
   // Aparência
-  mode?: 'light' | 'dark';
+  mode?: 'light' | 'dark' | 'auto';
   primaryColor?: string;
   backgroundColor?: string;
   radius?: 'sharp' | 'soft' | 'round';
   // Conteúdo
   headline?: string;
   subheadline?: string;
+  producerName?: string;
+  /** Preço "de" (riscado), em centavos */
+  compareAtCents?: number | null;
+  benefits?: string[];
   buttonText?: string;
   logoUrl?: string | null;
   bannerUrl?: string | null;
@@ -72,12 +76,18 @@ function luminance(hex: string) {
 const isLight = (hex: string) => luminance(hex) > 128;
 
 /** Variáveis CSS do checkout (cores, raio, marca) — usadas pelas classes bg-ck-*, text-ck-*, rounded-ck. */
-export function themeStyle(theme: Theme | undefined): CSSProperties {
+/** Resolve o modo 'auto' pela preferência do aparelho. */
+export function resolveMode(mode: Theme['mode'], prefersDark: boolean): 'light' | 'dark' {
+  return mode === 'auto' ? (prefersDark ? 'dark' : 'light') : mode === 'dark' ? 'dark' : 'light';
+}
+
+export function themeStyle(theme: Theme | undefined, prefersDark = false): CSSProperties {
   const t = { ...themeDefaults, ...theme };
-  const dark = t.mode === 'dark';
+  const dark = resolveMode(t.mode, prefersDark) === 'dark';
   let brand = t.primaryColor || themeDefaults.primaryColor;
   // Em modo escuro, uma marca muito escura some no fundo: clareia o botão
   if (dark && luminance(brand) < 50) brand = '#f4f4f5';
+  // Fundo: respeita a cor escolhida se combinar com o modo; senão usa o padrão do modo
   const bg = dark ? (t.backgroundColor && !isLight(t.backgroundColor) ? t.backgroundColor : '#0a0b10') : t.backgroundColor && isLight(t.backgroundColor) ? t.backgroundColor : '#f4f5f7';
   const r = { sharp: '6px', soft: '14px', round: '22px' }[t.radius] ?? '14px';
   return {
@@ -93,4 +103,20 @@ export function themeStyle(theme: Theme | undefined): CSSProperties {
     ['--ck-r' as any]: r,
     colorScheme: dark ? 'dark' : 'light',
   };
+}
+
+import { useEffect, useState } from 'react';
+
+/** true quando o aparelho está em modo escuro (atualiza ao vivo). */
+export function usePrefersDark() {
+  const get = () => typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+  const [v, setV] = useState<boolean>(get);
+  useEffect(() => {
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!mq) return;
+    const on = () => setV(mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
+  return v;
 }

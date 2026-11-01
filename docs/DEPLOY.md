@@ -3,7 +3,9 @@
 ## 1. Supabase
 
 1. Crie um projeto em https://supabase.com.
-2. Em **SQL Editor**, cole e execute `supabase/migrations/20261101000000_init.sql`.
+2. Em **SQL Editor**, cole e execute, **nesta ordem**, os arquivos de `supabase/migrations/`:
+   - `20261101000000_init.sql` (estrutura completa)
+   - `20261102000000_product_number.sql` (ID numérico dos produtos: #1001, #1002…). Se você já rodou o primeiro antes, rode só este.
 3. Em **Authentication → URL Configuration**:
    - **Site URL:** a URL do seu checkout (ex.: `https://checkout.seudominio.com.br`)
    - **Redirect URLs:** adicione `https://checkout.seudominio.com.br/admin/**`

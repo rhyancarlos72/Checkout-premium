@@ -1,7 +1,7 @@
 import { ImageUpload } from '@/components/ImageUpload';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { Boxes, Check, Copy, ExternalLink, Link2, Palette, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Boxes, Check, Copy, CopyPlus, ExternalLink, Link2, Palette, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
@@ -14,6 +14,8 @@ import { useCrud } from './crud';
 
 export interface Product {
   id: string;
+  /** ID numérico próprio (#1001…) */
+  number?: number;
   name: string;
   description: string | null;
   price_cents: number;
@@ -74,6 +76,15 @@ export default function ProductsPage() {
   const toast = useToast();
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const duplicate = useMutation({
+    mutationFn: (id: string) => adminApi.post<any>(`/products/${id}/duplicate`),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['products'] });
+      qc.invalidateQueries({ queryKey: ['checkouts'] });
+      toast.ok(`Duplicado${r?.number ? ` como #${r.number}` : ''} · link /c/${r?.checkout?.slug ?? ''}`);
+    },
+    onError: (e) => toast.err(e.message),
+  });
 
   return (
     <>
@@ -92,7 +103,10 @@ export default function ProductsPage() {
                 {p.image_url ? <img src={p.image_url} alt="" className="h-20 w-20 shrink-0 rounded-xl object-cover" /> : <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-400"><Boxes className="h-6 w-6" /></div>}
                 <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-2">
-                    <p className="font-semibold leading-snug">{p.name}</p>
+                    <div className="min-w-0">
+                      {p.number && <span className="mb-1 inline-block rounded-md bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID #{p.number}</span>}
+                      <p className="font-semibold leading-snug">{p.name}</p>
+                    </div>
                     <Badge tone={p.active ? 'on' : 'off'}>{p.active ? 'Ativo' : 'Inativo'}</Badge>
                   </div>
                   <p className="mt-1 text-lg font-bold tabular-nums">{brl(p.price_cents)}</p>
@@ -103,9 +117,10 @@ export default function ProductsPage() {
                 <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Link de checkout</p>
                 <ProductLink product={p} onCreated={() => (qc.invalidateQueries({ queryKey: ['products'] }), qc.invalidateQueries({ queryKey: ['checkouts'] }), toast.ok('Link criado'))} />
               </div>
-              <div className="mt-auto flex items-center gap-1 whitespace-nowrap border-t border-zinc-100 pt-3">
+              <div className="mt-auto flex flex-wrap items-center gap-1 whitespace-nowrap border-t border-zinc-100 pt-3">
                 <Button size="sm" variant="secondary" onClick={() => setEditing(p)}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
                 <Button size="sm" variant="ghost" onClick={() => navigate('/admin/checkouts')}><Palette className="h-3.5 w-3.5" /> Personalizar</Button>
+                <Button size="sm" variant="ghost" loading={duplicate.isPending && duplicate.variables === p.id} onClick={() => duplicate.mutate(p.id)} title="Duplicar produto e checkout"><CopyPlus className="h-3.5 w-3.5" /> Duplicar</Button>
                 <span className="flex-1" />
                 <Button size="sm" variant="ghost" aria-label="Excluir" onClick={() => confirm(`Excluir "${p.name}"?`) && remove.mutate(p.id, { onError: (e) => toast.err(e.message) })}>
                   <Trash2 className="h-4 w-4" />
@@ -122,7 +137,7 @@ export default function ProductsPage() {
           onSave={async (body) => {
             const saved: any = await save.mutateAsync(body);
             qc.invalidateQueries({ queryKey: ['checkouts'] });
-            toast.ok(saved?.checkout ? `Produto criado com link: /c/${saved.checkout.slug}` : 'Produto salvo');
+            toast.ok(saved?.checkout ? `Produto${saved.number ? ` #${saved.number}` : ''} criado · link /c/${saved.checkout.slug}` : 'Produto salvo');
             setEditing(null);
           }}
         />
@@ -151,7 +166,7 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
   const e = formState.errors;
 
   return (
-    <Modal open onClose={onClose} title={product ? 'Editar produto' : 'Novo produto'}>
+    <Modal open onClose={onClose} title={product ? `Editar produto${product.number ? ` · ID #${product.number}` : ''}` : 'Novo produto'}>
       <form
         className="space-y-4"
         onSubmit={handleSubmit(async ({ price, ...v }) => {

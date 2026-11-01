@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowDown, ArrowUp, Check, ExternalLink, Eye, Monitor, Moon, PenLine, Plus, Smartphone, Sun, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, ExternalLink, Eye, Monitor, MonitorSmartphone, Moon, RefreshCw, PenLine, Plus, Smartphone, Sun, Trash2, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ImageUpload } from '@/components/ImageUpload';
@@ -28,6 +28,9 @@ export interface Checkout {
 }
 
 const slugify = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
+const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+/** Código único do link (ex.: k7x9p2qa) */
+export const linkCode = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
 const tabs = ['Geral', 'Aparência', 'Conteúdo', 'Conversão', 'Ofertas', 'Rastreamento'] as const;
 
 function Group({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
@@ -73,7 +76,7 @@ function PreviewFrame({ device, children }: { device: 'mobile' | 'desktop'; chil
       <div style={{ width: width * scale, height: height * scale }} className="shrink-0">
         <div
           style={{ width, height, transform: `scale(${scale})`, transformOrigin: 'top left' }}
-          className={cn('overflow-hidden bg-white shadow-2xl shadow-zinc-900/20 ring-1 ring-zinc-900/10', device === 'mobile' ? 'rounded-[44px] border-[10px] border-zinc-900' : 'rounded-xl')}
+          className={cn('overflow-hidden bg-white shadow-2xl shadow-zinc-900/20 ring-1 ring-zinc-900/10', device === 'mobile' ? 'rounded-[44px] border-[10px] border-[#111214]' : 'rounded-xl')}
         >
           {device === 'desktop' && (
             <div className="flex h-9 items-center gap-1.5 border-b border-zinc-200 bg-zinc-100 px-4">
@@ -98,7 +101,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
   const [error, setError] = useState<string | null>(null);
   const [f, setF] = useState({
     name: checkout?.name ?? '',
-    slug: checkout?.slug ?? '',
+    slug: checkout?.slug ?? linkCode(),
     product_id: checkout?.product_id ?? products[0]?.id ?? '',
     provider: checkout?.provider ?? 'woovi',
     price: centsToInput(checkout?.price_cents),
@@ -227,8 +230,13 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
             {tab === 'Geral' && (
               <>
                 <Group title="Identificação">
-                  <Field label="Nome interno"><Input value={f.name} onChange={(e) => set({ name: e.target.value, ...(!checkout && { slug: slugify(e.target.value) }) })} placeholder="Ex.: Curso X — página principal" /></Field>
-                  <Field label="Endereço (link)" hint={`${window.location.origin}/c/${f.slug || '…'}`}><Input value={f.slug} onChange={(e) => set({ slug: slugify(e.target.value) })} /></Field>
+                  <Field label="Nome interno"><Input value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="Ex.: Curso X — página principal" /></Field>
+                  <Field label="Código do link" hint={`${window.location.origin}/c/${f.slug || '…'}`}>
+                    <div className="flex gap-2">
+                      <Input value={f.slug} onChange={(e) => set({ slug: slugify(e.target.value) })} className="font-mono" />
+                      <Button type="button" variant="secondary" className="h-12 shrink-0" title="Gerar novo código" onClick={() => set({ slug: linkCode() })}><RefreshCw className="h-4 w-4" /></Button>
+                    </div>
+                  </Field>
                 </Group>
                 <Group title="Produto e preço">
                   <Field label="Produto principal">
@@ -254,7 +262,8 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
             {tab === 'Aparência' && (
               <>
                 <Group title="Tema">
-                  <Segmented value={theme.mode ?? 'light'} onChange={(v) => setT({ mode: v, backgroundColor: v === 'dark' ? '#0a0b10' : '#f4f5f7' })} options={[{ value: 'light', label: <><Sun className="h-4 w-4" /> Claro</> }, { value: 'dark', label: <><Moon className="h-4 w-4" /> Escuro</> }]} />
+                  <Segmented value={theme.mode ?? 'light'} onChange={(v) => setT({ mode: v, backgroundColor: v === 'dark' ? '#0a0b10' : v === 'light' ? '#f4f5f7' : undefined })} options={[{ value: 'light', label: <><Sun className="h-4 w-4" /> Claro</> }, { value: 'dark', label: <><Moon className="h-4 w-4" /> Escuro</> }, { value: 'auto', label: <><MonitorSmartphone className="h-4 w-4" /> Auto</> }]} />
+                  {theme.mode === 'auto' && <p className="text-xs text-zinc-500">Segue o modo (claro/escuro) do celular ou computador do comprador.</p>}
                 </Group>
                 <Group title="Cor da marca" desc="Usada no botão, destaques e ofertas.">
                   <div className="flex flex-wrap gap-2">
@@ -282,6 +291,17 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                   <Field label="Título" hint="Vazio = nome do produto"><Input value={theme.headline ?? ''} onChange={(e) => setT({ headline: e.target.value })} /></Field>
                   <Field label="Subtítulo" hint="Vazio = descrição do produto"><Textarea rows={2} value={theme.subheadline ?? ''} onChange={(e) => setT({ subheadline: e.target.value })} /></Field>
                   <Field label="Texto do botão"><Input value={theme.buttonText ?? ''} onChange={(e) => setT({ buttonText: e.target.value })} placeholder="Finalizar compra" /></Field>
+                  <Field label="Nome do produtor / marca" hint="Aparece como “por …” abaixo do título"><Input value={theme.producerName ?? ''} onChange={(e) => setT({ producerName: e.target.value })} placeholder="Ex.: Prof. Ana Lima" /></Field>
+                  <Field label="Preço “De” (riscado)" hint="Mostra “De R$ X por R$ Y” e o selo de desconto"><Input value={centsToInput(theme.compareAtCents ?? null)} onChange={(e) => setT({ compareAtCents: e.target.value ? parseMoney(e.target.value) : null })} inputMode="decimal" placeholder="197,00" /></Field>
+                </Group>
+                <Group title="Benefícios" desc="Lista com ✓ no card do produto. Até 8 itens curtos.">
+                  {(theme.benefits ?? []).map((b, i) => (
+                    <div key={i} className="flex gap-2">
+                      <Input value={b} onChange={(e) => setT({ benefits: theme.benefits!.map((x, j) => (j === i ? e.target.value : x)) })} placeholder="Ex.: Acesso vitalício" className="h-10" />
+                      <Button variant="ghost" size="sm" className="h-10" aria-label="Remover" onClick={() => setT({ benefits: theme.benefits!.filter((_, j) => j !== i) })}><Trash2 className="h-4 w-4" /></Button>
+                    </div>
+                  ))}
+                  <Button variant="secondary" size="sm" disabled={(theme.benefits?.length ?? 0) >= 8} onClick={() => setT({ benefits: [...(theme.benefits ?? []), ''] })}><Plus className="h-4 w-4" /> Adicionar benefício</Button>
                 </Group>
                 <Group title="Garantia">
                   <Field label="Dias de garantia (0 oculta)"><Input type="number" min={0} max={365} value={theme.guaranteeDays ?? 7} onChange={(e) => setT({ guaranteeDays: Number(e.target.value) })} /></Field>
@@ -379,7 +399,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
           <div className="min-h-0 flex-1 bg-[radial-gradient(circle_at_1px_1px,#d4d4d8_1px,transparent_0)] [background-size:20px_20px]">
             {product ? (
               <PreviewFrame device={device}>
-                <CheckoutView key={device} checkout={previewData} preview />
+                <CheckoutView key={device + (theme.mode ?? '')} checkout={previewData} preview />
               </PreviewFrame>
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-zinc-500">Cadastre um produto para ver a prévia.</div>
