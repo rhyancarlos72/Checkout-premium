@@ -441,9 +441,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           <section className="ck-card overflow-hidden">
             <div className="flex flex-col items-center px-5 pb-6 pt-6 text-center @lg:px-8 @lg:pt-8">
               {productImage ? (
-                <img src={productImage} alt="" className="h-28 w-28 rounded-[calc(var(--ck-r)*.8)] object-cover shadow-lg ring-1 ring-ck-border @lg:h-32 @lg:w-32" />
+                <img src={productImage} alt="" className="h-20 w-20 rounded-[calc(var(--ck-r)*.7)] object-cover shadow-md ring-1 ring-ck-border @lg:h-24 @lg:w-24" />
               ) : (
-                <div className="flex h-28 w-28 items-center justify-center rounded-[calc(var(--ck-r)*.8)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg shadow-lg @lg:h-32 @lg:w-32"><Gift className="h-10 w-10" /></div>
+                <div className="flex h-20 w-20 items-center justify-center rounded-[calc(var(--ck-r)*.7)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg shadow-md @lg:h-24 @lg:w-24"><Gift className="h-8 w-8" /></div>
               )}
               <div className="mt-4 flex flex-wrap justify-center gap-1.5">
                 <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-brand"><Gift className="h-3 w-3" /> Produto digital</span>
