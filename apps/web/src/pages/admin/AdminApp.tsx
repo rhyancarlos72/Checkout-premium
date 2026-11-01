@@ -6,6 +6,7 @@ import { cn, PageLoader } from '@/components/ui';
 import { adminApi } from '@/lib/api';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { brl } from '@/lib/format';
+import { BrandMark, defaultBrand, useBrand } from '@/lib/brand';
 import { supabase } from '@/lib/supabase';
 import BumpsPage from './BumpsPage';
 import CheckoutsPage from './CheckoutsPage';
@@ -100,15 +101,14 @@ function ProgressCard() {
 
 // ------------------------------------------------------------------ barra lateral
 function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: string; email: string; onNavigate?: () => void; theme: AdminTheme; onToggleTheme: () => void }) {
+  const brand = useBrand();
   return (
     <nav className="flex h-full flex-col border-r border-white/[.06] bg-[#0d1426] font-display text-slate-300">
       <div className="flex h-16 items-center gap-3 px-5">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 shadow-lg shadow-blue-600/30">
-          <CreditCard className="h-[18px] w-[18px] text-white" />
-        </div>
-        <div className="leading-tight">
-          <p className="font-semibold tracking-tight text-white">Checkout</p>
-          <p className="text-[11px] font-medium uppercase tracking-widest text-blue-300/80">Premium</p>
+        <BrandMark brand={brand} className="h-9 w-9" iconClassName="h-[18px] w-[18px]" />
+        <div className="min-w-0 leading-tight">
+          <p className="truncate font-semibold tracking-tight text-white">{brand.name === defaultBrand.name ? 'Checkout' : brand.name}</p>
+          <p className="text-[11px] font-medium uppercase tracking-widest text-blue-300/80">{brand.name === defaultBrand.name ? 'Premium' : 'Painel'}</p>
         </div>
       </div>
       <div className="flex-1 space-y-1 overflow-y-auto px-3 py-3">
@@ -169,6 +169,7 @@ function Shell() {
 }
 
 function AuthedShell({ email, name }: { email: string; name: string }) {
+  const brand = useBrand();
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const [theme, toggleTheme] = useAdminTheme();
@@ -194,8 +195,8 @@ function AuthedShell({ email, name }: { email: string; name: string }) {
           <button onClick={() => setOpen(true)} className="rounded-lg p-1.5" aria-label="Abrir menu">
             <Menu className="h-5 w-5" />
           </button>
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600"><CreditCard className="h-4 w-4" /></div>
-          <span className="flex-1 font-semibold">Checkout</span>
+          <BrandMark brand={brand} className="h-7 w-7 rounded-lg" iconClassName="h-4 w-4" />
+          <span className="flex-1 truncate font-semibold">{brand.name === defaultBrand.name ? 'Checkout' : brand.name}</span>
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </header>
         <main key={location.pathname} className="animate-fade-in mx-auto max-w-[1440px] p-4 sm:p-6 lg:px-10 lg:py-9">

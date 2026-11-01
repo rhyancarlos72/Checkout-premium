@@ -1,8 +1,10 @@
-import { CheckCircle2, CreditCard, ShieldCheck, TrendingUp, Zap } from 'lucide-react';
+import { CheckCircle2, ShieldCheck, TrendingUp, Zap } from 'lucide-react';
 import type { ReactNode } from 'react';
+import { BrandMark, useBrand } from '@/lib/brand';
 
 /** Layout escuro com aurora + grid usado no login, primeiro acesso e nova senha. */
 export function AuthLayout({ children }: { children: ReactNode }) {
+  const brand = useBrand();
   return (
     <div className="bg-aurora relative min-h-screen overflow-hidden text-white">
       <div className="bg-grid pointer-events-none absolute inset-0" />
@@ -10,10 +12,8 @@ export function AuthLayout({ children }: { children: ReactNode }) {
         {/* Lado esquerdo — vitrine (desktop) */}
         <div className="hidden lg:block">
           <div className="mb-10 flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-500 shadow-lg shadow-emerald-500/30">
-              <CreditCard className="h-5 w-5 text-white" />
-            </div>
-            <span className="text-lg font-semibold tracking-tight">Checkout Premium</span>
+            <BrandMark brand={brand} className="h-11 w-11 rounded-2xl" iconClassName="h-5 w-5" fallbackClassName="bg-gradient-to-br from-emerald-400 to-cyan-500 shadow-lg shadow-emerald-500/30" />
+            <span className="text-lg font-semibold tracking-tight">{brand.name}</span>
           </div>
           <h1 className="text-5xl font-bold leading-[1.05] tracking-tight">
             Seu checkout.
@@ -53,10 +53,8 @@ export function AuthLayout({ children }: { children: ReactNode }) {
         {/* Lado direito — formulário */}
         <div className="mx-auto w-full max-w-md">
           <div className="mb-8 flex items-center justify-center gap-3 lg:hidden">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-500 shadow-lg shadow-emerald-500/30">
-              <CreditCard className="h-5 w-5 text-white" />
-            </div>
-            <span className="text-lg font-semibold tracking-tight">Checkout Premium</span>
+            <BrandMark brand={brand} className="h-11 w-11 rounded-2xl" iconClassName="h-5 w-5" fallbackClassName="bg-gradient-to-br from-emerald-400 to-cyan-500 shadow-lg shadow-emerald-500/30" />
+            <span className="text-lg font-semibold tracking-tight">{brand.name}</span>
           </div>
           <div className="glass animate-fade-in rounded-3xl p-7 shadow-2xl shadow-black/40 sm:p-9">{children}</div>
           <p className="mt-6 text-center text-xs text-zinc-500">Acesso restrito a administradores</p>

@@ -12,6 +12,13 @@ const quoteLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30, standardHeaders
 const pollLimiter = rateLimit({ windowMs: 60 * 1000, limit: 40, standardHeaders: 'draft-8', legacyHeaders: false });
 const eventLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false });
 
+// Marca do sistema (logo + nome) para a tela de login e o painel — só dados públicos
+publicRouter.get('/brand', async (_req, res) => {
+  const { brand } = await getSettings();
+  res.set('Cache-Control', 'no-cache');
+  res.json(brand);
+});
+
 publicRouter.get('/checkouts/:slug', async (req, res) => {
   const c = await loadCheckout(String(req.params.slug));
   const s = await getSettings();

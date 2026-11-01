@@ -18,6 +18,14 @@ export const settingsSchema = z.object({
       document: z.string().max(30).default(''),
     })
     .default({ name: 'Minha Loja', supportEmail: '', document: '' }),
+  // identidade visual do sistema (painel, login, ícone da aba)
+  brand: z
+    .object({
+      name: z.string().trim().max(40).default('Checkout Premium'),
+      logoUrl: z.string().url().max(500).or(z.literal('')).default(''),
+      logoBg: z.boolean().default(false),
+    })
+    .default({ name: 'Checkout Premium', logoUrl: '', logoBg: false }),
 });
 export type Settings = z.infer<typeof settingsSchema>;
 

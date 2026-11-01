@@ -1,10 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Copy, KeyRound, LogOut, Mail, MonitorSmartphone, Shield, ShieldCheck, ShieldOff, Store, Target, User } from 'lucide-react';
+import { CheckCircle2, Copy, ImageIcon, KeyRound, LogOut, Mail, MonitorSmartphone, Shield, ShieldCheck, ShieldOff, Store, Target, User } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, cn, Field, Input, PageLoader, Switch, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { BrandMark, defaultBrand, type Brand } from '@/lib/brand';
+import { ImageUpload } from '@/components/ImageUpload';
 import { centsToInput, parseMoney } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
 import { PageHeader } from './AdminApp';
@@ -13,12 +15,14 @@ interface Settings {
   recovery: { enabled: boolean; delayMinutes: number };
   goal: { monthlyCents: number };
   store: { name: string; supportEmail: string; document: string };
+  brand: Brand;
 }
 
 const tabs = [
   { key: 'perfil', label: 'Perfil', icon: User },
   { key: 'seguranca', label: 'Segurança', icon: Shield },
   { key: 'loja', label: 'Loja e metas', icon: Store },
+  { key: 'marca', label: 'Logo do sistema', icon: ImageIcon },
 ] as const;
 
 function Panel({ title, desc, icon, children, footer }: { title: string; desc?: string; icon: ReactNode; children: ReactNode; footer?: ReactNode }) {
@@ -254,6 +258,61 @@ function StoreTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   );
 }
 
+// ------------------------------------------------------------------ marca
+function BrandTab({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const qc = useQueryClient();
+  const settings = useQuery({ queryKey: ['settings'], queryFn: () => adminApi.get<Settings>('/settings') });
+  const [b, setB] = useState<Brand | null>(null);
+  useEffect(() => {
+    if (settings.data) setB({ ...defaultBrand, ...settings.data.brand });
+  }, [settings.data]);
+  const save = useMutation({
+    mutationFn: (brand: Brand) => adminApi.put<Settings>('/settings', { ...settings.data, brand: { ...brand, name: brand.name.trim() || defaultBrand.name } }),
+    onSuccess: (v) => {
+      toast.ok('Logo salva');
+      qc.setQueryData(['settings'], v);
+      qc.setQueryData(['brand'], v.brand);
+    },
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao salvar'),
+  });
+  if (!b) return <PageLoader />;
+  const isDefault = (b.name.trim() || defaultBrand.name) === defaultBrand.name;
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <Panel
+        title="Logo do sistema"
+        desc="Aparece na barra lateral do painel, na tela de login e no ícone da aba do navegador."
+        icon={<ImageIcon className="h-5 w-5" />}
+        footer={<Button loading={save.isPending} onClick={() => save.mutate(b)}>Salvar logo</Button>}
+      >
+        <ImageUpload label="Arquivo da logo" accept="image/png,image/svg+xml,image/webp,image/jpeg" value={b.logoUrl} onChange={(url) => setB({ ...b, logoUrl: url })} />
+        <p className="-mt-2 text-xs text-zinc-500">Use uma imagem quadrada (ex.: 512×512), PNG ou SVG com fundo transparente. Até 5 MB.</p>
+        <Field label="Nome do sistema" hint="Mostrado ao lado da logo."><Input value={b.name} maxLength={40} onChange={(e) => setB({ ...b, name: e.target.value })} placeholder={defaultBrand.name} /></Field>
+        <Switch checked={b.logoBg} onChange={(v) => setB({ ...b, logoBg: v })} label="Fundo branco atrás da logo (melhor para logos escuras no painel escuro)" />
+      </Panel>
+
+      <Panel title="Pré-visualização" desc="Como fica no painel e no login." icon={<MonitorSmartphone className="h-5 w-5" />}>
+        <div className="flex items-center gap-3 rounded-2xl bg-[#0d1426] p-5">
+          <BrandMark brand={b} className="h-9 w-9" iconClassName="h-[18px] w-[18px]" />
+          <div className="min-w-0 font-display leading-tight">
+            <p className="truncate font-semibold tracking-tight text-[#fff]">{isDefault ? 'Checkout' : b.name.trim()}</p>
+            <p className="text-[11px] font-medium uppercase tracking-widest text-blue-300/80">{isDefault ? 'Premium' : 'Painel'}</p>
+          </div>
+        </div>
+        <div className="flex items-center justify-center gap-3 rounded-2xl bg-gradient-to-br from-[#05070d] to-[#0b1324] p-6">
+          <BrandMark brand={b} className="h-11 w-11 rounded-2xl" iconClassName="h-5 w-5" fallbackClassName="bg-gradient-to-br from-emerald-400 to-cyan-500" />
+          <span className="truncate text-lg font-semibold tracking-tight text-[#fff]">{b.name.trim() || defaultBrand.name}</span>
+        </div>
+        <div className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+          {b.logoUrl ? <img src={b.logoUrl} alt="" className="h-4 w-4 object-contain" /> : <ImageIcon className="h-4 w-4" />}
+          <span className="truncate">Aba do navegador · {b.name.trim() || defaultBrand.name}</span>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [params, setParams] = useSearchParams();
   const tab = (tabs.find((t) => t.key === params.get('tab'))?.key ?? 'perfil') as (typeof tabs)[number]['key'];
@@ -271,6 +330,7 @@ export default function SettingsPage() {
       {tab === 'perfil' && <ProfileTab toast={toast} />}
       {tab === 'seguranca' && <SecurityTab toast={toast} />}
       {tab === 'loja' && <StoreTab toast={toast} />}
+      {tab === 'marca' && <BrandTab toast={toast} />}
       {toast.node}
     </>
   );
