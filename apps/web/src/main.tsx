@@ -25,6 +25,7 @@ createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <Suspense fallback={<PageLoader />}>
           <Routes>
+            <Route path="/checkout" element={<CheckoutPage />} />
             <Route path="/c/:slug" element={<CheckoutPage />} />
             <Route path="/pedido/:token" element={<PaymentPage />} />
             <Route path="/admin/*" element={<AdminApp />} />

@@ -79,7 +79,7 @@ export async function sendRecoveries() {
       name: o.customer.name,
       productName: main?.name ?? 'seu produto',
       totalCents: o.total_cents,
-      url: `${env.PUBLIC_URL}/c/${o.checkout.slug}?recover=${o.public_token}&utm_source=recovery&utm_medium=email`,
+      url: `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout.slug}&recover=${o.public_token}&utm_source=recovery&utm_medium=email`,
       accent: o.checkout.theme?.primaryColor,
     });
   }

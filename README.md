@@ -14,7 +14,7 @@ apps/api/        API Node (pedidos, gateways, webhooks, painel, jobs)
   src/providers/ Woovi e Efí atrás da interface PixProvider (fácil adicionar outro)
   src/services/  pedidos, preço, e-mail, PayTracking, jobs, configurações
   src/routes/    public (checkout), webhooks, admin
-apps/web/        React (checkout /c/:slug, pagamento /pedido/:token, painel /admin)
+apps/web/        React (checkout /checkout?produto_id=…, pagamento /pedido/:token, painel /admin)
 supabase/        migration SQL (tabelas, RLS, funções, buckets)
 docs/            guia de deploy
 ```

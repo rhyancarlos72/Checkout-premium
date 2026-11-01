@@ -18,7 +18,7 @@ async function request<T>(method: string, path: string, body?: unknown, auth = f
   if (res.status === 204) return undefined as T;
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (auth && res.status === 401) await (await sb()).auth.signOut();
+    if (auth && res.status === 401 && json.code !== 'MFA_REQUIRED') await (await sb()).auth.signOut();
     throw new ApiError(res.status, json.error ?? 'Erro inesperado', json.issues);
   }
   return json as T;

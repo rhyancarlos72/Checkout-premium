@@ -17,6 +17,8 @@
 
 Esqueceu a senha? Use **Esqueci minha senha** na tela de login.
 
+**Verificação em 2 etapas (recomendado):** no painel, **Configurações → Segurança → Ativar**. Escaneie o QR Code com Google Authenticator, Authy ou 1Password. A partir daí, todo login pede o código de 6 dígitos, e o servidor recusa sessões sem essa verificação. O TOTP já vem ativo em todo projeto Supabase (Authentication → Multi-Factor).
+
 > Os e-mails de autenticação saem pelo servidor de e-mail do Supabase, que tem limite baixo (poucos por hora). Se não chegarem, configure seu SMTP da Hostinger em **Authentication → Emails → SMTP Settings**.
 
 ## 2. GitHub

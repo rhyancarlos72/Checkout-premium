@@ -3,6 +3,7 @@ import { Check, CheckCircle2, Clock, Copy, CopyCheck, ExternalLink, Lock, Mail, 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { cn } from '@/components/ui';
+import { checkoutPath } from '@/lib/links';
 import { publicApi } from '@/lib/api';
 import { brl } from '@/lib/format';
 import { initMetaPixel, pixel, track } from '@/lib/tracking';
@@ -231,7 +232,7 @@ export default function PaymentPage() {
           <h1 className="mt-4 text-xl font-bold">Este Pix expirou</h1>
           <p className="mt-2 text-ck-muted">Sem problemas: seu pedido continua salvo. Gere um novo código em segundos.</p>
           {order.checkout && (
-            <Link to={`/c/${order.checkout.slug}?recover=${token}`} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">
+            <Link to={checkoutPath(order.checkout.slug, `&recover=${token}`)} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">
               Gerar novo Pix
             </Link>
           )}
@@ -246,7 +247,7 @@ export default function PaymentPage() {
         <section className="ck-card p-8 text-center">
           <h1 className="text-xl font-bold">Pedido indisponível</h1>
           <p className="mt-2 text-ck-muted">Não foi possível concluir este pedido.</p>
-          {order.checkout && <Link to={`/c/${order.checkout.slug}`} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">Voltar ao checkout</Link>}
+          {order.checkout && <Link to={checkoutPath(order.checkout.slug)} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">Voltar ao checkout</Link>}
         </section>
       </Shell>
     );

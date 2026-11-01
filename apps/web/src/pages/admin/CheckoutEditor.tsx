@@ -6,6 +6,7 @@ import { ImageUpload } from '@/components/ImageUpload';
 import { Button, cn, Field, Input, Select, Switch, Textarea } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { brl, centsToInput, parseMoney } from '@/lib/format';
+import { checkoutPath, checkoutUrl } from '@/lib/links';
 import { CheckoutView } from '../checkout/CheckoutView';
 import { palettes, themeDefaults, type PublicCheckout, type Theme } from '../checkout/theme';
 import type { Bump } from './BumpsPage';
@@ -28,9 +29,8 @@ export interface Checkout {
 }
 
 const slugify = (s: string) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
-const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
-/** Código único do link (ex.: k7x9p2qa) */
-export const linkCode = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+/** Código numérico aleatório de 7 dígitos (ex.: 9452229) para /checkout?produto_id=… */
+export const linkCode = () => String(1_000_000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 9_000_000));
 const tabs = ['Geral', 'Aparência', 'Conteúdo', 'Conversão', 'Ofertas', 'Rastreamento'] as const;
 
 function Group({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
@@ -198,12 +198,12 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
         <button onClick={onClose} className="rounded-lg p-2 text-zinc-500 hover:bg-zinc-100" aria-label="Fechar editor"><X className="h-5 w-5" /></button>
         <div className="min-w-0 flex-1">
           <p className="truncate font-semibold">{f.name || (checkout ? 'Editar checkout' : 'Novo checkout')}</p>
-          <p className="truncate text-xs text-zinc-500">{window.location.origin}/c/{f.slug || '…'}</p>
+          <p className="truncate text-xs text-zinc-500">{checkoutUrl(f.slug || '…')}</p>
         </div>
         <div className="hidden items-center gap-2 sm:flex">
           <Switch checked={f.active} onChange={(v) => set({ active: v })} label={f.active ? 'Ativo' : 'Inativo'} />
           {checkout && (
-            <a href={`/c/${checkout.slug}`} target="_blank" rel="noreferrer" className="ml-2 inline-flex h-10 items-center gap-2 rounded-xl border border-zinc-200 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
+            <a href={checkoutPath(checkout.slug)} target="_blank" rel="noreferrer" className="ml-2 inline-flex h-10 items-center gap-2 rounded-xl border border-zinc-200 px-3 text-sm font-medium text-zinc-700 hover:bg-zinc-50">
               <ExternalLink className="h-4 w-4" /> Abrir
             </a>
           )}
@@ -231,7 +231,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
               <>
                 <Group title="Identificação">
                   <Field label="Nome interno"><Input value={f.name} onChange={(e) => set({ name: e.target.value })} placeholder="Ex.: Curso X — página principal" /></Field>
-                  <Field label="Código do link" hint={`${window.location.origin}/c/${f.slug || '…'}`}>
+                  <Field label="Código do link" hint={checkoutUrl(f.slug || '…')}>
                     <div className="flex gap-2">
                       <Input value={f.slug} onChange={(e) => set({ slug: slugify(e.target.value) })} className="font-mono" />
                       <Button type="button" variant="secondary" className="h-12 shrink-0" title="Gerar novo código" onClick={() => set({ slug: linkCode() })}><RefreshCw className="h-4 w-4" /></Button>

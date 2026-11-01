@@ -2,6 +2,7 @@
 
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-display: 'Outfit', 'Inter', ui-sans-serif, system-ui, sans-serif;
 }
 /* `inline`: as utilities usam var(--brand) direto, então cada checkout aplica sua própria cor */
 @theme inline {
@@ -125,18 +126,18 @@ input, select, textarea { font-size: 16px; }
    O checkout público não é afetado (usa seus próprios tokens --ck-*). */
 html.admin-dark {
   color-scheme: dark;
-  --color-zinc-50: #14161c; --color-gray-50: #14161c;
-  --color-zinc-100: #1a1d24; --color-gray-100: #1a1d24;
-  --color-zinc-200: #262a33; --color-gray-200: #262a33;
-  --color-zinc-300: #353a45; --color-gray-300: #353a45;
-  --color-zinc-400: #737a87; --color-gray-400: #737a87;
-  --color-zinc-500: #9aa1ad; --color-gray-500: #9aa1ad;
-  --color-zinc-600: #b3b8c2; --color-gray-600: #b3b8c2;
-  --color-zinc-700: #d1d5db; --color-gray-700: #d1d5db;
-  --color-zinc-800: #e5e7eb; --color-gray-800: #e5e7eb;
-  --color-zinc-900: #f3f4f6; --color-gray-900: #f3f4f6;
-  --color-zinc-950: #fafafa; --color-gray-950: #fafafa;
-  /* tons claros de destaque → versões translúcidas */
+  /* escala neutra → azul-marinho */
+  --color-zinc-50: #111a2e; --color-gray-50: #111a2e;
+  --color-zinc-100: #16203a; --color-gray-100: #16203a;
+  --color-zinc-200: #1e2943; --color-gray-200: #1e2943;
+  --color-zinc-300: #2a3654; --color-gray-300: #2a3654;
+  --color-zinc-400: #64748b; --color-gray-400: #64748b;
+  --color-zinc-500: #94a3b8; --color-gray-500: #94a3b8;
+  --color-zinc-600: #aab5c7; --color-gray-600: #aab5c7;
+  --color-zinc-700: #cbd5e1; --color-gray-700: #cbd5e1;
+  --color-zinc-800: #e2e8f0; --color-gray-800: #e2e8f0;
+  --color-zinc-900: #f1f5f9; --color-gray-900: #f1f5f9;
+  --color-zinc-950: #f8fafc; --color-gray-950: #f8fafc;
   --color-emerald-50: rgb(16 185 129 / .14); --color-emerald-100: rgb(16 185 129 / .2); --color-emerald-200: rgb(16 185 129 / .3);
   --color-emerald-700: #6ee7b7; --color-emerald-800: #a7f3d0; --color-emerald-900: #d1fae5;
   --color-amber-50: rgb(245 158 11 / .14); --color-amber-100: rgb(245 158 11 / .2); --color-amber-700: #fcd34d; --color-amber-800: #fde68a;
@@ -144,11 +145,20 @@ html.admin-dark {
   --color-violet-50: rgb(139 92 246 / .16); --color-violet-700: #c4b5fd;
   --color-orange-100: rgb(249 115 22 / .2); --color-orange-700: #fdba74;
   --color-sky-50: rgb(14 165 233 / .14);
+  --color-blue-50: rgb(59 130 246 / .14); --color-blue-700: #93c5fd;
 }
-html.admin-dark body { background: #0b0c10; }
+html.admin-dark body { background: #0b1120; }
 html.admin-dark .bg-white,
-html.admin-dark .hover\:bg-white:hover { background-color: #111319; }
-html.admin-dark .bg-white\/90 { background-color: rgb(17 19 25 / .9); }
-html.admin-dark .bg-\[\#f6f7fb\] { background-color: #0b0c10; }
+html.admin-dark .hover\:bg-white:hover { background-color: #0f172a; }
+html.admin-dark .bg-white\/90 { background-color: rgb(15 23 42 / .9); }
+html.admin-dark .bg-\[\#f6f7fb\] { background-color: #0b1120; }
 html.admin-dark .shadow-\[0_1px_2px_rgba\(16\,24\,40\,\.04\)\,0_8px_24px_-12px_rgba\(16\,24\,40\,\.08\)\] { box-shadow: 0 1px 0 rgb(255 255 255 / .03) inset, 0 12px 32px -16px rgb(0 0 0 / .6); }
 html.admin-dark ::selection { background: rgb(16 185 129 / .35); }
+
+/* card de KPI com brilho no canto (estilo do painel) */
+.kpi-glow { position: relative; overflow: hidden; }
+.kpi-glow::before {
+  content: ''; position: absolute; inset: 0 0 0 auto; width: 55%;
+  background: radial-gradient(120% 90% at 100% 30%, var(--glow, rgb(59 130 246 / .18)), transparent 70%);
+  pointer-events: none;
+}

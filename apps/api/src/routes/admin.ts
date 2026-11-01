@@ -51,12 +51,11 @@ const productSchema = z.object({
   delivery_note: z.string().max(1000).nullable().optional(),
   active: z.boolean().default(true),
 });
-// Cada produto tem seu link de checkout com um CÓDIGO próprio (ex.: /c/k7x9p2qa),
+// Cada produto tem seu link de checkout com um CÓDIGO próprio (ex.: /checkout?produto_id=9452229),
 // criado automaticamente junto com o produto.
-const CODE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789'; // sem 0/o/1/l/i para não confundir
-function linkCode(len = 8) {
-  const bytes = crypto.randomBytes(len);
-  return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
+/** Código numérico aleatório de 7 dígitos (ex.: 9452229) usado em /checkout?produto_id=… — não revela o nome do produto. */
+function linkCode() {
+  return String(crypto.randomInt(1_000_000, 10_000_000));
 }
 
 type CheckoutTemplate = { theme?: unknown; fields?: unknown; tracking?: unknown; provider?: string; price_cents?: number | null; pix_expires_minutes?: number; bumpIds?: string[] };
@@ -350,54 +349,109 @@ adminRouter.get('/customers', async (req, res) => {
 });
 
 // ------------------------------------------------------------------ dashboard
+const TZ = 'America/Sao_Paulo';
+const hourFmt = new Intl.DateTimeFormat('pt-BR', { timeZone: TZ, hour: '2-digit', hourCycle: 'h23' });
+const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+
 adminRouter.get('/dashboard', async (req, res) => {
-  const days = z.coerce.number().int().min(1).max(365).default(30).parse(req.query.days);
-  const to = new Date();
-  const from = new Date(to.getTime() - days * 86400000);
-  const prevFrom = new Date(from.getTime() - days * 86400000);
+  const q = z
+    .object({
+      from: z.string().datetime({ offset: true }).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+      days: z.coerce.number().int().min(1).max(365).optional(),
+      product_id: uuid.optional(),
+    })
+    .parse(req.query);
+  const to = q.to ? new Date(q.to) : new Date();
+  const from = q.from ? new Date(q.from) : new Date(to.getTime() - (q.days ?? 30) * 86400000);
+  if (to.getTime() - from.getTime() > 366 * 86400000) throw new HttpError(400, 'Período máximo: 1 ano');
 
-  const [series, current, previous, events, topItems] = await Promise.all([
-    supabase.rpc('sales_by_day', { p_from: from.toISOString(), p_to: to.toISOString() }),
-    supabase.from('orders').select('status, total_cents, provider').gte('created_at', from.toISOString()),
-    supabase.from('orders').select('status, total_cents').gte('created_at', prevFrom.toISOString()).lt('created_at', from.toISOString()),
-    supabase.from('events').select('type').gte('created_at', from.toISOString()).in('type', ['page_view', 'initiate_checkout']).limit(100000),
-    supabase.from('order_items').select('name, kind, price_cents, order:orders!inner(status, created_at)').eq('order.status', 'paid').gte('order.created_at', from.toISOString()).limit(10000),
+  const [ordersRes, eventsRes, productsRes] = await Promise.all([
+    supabase
+      .from('orders')
+      .select('id, status, total_cents, provider, created_at, paid_at, recovery_sent_at, checkout_id, items:order_items(kind, product_id, name, price_cents)')
+      .gte('created_at', from.toISOString())
+      .lt('created_at', to.toISOString())
+      .limit(50000),
+    supabase.from('events').select('type, checkout_id').gte('created_at', from.toISOString()).lt('created_at', to.toISOString()).in('type', ['page_view', 'initiate_checkout']).limit(200000),
+    supabase.from('products').select('id, name, checkouts(id)').order('created_at', { ascending: false }),
   ]);
+  if (ordersRes.error) throw new HttpError(500, ordersRes.error.message);
 
-  const agg = (rows: any[] | null) => {
-    const paid = (rows ?? []).filter((r) => r.status === 'paid');
-    const revenue = paid.reduce((s, r) => s + r.total_cents, 0);
-    return { orders: rows?.length ?? 0, paid: paid.length, revenue_cents: revenue, avg_ticket_cents: paid.length ? Math.round(revenue / paid.length) : 0 };
-  };
-  const cur = agg(current.data);
-  const prev = agg(previous.data);
-  const pending = (current.data ?? []).filter((r: any) => r.status === 'pending');
-  const ev = (events.data ?? []).reduce<Record<string, number>>((m, e: any) => ((m[e.type] = (m[e.type] ?? 0) + 1), m), {});
+  const products = (productsRes.data ?? []) as any[];
+  const checkoutIds = q.product_id ? new Set((products.find((p) => p.id === q.product_id)?.checkouts ?? []).map((c: any) => c.id)) : null;
+  const orders = ((ordersRes.data ?? []) as any[]).filter((o) => !q.product_id || o.items.some((i: any) => i.kind === 'main' && i.product_id === q.product_id));
+  const events = ((eventsRes.data ?? []) as any[]).filter((e) => !checkoutIds || checkoutIds.has(e.checkout_id));
+
+  const paid = orders.filter((o) => o.status === 'paid');
+  const pending = orders.filter((o) => o.status === 'pending');
+  const sum = (arr: any[]) => arr.reduce((s, o) => s + o.total_cents, 0);
+  const bumpItems = paid.flatMap((o) => o.items.filter((i: any) => i.kind === 'bump'));
+  const recovered = paid.filter((o) => o.recovery_sent_at && o.paid_at && new Date(o.paid_at) > new Date(o.recovery_sent_at));
+  const initiated = events.filter((e) => e.type === 'initiate_checkout').length;
+
+  const hourly = Array.from({ length: 24 }, (_, h) => ({ hour: h, paid: 0, revenue_cents: 0 }));
+  const daily = new Map<string, { day: string; paid: number; revenue_cents: number }>();
+  for (const o of paid) {
+    const at = new Date(o.paid_at ?? o.created_at);
+    const h = Number(hourFmt.format(at)) % 24;
+    hourly[h].paid++;
+    hourly[h].revenue_cents += o.total_cents;
+    const d = dayFmt.format(at);
+    const row = daily.get(d) ?? { day: d, paid: 0, revenue_cents: 0 };
+    row.paid++;
+    row.revenue_cents += o.total_cents;
+    daily.set(d, row);
+  }
+  const methods = ['woovi', 'efi'].map((p) => {
+    const list = paid.filter((o) => o.provider === p);
+    return { method: p, label: p === 'efi' ? 'Pix · Efí' : 'Pix · Woovi', count: list.length, revenue_cents: sum(list) };
+  });
 
   const top = new Map<string, { name: string; kind: string; count: number; revenue_cents: number }>();
-  for (const it of (topItems.data ?? []) as any[]) {
+  for (const it of paid.flatMap((o) => o.items)) {
     const k = `${it.kind}:${it.name}`;
     const t = top.get(k) ?? { name: it.name, kind: it.kind, count: 0, revenue_cents: 0 };
     t.count++;
     t.revenue_cents += it.price_cents;
     top.set(k, t);
   }
-  const bumpsSold = [...top.values()].filter((t) => t.kind === 'bump').reduce((s, t) => s + t.count, 0);
 
   res.json({
-    period: { from, to, days },
+    period: { from, to },
+    products: products.map((p) => ({ id: p.id, name: p.name })),
     kpis: {
-      ...cur,
+      paid_cents: sum(paid),
+      paid_count: paid.length,
+      pending_cents: sum(pending),
       pending_count: pending.length,
-      pending_cents: pending.reduce((s: number, r: any) => s + r.total_cents, 0),
-      conversion_pix: cur.orders ? cur.paid / cur.orders : 0,
-      bump_take_rate: cur.paid ? bumpsSold / cur.paid : 0,
-      previous: prev,
+      orders_count: orders.length,
+      initiated_count: initiated,
+      page_views: events.filter((e) => e.type === 'page_view').length,
+      checkout_conversion: initiated ? paid.length / initiated : 0,
+      pix_conversion: orders.length ? paid.length / orders.length : 0,
+      bump_cents: bumpItems.reduce((s, i) => s + i.price_cents, 0),
+      bump_count: bumpItems.length,
+      recovered_cents: sum(recovered),
+      recovered_count: recovered.length,
+      avg_ticket_cents: paid.length ? Math.round(sum(paid) / paid.length) : 0,
     },
-    funnel: { page_view: ev.page_view ?? 0, initiate_checkout: ev.initiate_checkout ?? 0, pix_generated: cur.orders, paid: cur.paid },
-    series: series.data ?? [],
+    hourly,
+    daily: [...daily.values()].sort((a, b) => a.day.localeCompare(b.day)),
+    methods,
     top_products: [...top.values()].sort((a, b) => b.revenue_cents - a.revenue_cents).slice(0, 8),
   });
+});
+
+/** Progresso da meta mensal (card da barra lateral). */
+adminRouter.get('/progress', async (_req, res) => {
+  const s = await getSettings();
+  const now = new Date();
+  const [y, m] = dayFmt.format(now).split('-').map(Number);
+  const monthStart = new Date(Date.UTC(y, m - 1, 1, 3)); // 00:00 em São Paulo (UTC-3)
+  const { data } = await supabase.from('orders').select('total_cents').eq('status', 'paid').gte('paid_at', monthStart.toISOString()).limit(100000);
+  const month = (data ?? []).reduce((acc: number, o: any) => acc + o.total_cents, 0);
+  res.json({ goal_cents: s.goal.monthlyCents, month_cents: month, updated_at: now.toISOString() });
 });
 
 // ------------------------------------------------------------------ integrações

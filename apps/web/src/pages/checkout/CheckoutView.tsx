@@ -84,7 +84,7 @@ function Section({ step, title, children, aside }: { step?: number; title: strin
   return (
     <section className="ck-card p-5 @lg:p-7">
       <header className="mb-5 flex items-center justify-between gap-3">
-        <h2 className="flex items-center gap-3 text-[17px] font-semibold tracking-tight">
+        <h2 className="flex items-center gap-3 font-display text-[18px] font-semibold tracking-tight">
           {step && <span className="flex h-7 w-7 items-center justify-center rounded-full bg-brand text-[13px] font-bold text-brand-fg">{step}</span>}
           {title}
         </h2>
@@ -325,7 +325,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
       <div className="flex items-end justify-between pt-1">
         <span className="font-semibold">Total</span>
         <span className="text-right">
-          <span className="block text-[26px] font-bold leading-none tracking-tight tabular-nums">{brl(total)}</span>
+          <span className="block font-display text-[28px] font-bold leading-none tracking-tight tabular-nums">{brl(total)}</span>
           <span className="mt-1 flex items-center justify-end gap-1 text-xs text-ck-muted">à vista no <PixIcon className="h-3 w-3" /> Pix</span>
         </span>
       </div>
@@ -433,6 +433,16 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
       <main className="mx-auto grid max-w-[1120px] gap-5 px-4 pb-10 pt-5 @4xl:grid-cols-[minmax(0,1fr)_380px] @4xl:gap-8 @4xl:pt-10 @5xl:grid-cols-[minmax(0,1fr)_400px]">
         <form id="ck-form" noValidate onSubmit={onSubmit} className="min-w-0 space-y-5">
+          {/* Etapas */}
+          <ol className="flex items-center gap-2 text-[12px] font-semibold @lg:text-[13px]">
+            {['Identificação', 'Pagamento', 'Acesso liberado'].map((step, i) => (
+              <li key={step} className={cn('flex items-center gap-2', i < 2 && 'flex-1')}>
+                <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px]', i === 0 ? 'bg-brand text-brand-fg shadow-md shadow-brand/30' : 'border border-ck-border bg-ck-surface text-ck-muted')}>{i + 1}</span>
+                <span className={cn('whitespace-nowrap', i === 0 ? 'text-ck-text' : 'text-ck-muted')}>{step}</span>
+                {i < 2 && <span className="h-px flex-1 bg-ck-border" />}
+              </li>
+            ))}
+          </ol>
           {/* Banner no topo (celular) */}
           {banner && <img src={banner} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm @4xl:hidden" fetchPriority="high" />}
 
@@ -449,7 +459,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                   <span className="inline-flex items-center gap-1 rounded-full bg-brand/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-brand"><Gift className="h-3 w-3" /> Produto digital</span>
                   <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-amber-600"><Zap className="h-3 w-3" /> Acesso imediato</span>
                 </div>
-                <h1 className="mt-2 text-[19px] font-bold leading-snug tracking-tight @lg:text-[24px]">{t.headline || checkout.product.name}</h1>
+                <h1 className="mt-2 font-display text-[20px] font-bold leading-snug tracking-tight @lg:text-[26px]">{t.headline || checkout.product.name}</h1>
                 {t.producerName && (
                   <p className="mt-1 flex items-center gap-1 text-[13px] text-ck-muted">por <span className="font-semibold text-ck-text">{t.producerName}</span> <BadgeCheck className="h-3.5 w-3.5 text-sky-500" /></p>
                 )}
@@ -462,7 +472,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                   )}
                   <p className="flex flex-wrap items-baseline gap-x-2">
                     {compareAt > checkout.price_cents && <span className="text-sm font-medium text-ck-muted">por</span>}
-                    <span className="text-[28px] font-extrabold leading-tight tracking-tight text-brand tabular-nums">{brl(checkout.price_cents)}</span>
+                    <span className="font-display text-[30px] font-extrabold leading-tight tracking-tight text-brand tabular-nums">{brl(checkout.price_cents)}</span>
                   </p>
                   <p className="mt-0.5 text-xs text-ck-muted">à vista no <PixIcon className="inline h-3 w-3 align-[-1px]" /> Pix · pagamento único</p>
                 </div>
@@ -558,7 +568,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
           {/* Resumo + CTA (celular) */}
           <section className="ck-card space-y-4 p-5 @4xl:hidden">
-            <h2 className="text-[17px] font-semibold tracking-tight">Resumo do pedido</h2>
+            <h2 className="font-display text-[18px] font-semibold tracking-tight">Resumo do pedido</h2>
             {summaryLines}
             {couponBlock}
             {totals}
@@ -589,7 +599,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           <div className="sticky top-6 space-y-5">
             {banner && <img src={banner} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm" fetchPriority="high" />}
             <section className="ck-card space-y-4 p-6">
-              <h2 className="text-[17px] font-semibold tracking-tight">Resumo do pedido</h2>
+              <h2 className="font-display text-[18px] font-semibold tracking-tight">Resumo do pedido</h2>
               {summaryLines}
               {couponBlock}
               {totals}

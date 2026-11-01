@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ShoppingBag } from 'lucide-react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { publicApi } from '@/lib/api';
 import { CheckoutView } from './CheckoutView';
 import type { PublicCheckout } from './theme';
@@ -27,7 +27,10 @@ function Skeleton() {
 }
 
 export default function CheckoutPage() {
-  const { slug = '' } = useParams();
+  const params = useParams();
+  const [search] = useSearchParams();
+  // /checkout?produto_id=9452229 (padrão) ou /c/:slug (links antigos)
+  const slug = search.get('produto_id') ?? params.slug ?? '';
   const { data, isLoading, error } = useQuery({
     queryKey: ['checkout', slug],
     queryFn: () => publicApi.get<PublicCheckout>(`/checkouts/${slug}`),

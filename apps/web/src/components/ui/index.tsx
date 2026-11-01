@@ -26,7 +26,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           lg: 'h-14 px-6 text-base',
         }[size],
         {
-          primary: 'bg-zinc-900 text-zinc-50 shadow-sm shadow-zinc-900/20 hover:bg-zinc-800',
+          primary: 'bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-md shadow-blue-600/25 hover:from-blue-500 hover:to-blue-500',
           brand: 'bg-brand text-brand-fg shadow-sm hover:brightness-110',
           secondary: 'border border-gray-200 bg-white text-gray-800 hover:bg-gray-50',
           ghost: 'text-gray-600 hover:bg-gray-100',

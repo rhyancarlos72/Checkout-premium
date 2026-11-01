@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CheckCircle2, Copy, Mail, PlugZap, RefreshCw, XCircle } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button, Card, cn, Field, Input, PageLoader, Switch, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { dateTime } from '@/lib/format';
@@ -35,19 +36,11 @@ export default function IntegrationsPage() {
   const qc = useQueryClient();
   const toast = useToast();
   const { data, isLoading } = useQuery({ queryKey: ['integrations'], queryFn: () => adminApi.get<Integrations>('/integrations') });
-  const settings = useQuery({ queryKey: ['settings'], queryFn: () => adminApi.get<Settings>('/settings') });
-  const [s, setS] = useState<Settings | null>(null);
   const [testTo, setTestTo] = useState('');
-  useEffect(() => { if (settings.data) setS(settings.data); }, [settings.data]);
 
   const run = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) => adminApi.post<{ ok?: boolean; message?: string }>(path, body),
     onSuccess: (r) => { (r.ok === false ? toast.err : toast.ok)(r.message ?? 'Feito'); qc.invalidateQueries({ queryKey: ['integrations'] }); },
-    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
-  });
-  const saveSettings = useMutation({
-    mutationFn: (v: Settings) => adminApi.put<Settings>('/settings', v),
-    onSuccess: () => { toast.ok('Configurações salvas'); qc.invalidateQueries({ queryKey: ['settings'] }); },
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
   });
 
@@ -96,21 +89,12 @@ export default function IntegrationsPage() {
           </div>
         </Card>
 
-        {s && (
-          <Card title="Loja e recuperação de pagamentos" className="lg:col-span-2">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Nome da loja"><Input value={s.store.name} onChange={(e) => setS({ ...s, store: { ...s.store, name: e.target.value } })} /></Field>
-              <Field label="E-mail de suporte"><Input type="email" value={s.store.supportEmail} onChange={(e) => setS({ ...s, store: { ...s.store, supportEmail: e.target.value } })} /></Field>
-              <Field label="CNPJ/CPF (rodapé)"><Input value={s.store.document} onChange={(e) => setS({ ...s, store: { ...s.store, document: e.target.value } })} /></Field>
-              <div className="flex items-end pb-3"><Switch checked={s.recovery.enabled} onChange={(v) => setS({ ...s, recovery: { ...s.recovery, enabled: v } })} label="E-mail de recuperação de PIX pendente" /></div>
-              <Field label="Enviar após (minutos)"><Input type="number" min={5} max={1440} value={s.recovery.delayMinutes} onChange={(e) => setS({ ...s, recovery: { ...s.recovery, delayMinutes: Number(e.target.value) } })} /></Field>
-              <div className="flex items-end justify-end gap-2 pb-0.5">
-                <Button variant="secondary" loading={run.isPending && run.variables?.path === '/jobs/run'} onClick={() => run.mutate({ path: '/jobs/run' })}><RefreshCw className="h-4 w-4" /> Rodar conciliação</Button>
-                <Button loading={saveSettings.isPending} onClick={() => saveSettings.mutate(s)}>Salvar</Button>
-              </div>
-            </div>
-          </Card>
-        )}
+        <Card title="Conciliação de pagamentos" className="lg:col-span-2">
+          <div className="flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-zinc-600">A cada 2 minutos o sistema confere Pix pendentes direto no gateway, expira os vencidos e envia a recuperação. Dados da loja, meta e recuperação ficam em <Link to="/admin/configuracoes?tab=loja" className="font-medium text-blue-600 hover:underline">Configurações</Link>.</p>
+            <Button variant="secondary" className="shrink-0" loading={run.isPending && run.variables?.path === '/jobs/run'} onClick={() => run.mutate({ path: '/jobs/run' })}><RefreshCw className="h-4 w-4" /> Rodar agora</Button>
+          </div>
+        </Card>
 
         <Card title="Últimos webhooks recebidos">
           {data.lastWebhooks.length === 0 ? <p className="text-sm text-gray-500">Nenhum webhook ainda.</p> : (

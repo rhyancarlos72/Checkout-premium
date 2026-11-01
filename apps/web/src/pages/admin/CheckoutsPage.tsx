@@ -2,6 +2,7 @@ import { Copy, CreditCard, ExternalLink, Pencil, Plus, Trash2 } from 'lucide-rea
 import { useState } from 'react';
 import { Button, Card, EmptyState, PageLoader, useToast } from '@/components/ui';
 import { brl } from '@/lib/format';
+import { checkoutUrl } from '@/lib/links';
 import { PageHeader } from './AdminApp';
 import { CheckoutEditor, type Checkout } from './CheckoutEditor';
 import type { Bump } from './BumpsPage';
@@ -14,7 +15,7 @@ export default function CheckoutsPage() {
   const bumps = useCrud<Bump>('bumps').list;
   const [editing, setEditing] = useState<Checkout | 'new' | null>(null);
   const toast = useToast();
-  const url = (slug: string) => `${window.location.origin}/c/${slug}`;
+  const url = (slug: string) => checkoutUrl(slug);
 
   return (
     <>

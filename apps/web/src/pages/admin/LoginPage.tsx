@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, Eye, EyeOff, KeyRound, Lock, Mail, MailCheck, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Eye, EyeOff, KeyRound, Lock, Mail, MailCheck, ShieldCheck, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { supabase, supabaseConfigured } from '@/lib/supabase';
 import { AuthLayout, DarkButton } from './AuthLayout';
@@ -148,6 +148,55 @@ export default function LoginPage() {
           <button type="button" onClick={() => go('login')} className="w-full rounded-xl border border-white/10 py-3 text-sm font-medium text-zinc-200 hover:bg-white/5">Voltar ao login</button>
         </div>
       )}
+    </AuthLayout>
+  );
+}
+
+/** Segunda etapa do login quando a verificação em 2 etapas (app autenticador) está ativa. */
+export function MfaChallenge({ onDone }: { onDone: () => void }) {
+  const [code, setCode] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function verify(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    const { data: factors, error: fe } = await supabase.auth.mfa.listFactors();
+    const factor = factors?.totp?.find((f) => f.status === 'verified');
+    if (fe || !factor) {
+      setLoading(false);
+      return setError(fe?.message ?? 'Nenhum autenticador encontrado.');
+    }
+    const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: factor.id, code: code.replace(/\D/g, '') });
+    setLoading(false);
+    if (error) return setError(/invalid|expired/i.test(error.message) ? 'Código inválido ou expirado. Tente o código atual do app.' : error.message);
+    onDone();
+  }
+
+  return (
+    <AuthLayout>
+      <form onSubmit={verify} className="space-y-5">
+        <div>
+          <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/15"><ShieldCheck className="h-5 w-5 text-sky-300" /></div>
+          <h2 className="text-2xl font-bold tracking-tight">Verificação em 2 etapas</h2>
+          <p className="mt-1 text-sm text-zinc-400">Digite o código de 6 dígitos do seu app autenticador (Google Authenticator, Authy, 1Password…).</p>
+        </div>
+        <input
+          className="input-dark text-center font-mono text-2xl tracking-[.5em]"
+          style={{ paddingLeft: 16 }}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          autoFocus
+          maxLength={6}
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+          placeholder="000000"
+        />
+        {error && <div className="flex gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-200"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}</div>}
+        <DarkButton type="submit" loading={loading} disabled={code.length !== 6}>Verificar e entrar</DarkButton>
+        <button type="button" onClick={() => supabase.auth.signOut()} className="w-full text-center text-sm text-zinc-400 hover:text-white">Entrar com outra conta</button>
+      </form>
     </AuthLayout>
   );
 }

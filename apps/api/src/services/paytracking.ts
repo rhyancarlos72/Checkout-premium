@@ -60,7 +60,7 @@ function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
     order_number: o.number,
     value,
     currency: 'BRL',
-    event_source_url: t.page_url || (o.checkout_slug ? `${env.PUBLIC_URL}/c/${o.checkout_slug}` : env.PUBLIC_URL),
+    event_source_url: t.page_url || (o.checkout_slug ? `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout_slug}` : env.PUBLIC_URL),
     product_id: main?.product_id ?? '',
     product_name: main?.name ?? '',
     products: o.items.map((i) => ({

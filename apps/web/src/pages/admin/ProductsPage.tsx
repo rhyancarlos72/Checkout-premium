@@ -8,6 +8,7 @@ import { Controller, useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageLoader, Select, Switch, Textarea, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
+import { checkoutUrl } from '@/lib/links';
 import { brl, centsToInput, parseMoney } from '@/lib/format';
 import { PageHeader } from './AdminApp';
 import { useCrud } from './crud';
@@ -31,7 +32,7 @@ export interface Product {
 function ProductLink({ product, onCreated }: { product: Product; onCreated: () => void }) {
   const [copied, setCopied] = useState<string | null>(null);
   const create = useMutation({ mutationFn: () => adminApi.post(`/products/${product.id}/checkout`), onSuccess: onCreated });
-  const links = (product.checkouts ?? []).map((c) => ({ ...c, url: `${window.location.origin}/c/${c.slug}` }));
+  const links = (product.checkouts ?? []).map((c) => ({ ...c, url: checkoutUrl(c.slug) }));
   if (!links.length)
     return (
       <Button size="sm" variant="brand" className="w-full" loading={create.isPending} onClick={() => create.mutate()} style={{ ['--brand' as any]: '#059669' }}>
@@ -43,7 +44,7 @@ function ProductLink({ product, onCreated }: { product: Product; onCreated: () =
       {links.map((l) => (
         <div key={l.id} className="flex items-center gap-1 rounded-xl border border-emerald-200 bg-emerald-50/60 py-1 pl-3 pr-1">
           <Link2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-emerald-900" title={l.url}>/c/{l.slug}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-emerald-900" title={l.url}>?produto_id={l.slug}</span>
           {!l.active && <span className="shrink-0 rounded bg-zinc-200 px-1.5 text-[10px] font-semibold text-zinc-600">inativo</span>}
           <button
             className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-semibold text-emerald-700 hover:bg-white"
@@ -81,7 +82,7 @@ export default function ProductsPage() {
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ['products'] });
       qc.invalidateQueries({ queryKey: ['checkouts'] });
-      toast.ok(`Duplicado${r?.number ? ` como #${r.number}` : ''} · link /c/${r?.checkout?.slug ?? ''}`);
+      toast.ok(`Duplicado${r?.number ? ` como #${r.number}` : ''} · produto_id=${r?.checkout?.slug ?? ''}`);
     },
     onError: (e) => toast.err(e.message),
   });
@@ -137,7 +138,7 @@ export default function ProductsPage() {
           onSave={async (body) => {
             const saved: any = await save.mutateAsync(body);
             qc.invalidateQueries({ queryKey: ['checkouts'] });
-            toast.ok(saved?.checkout ? `Produto${saved.number ? ` #${saved.number}` : ''} criado · link /c/${saved.checkout.slug}` : 'Produto salvo');
+            toast.ok(saved?.checkout ? `Produto${saved.number ? ` #${saved.number}` : ''} criado · produto_id=${saved.checkout.slug}` : 'Produto salvo');
             setEditing(null);
           }}
         />

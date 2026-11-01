@@ -8,6 +8,9 @@ export const settingsSchema = z.object({
       delayMinutes: z.number().int().min(5).max(1440).default(30),
     })
     .default({ enabled: true, delayMinutes: 30 }),
+  goal: z
+    .object({ monthlyCents: z.number().int().min(0).max(100_000_000_00).default(10_000_000) })
+    .default({ monthlyCents: 10_000_000 }),
   store: z
     .object({
       name: z.string().max(80).default('Minha Loja'),
