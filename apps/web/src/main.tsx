@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { lazy, StrictMode, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { PageLoader } from './components/ui';
 import './index.css';
 import CheckoutPage from './pages/checkout/CheckoutPage';
@@ -9,6 +9,13 @@ import PaymentPage from './pages/checkout/PaymentPage';
 
 // Painel carregado sob demanda → o checkout fica leve e rápido
 const AdminApp = lazy(() => import('./pages/admin/AdminApp'));
+
+// Links de e-mail do Supabase (recuperação/convite) podem cair na raiz: leva para a tela de nova senha mantendo o token.
+function RootRedirect() {
+  const { hash } = useLocation();
+  const isAuthLink = /type=(recovery|invite|signup|magiclink)|error_description/.test(hash);
+  return <Navigate to={(isAuthLink ? '/admin/nova-senha' : '/admin') + hash} replace />;
+}
 
 const qc = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, staleTime: 15_000 } } });
 
@@ -21,7 +28,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/c/:slug" element={<CheckoutPage />} />
             <Route path="/pedido/:token" element={<PaymentPage />} />
             <Route path="/admin/*" element={<AdminApp />} />
-            <Route path="*" element={<Navigate to="/admin" replace />} />
+            <Route path="*" element={<RootRedirect />} />
           </Routes>
         </Suspense>
       </BrowserRouter>

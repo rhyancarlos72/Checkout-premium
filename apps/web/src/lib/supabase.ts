@@ -13,6 +13,6 @@ const anon = cfg.supabaseAnonKey || (import.meta.env.VITE_SUPABASE_ANON_KEY as s
 
 /** Cliente público (anon key). Usado só para login do admin e upload de imagens (RLS exige admin). */
 export const supabase = createClient(url || 'http://localhost', anon || 'missing', {
-  auth: { persistSession: true, autoRefreshToken: true },
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' },
 });
 export const supabaseConfigured = Boolean(url && anon);

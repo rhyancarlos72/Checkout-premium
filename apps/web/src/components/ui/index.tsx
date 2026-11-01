@@ -25,7 +25,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
           lg: 'h-14 px-6 text-base',
         }[size],
         {
-          primary: 'bg-gray-900 text-white hover:bg-gray-800',
+          primary: 'bg-zinc-900 text-white shadow-sm shadow-zinc-900/20 hover:bg-zinc-800',
           brand: 'bg-brand text-brand-fg shadow-sm hover:brightness-110',
           secondary: 'border border-gray-200 bg-white text-gray-800 hover:bg-gray-50',
           ghost: 'text-gray-600 hover:bg-gray-100',
@@ -93,7 +93,7 @@ export function Switch({ checked, onChange, label }: { checked: boolean; onChang
 
 export function Card({ children, className, title, action }: { children: ReactNode; className?: string; title?: ReactNode; action?: ReactNode }) {
   return (
-    <section className={cn('rounded-2xl border border-gray-200 bg-white shadow-[0_1px_2px_rgba(16,24,40,.04)]', className)}>
+    <section className={cn('rounded-2xl border border-zinc-200/70 bg-white shadow-[0_1px_2px_rgba(16,24,40,.04),0_8px_24px_-12px_rgba(16,24,40,.08)]', className)}>
       {(title || action) && (
         <header className="flex items-center justify-between gap-3 border-b border-gray-100 px-5 py-4">
           <h3 className="font-semibold text-gray-900">{title}</h3>

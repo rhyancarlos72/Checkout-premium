@@ -4,13 +4,18 @@
 
 1. Crie um projeto em https://supabase.com.
 2. Em **SQL Editor**, cole e execute `supabase/migrations/20261101000000_init.sql`.
-3. Em **Authentication → Users → Add user**, crie seu usuário (e-mail + senha).
-4. Torne-o administrador (SQL Editor):
-   ```sql
-   insert into public.admins (user_id) select id from auth.users where email = 'SEU_EMAIL';
-   ```
-5. Em **Authentication → Providers → Email**, desative “Allow new users to sign up” (só você entra no painel).
-6. Em **Project Settings → API** copie: `Project URL`, `anon key` (pública) e `service_role key` (**secreta**).
+3. Em **Authentication → URL Configuration**:
+   - **Site URL:** a URL do seu checkout (ex.: `https://checkout.seudominio.com.br`)
+   - **Redirect URLs:** adicione `https://checkout.seudominio.com.br/admin/**`
+
+   Sem isso, os links de e-mail (primeiro acesso / nova senha) levam para `localhost`.
+4. Em **Project Settings → API** copie: `Project URL`, `anon key` (pública) e `service_role key` (**secreta**).
+5. Depois do deploy (passo 3), crie seu acesso pelo próprio painel: defina `ADMIN_EMAIL` com seu e-mail, abra `/admin` → **Primeiro acesso? Criar minha conta** → abra o link que chega no e-mail → defina a senha.
+6. Por fim, em **Authentication → Sign In / Providers → Email**, desative “Allow new users to sign up”.
+
+Esqueceu a senha? Use **Esqueci minha senha** na tela de login.
+
+> Os e-mails de autenticação saem pelo servidor de e-mail do Supabase, que tem limite baixo (poucos por hora). Se não chegarem, configure seu SMTP da Hostinger em **Authentication → Emails → SMTP Settings**.
 
 ## 2. GitHub
 
@@ -29,7 +34,7 @@ O repositório não contém credenciais. `.env`, certificados `.p12/.pem` e logs
 
 Não existe campo de build na Hostinger, e não precisa: o `npm install` dispara o build sozinho (script `postinstall`). Se por algum motivo o build não rodar, o `server.js` compila na primeira inicialização. Se mesmo assim algo der errado, o site mostra uma página de diagnóstico em vez de "503".
 
-**Variáveis de ambiente obrigatórias:** `PUBLIC_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`. As demais (Woovi, Efí, PayTracking, SMTP) podem ser adicionadas depois. Elas são lidas na inicialização, então depois de alterar variáveis basta reiniciar/redeploy.
+**Variáveis de ambiente obrigatórias:** `PUBLIC_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` e `ADMIN_EMAIL` (para o primeiro acesso). As demais (Woovi, Efí, PayTracking, SMTP) podem ser adicionadas depois. Elas são lidas na inicialização, então depois de alterar variáveis basta reiniciar/redeploy.
 
 Depois, aponte o domínio/subdomínio (ex.: `checkout.seudominio.com.br`) e ative o SSL (HTTPS é obrigatório para os webhooks).
 

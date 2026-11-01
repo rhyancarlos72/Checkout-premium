@@ -70,6 +70,12 @@ const schema = z.object({
     .transform((v) => v !== 'false'),
   /** Token para disparar jobs por cron externo: POST /api/jobs/run com header x-cron-secret */
   CRON_SECRET: z.string().optional(),
+  /** E-mail do dono. Só ele pode fazer o "Primeiro acesso" (criar o 1º admin pelo painel). */
+  ADMIN_EMAIL: z
+    .string()
+    .email()
+    .optional()
+    .transform((v) => v?.trim().toLowerCase()),
 });
 
 // Variáveis vazias (ex.: `PAYTRACKING_URL=` copiado do .env.example) contam como não definidas

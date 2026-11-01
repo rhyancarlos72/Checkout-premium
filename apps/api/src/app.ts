@@ -9,6 +9,7 @@ import { ZodError } from 'zod';
 import { env } from './config/env.js';
 import { HttpError, logger } from './lib/core.js';
 import { adminRouter } from './routes/admin.js';
+import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
 import { webhookRouter } from './routes/webhooks.js';
 import { runJobs } from './services/jobs.js';
@@ -47,6 +48,7 @@ export function createApp() {
   app.get('/api/health', (_req, res) => res.json({ ok: true, env: env.NODE_ENV }));
   app.use('/api/public', publicRouter);
   app.use('/api/webhooks', webhookRouter);
+  app.use('/api/auth', authRouter);
   app.use('/api/admin', adminRouter);
 
   // Cron externo (opcional): Hostinger/cron-job.org → POST /api/jobs/run com header x-cron-secret
