@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { HttpError, logger, must, onlyDigits, supabase } from '../lib/core.js';
 import { getProvider, type ProviderName } from '../providers/index.js';
 import { globalProvider } from './gateways.js';
+import { pixQrDataUrl } from '../lib/qr.js';
 import { sendDeliveryEmail, type DeliveryItem } from './email.js';
 import { sendWhatsAppApproved } from './whatsapp.js';
 import { checkCoupon, computeTotals, type CouponRow, type PriceLine } from './pricing.js';
@@ -164,7 +165,8 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
       .single(),
   ) as { id: string; number: number; public_token: string };
 
-  await supabase.from('order_items').insert(q.lines.map((l) => ({ ...l, order_id: order.id })));
+  // itens gravados em paralelo com a geração do Pix (não precisa esperar um pelo outro)
+  const itemsSaved = supabase.from('order_items').insert(q.lines.map((l) => ({ ...l, order_id: order.id })));
 
   try {
     const charge = await provider.createCharge({
@@ -174,21 +176,39 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
       expiresInSeconds: checkout.pix_expires_minutes * 60,
       customer: { name: input.customer.name, email: input.customer.email, phone: input.customer.phone, document: doc || null },
     });
-    await supabase
-      .from('orders')
-      .update({
-        provider_charge_id: charge.chargeId,
-        pix_code: charge.pixCode,
-        pix_qr_image: charge.qrImage,
-        expires_at: charge.expiresAt.toISOString(),
-      })
-      .eq('id', order.id);
+    // QR Code gerado aqui mesmo a partir do copia e cola: sai na hora, sem baixar imagem do gateway
+    const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
+    const expiresAt = charge.expiresAt.toISOString();
+    await Promise.all([
+      itemsSaved,
+      supabase.from('orders').update({ provider_charge_id: charge.chargeId, pix_code: charge.pixCode, pix_qr_image: qrImage, expires_at: expiresAt }).eq('id', order.id),
+    ]);
 
-    await supabase.from('events').insert({ checkout_id: checkout.id, order_id: order.id, type: 'pix_generated', session_id: tracking.session_id ?? null, data: { total_cents: q.totalCents } });
+    void supabase.from('events').insert({ checkout_id: checkout.id, order_id: order.id, type: 'pix_generated', session_id: tracking.session_id ?? null, data: { total_cents: q.totalCents } }).then(() => {});
     // Rastreamento sem bloquear a resposta ao comprador
     void dispatchTracking(order.id, 'sale.pending');
 
-    return { token: order.public_token };
+    // a página do Pix abre já com estes dados (sem esperar outra consulta)
+    return {
+      token: order.public_token,
+      order: {
+        number: order.number,
+        status: 'pending',
+        total_cents: q.totalCents,
+        subtotal_cents: q.subtotalCents,
+        discount_cents: q.discountCents,
+        pix_code: charge.pixCode,
+        pix_qr_image: qrImage,
+        expires_at: expiresAt,
+        paid_at: null,
+        created_at: new Date().toISOString(),
+        items: q.lines.map((l) => ({ kind: l.kind, name: l.name, price_cents: l.price_cents })),
+        customer: { name: input.customer.name, email: input.customer.email, phone: onlyDigits(input.customer.phone) || null },
+        checkout: { slug: checkout.slug, name: checkout.name, theme: checkout.theme, metaPixelId: checkout.tracking?.metaPixelId ?? null },
+        purchase_event_id: (tracking as any).purchase_event_id ?? null,
+        delivery: [],
+      },
+    };
   } catch (e: any) {
     await supabase.from('orders').update({ status: 'failed', error: String(e?.message ?? e).slice(0, 500) }).eq('id', order.id);
     logger.error({ orderId: order.id, err: e?.message }, 'Falha ao gerar PIX');

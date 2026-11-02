@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, BadgeCheck, Check, ChevronDown, Clock, CreditCard, Gift, Lock, Mail, Megaphone, Phone, ShieldCheck, Star, Tag, User, X, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useForm, type UseFormRegisterReturn } from 'react-hook-form';
@@ -132,6 +132,13 @@ function CkField({
  */
 export function CheckoutView({ checkout, preview = false }: { checkout: PublicCheckout; preview?: boolean }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
+  // baixa a tela do Pix em segundo plano: ao finalizar, ela abre na hora
+  useEffect(() => {
+    if (preview) return;
+    const id = setTimeout(() => void import('./PaymentPage'), 1500);
+    return () => clearTimeout(id);
+  }, [preview]);
   const [params] = useSearchParams();
   const t = { ...themeDefaults, ...checkout.theme };
   const prefersDark = usePrefersDark();
@@ -228,14 +235,18 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
   const submit = useMutation({
     mutationFn: (v: FormValues) =>
-      publicApi.post<{ token: string }>('/orders', {
+      publicApi.post<{ token: string; order?: unknown }>('/orders', {
         checkout_slug: checkout.slug,
         customer: { name: v.name, email: v.email, phone: v.phone ? digits(v.phone) : null, document: null },
         bump_ids: bumps,
         coupon_code: coupon?.code ?? null,
         tracking: { ...collectTracking(), initiate_checkout_event_id: eventIds.ic, purchase_event_id: eventIds.purchase },
       }),
-    onSuccess: (r) => navigate(`/pedido/${r.token}`),
+    onSuccess: (r) => {
+      // a resposta já traz o Pix (QR + copia e cola): a próxima tela abre sem nova consulta
+      if (r.order) qc.setQueryData(['order', r.token], r.order);
+      navigate(`/pedido/${r.token}`);
+    },
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Não foi possível gerar o Pix. Tente novamente.'),
   });
 

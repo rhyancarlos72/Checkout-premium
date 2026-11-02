@@ -95,6 +95,13 @@ export class EfiProvider implements PixProvider {
     return this.request<T>(method, path, body, { Authorization: `Bearer ${token}`, ...headers });
   }
 
+  /** Pré-aquece conexão mTLS + token, para o primeiro Pix sair sem espera. */
+  async warm() {
+    if (!this.isConfigured()) return;
+    if (this.token && this.token.exp < Date.now() + 10 * 60_000) this.token = null; // renova antes de vencer
+    await this.accessToken();
+  }
+
   static txidFromOrder(orderId: string) {
     return orderId.replace(/-/g, ''); // 32 chars alfanuméricos (regra: 26–35)
   }
@@ -118,7 +125,8 @@ export class EfiProvider implements PixProvider {
 
     let pixCode: string | undefined = cob.pixCopiaECola;
     let qrImage: string | null = null;
-    if (cob.loc?.id) {
+    // a cobrança já traz o copia e cola: o QR é gerado localmente (economiza uma chamada à Efí)
+    if (!pixCode && cob.loc?.id) {
       try {
         const qr = await this.authed<{ qrcode: string; imagemQrcode: string }>('GET', `/v2/loc/${cob.loc.id}/qrcode`);
         pixCode = pixCode ?? qr.qrcode;
