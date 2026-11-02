@@ -279,9 +279,9 @@ export async function sendRecoveryEmail(p: RecoveryEmailInput) {
   </td></tr>
   <tr><td align="center" style="padding:24px 28px 8px">
     <table role="presentation" cellpadding="0" cellspacing="0"><tr><td align="center" bgcolor="${accent}" style="border-radius:10px">
-      <a href="${escapeHtml(p.url)}" target="_blank" style="display:inline-block;padding:14px 30px;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px">Concluir meu pedido</a>
+      <a href="${escapeHtml(p.url)}" target="_blank" style="display:inline-block;padding:14px 30px;font-size:16px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px">Pagar meu Pix</a>
     </td></tr></table>
-    <p style="margin:10px 0 0;font-size:12px;color:#6b7280">Seus dados já estão preenchidos. Um novo Pix é gerado na hora.</p>
+    <p style="margin:10px 0 0;font-size:12px;color:#6b7280">Seu Pix abre direto. Se tiver vencido, gere outro com um toque.</p>
   </td></tr>
   <tr><td style="padding:18px 28px 6px">
     ${benefits.map(([t, d]) => `<p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#374151"><span style="color:${accent};font-weight:700">&#10003;</span>&nbsp; <b>${escapeHtml(t)}</b>: ${escapeHtml(d)}</p>`).join('')}
@@ -305,8 +305,8 @@ export async function sendRecoveryEmail(p: RecoveryEmailInput) {
     '',
     `${p.productName}${p.extras?.length ? ` + ${p.extras.join(', ')}` : ''}: ${price} à vista no Pix`,
     '',
-    `Concluir meu pedido: ${p.url}`,
-    '(seus dados já estão preenchidos e um novo Pix é gerado na hora)',
+    `Pagar meu Pix: ${p.url}`,
+    '(seu Pix abre direto; se tiver vencido, gere outro com um toque)',
     '',
     ...benefits.map(([t, d]) => `- ${t}: ${d}`),
     '',
@@ -342,7 +342,7 @@ export async function sendRecoveryForOrder(o: any) {
     productImage: main?.product?.image_url ?? o.checkout?.theme?.mockupUrl ?? null,
     extras: (o.items ?? []).filter((i: any) => i.kind === 'bump').map((i: any) => i.name),
     totalCents: o.total_cents,
-    url: `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout.slug}&recover=${o.public_token}&utm_source=recovery&utm_medium=email`,
+    url: `${env.PUBLIC_URL}/pedido/${o.public_token}?utm_source=recovery&utm_medium=email`,
     accent: o.checkout.theme?.primaryColor,
     guaranteeDays: o.checkout.theme?.guaranteeDays ?? 7,
   });

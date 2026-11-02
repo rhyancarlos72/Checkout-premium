@@ -92,6 +92,15 @@ describe('mensagens (porta do checkout antigo)', () => {
     expect(m).toContain('https://link');
     expect(m).toContain('000201PIX');
   });
+  it('rodízio de modelos: mensagens seguidas para clientes diferentes não saem iguais', () => {
+    const skel = (m: string, nome: string) => m.replaceAll(nome, 'X');
+    const ap = Array.from({ length: 12 }, (_, i) => skel(wa.buildApprovedMessage({ phone: `55119000001${String(i).padStart(2, '0')}`, name: 'Cliente', totalCents: 1999, items: [{ name: 'P', url: 'https://d', kind: 'main' }] }), 'Cliente'));
+    for (let i = 1; i < ap.length; i++) expect(ap[i]).not.toBe(ap[i - 1]);
+    expect(new Set(ap).size).toBe(12);
+    const rc = Array.from({ length: 12 }, (_, i) => skel(wa.buildRecoveryMessage({ phone: `55119000002${String(i).padStart(2, '0')}`, name: 'Cliente', link: 'https://l', attempt: 1, pixCode: 'PIX' }), 'Cliente'));
+    expect(new Set(rc).size).toBe(12);
+    expect(rc.every((m) => m.includes('https://l') && m.includes('PIX') && m.includes('SAIR'))).toBe(true);
+  });
   it('não repete a mesma saudação seguida para o mesmo telefone', () => {
     const first = (n: number) => wa.buildApprovedMessage({ phone: '5511900000003', name: 'Ana', totalCents: 100, items: [{ name: 'P', url: null }] }).split('\n')[0] + n;
     const a = first(0).slice(0, -1);

@@ -1,11 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, CheckCircle2, Clock, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { cn } from '@/components/ui';
 import { checkoutPath } from '@/lib/links';
 import { publicApi } from '@/lib/api';
-import { brl } from '@/lib/format';
+import { brl, productCode } from '@/lib/format';
 import { initMetaPixel, pixel, track } from '@/lib/tracking';
 import { PixIcon, PixLogo } from './CheckoutView';
 import { themeDefaults, themeStyle, usePrefersDark, type Theme } from './theme';
@@ -113,6 +113,15 @@ export default function PaymentPage() {
     mutationFn: () => publicApi.post<PublicOrder>(`/orders/${token}/refresh`),
     onSuccess: (d) => qc.setQueryData(['order', token], d),
   });
+  // Pix vencido (ou link antigo): gera/abre o Pix desta compra com um toque, sem preencher dados
+  const navigate = useNavigate();
+  const renew = useMutation({
+    mutationFn: () => publicApi.post<{ token: string; renewed: boolean; order: PublicOrder }>(`/orders/${token}/renew`),
+    onSuccess: (r) => {
+      qc.setQueryData(['order', r.token], r.order);
+      if (r.token !== token) navigate(`/pedido/${r.token}`, { replace: true });
+    },
+  });
   const [copied, setCopied] = useState(false);
   const firedRef = useRef(false);
 
@@ -171,7 +180,7 @@ export default function PaymentPage() {
   const summary = (
     <section className="ck-card mt-5 p-5 text-sm">
       <div className="mb-3 flex items-center justify-between">
-        <p className="font-semibold">Pedido #{order.number}</p>
+        <p className="font-semibold">Pedido ID: {productCode(order.number)}</p>
         <p className="text-xs text-ck-muted">{new Date(order.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</p>
       </div>
       <div className="space-y-2">
@@ -232,12 +241,11 @@ export default function PaymentPage() {
         <section className="ck-card p-8 text-center">
           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-500/10 text-amber-500"><Clock className="h-8 w-8" /></div>
           <h1 className="mt-4 text-xl font-bold">Este Pix expirou</h1>
-          <p className="mt-2 text-ck-muted">Sem problemas: seu pedido continua salvo. Gere um novo código em segundos.</p>
-          {order.checkout && (
-            <Link to={checkoutPath(order.checkout.slug, `&recover=${token}`)} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">
-              Gerar novo Pix
-            </Link>
-          )}
+          <p className="mt-2 text-ck-muted">Sem problemas: seu pedido continua salvo, com o mesmo valor. Gere um novo código em um toque, sem preencher nada.</p>
+          <button type="button" disabled={renew.isPending} onClick={() => renew.mutate()} className="ck-cta mt-6 inline-flex h-12 items-center justify-center gap-2 px-8 font-bold disabled:opacity-70">
+            {renew.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />} {renew.isPending ? 'Gerando seu Pix…' : 'Gerar novo Pix'}
+          </button>
+          {renew.isError && <p className="mt-3 text-sm text-red-500">{renew.error instanceof Error ? renew.error.message : 'Não foi possível gerar agora. Tente de novo.'}</p>}
         </section>
         {summary}
       </Shell>
@@ -247,9 +255,14 @@ export default function PaymentPage() {
     return (
       <Shell theme={theme}>
         <section className="ck-card p-8 text-center">
-          <h1 className="text-xl font-bold">Pedido indisponível</h1>
-          <p className="mt-2 text-ck-muted">Não foi possível concluir este pedido.</p>
-          {order.checkout && <Link to={checkoutPath(order.checkout.slug)} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">Voltar ao checkout</Link>}
+          <h1 className="text-xl font-bold">{order.status === 'canceled' ? 'Seu Pix foi atualizado' : 'Pedido indisponível'}</h1>
+          <p className="mt-2 text-ck-muted">{order.status === 'canceled' ? 'Este código foi substituído por um mais novo. Toque abaixo para abrir o Pix atual.' : 'Não foi possível concluir este pedido.'}</p>
+          {order.status === 'canceled' && (
+            <button type="button" disabled={renew.isPending} onClick={() => renew.mutate()} className="ck-cta mt-6 inline-flex h-12 items-center justify-center gap-2 px-8 font-bold disabled:opacity-70">
+              {renew.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />} Abrir meu Pix
+            </button>
+          )}
+          {order.checkout && order.status !== 'canceled' && <Link to={checkoutPath(order.checkout.slug)} className="ck-cta mt-6 inline-flex h-12 items-center justify-center px-8 font-bold">Voltar ao checkout</Link>}
         </section>
       </Shell>
     );

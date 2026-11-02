@@ -137,17 +137,34 @@ export const rotationOrder = <T extends { name: string }>(list: T[]) =>
 export const markUsed = (name: string) => lastUsed.set(name, Date.now());
 
 /** Escolhe item ainda não usado para este telefone (reseta ao usar 80% do pool). */
+/**
+ * Sorteia uma variação evitando repetir:
+ *  - para o MESMO telefone (até ~80% do repertório), e
+ *  - entre clientes diferentes em sequência (as últimas variações usadas por qualquer envio),
+ * para que nenhum número dispare textos iguais em série (padrão que os filtros de spam detectam).
+ */
+const globalHist = new Map<string, string[]>();
 function pickFresh(pool: string[], phone: string, key: string) {
   const hist = phoneHist.get(phone) ?? {};
   let used = hist[key] ?? [];
   if (used.length >= Math.ceil(pool.length * 0.8)) used = [];
+  const recent = globalHist.get(key) ?? [];
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
-  const item = shuffled.find((x) => !used.includes(hashText(x))) ?? shuffled[0];
-  hist[key] = [...used, hashText(item)].slice(-40);
+  const item =
+    shuffled.find((x) => !used.includes(hashText(x)) && !recent.includes(hashText(x))) ??
+    shuffled.find((x) => !used.includes(hashText(x))) ??
+    shuffled[0];
+  const h = hashText(item);
+  hist[key] = [...used, h].slice(-40);
   phoneHist.set(phone, hist);
+  globalHist.set(key, [...recent, h].slice(-Math.max(1, Math.floor(pool.length * 0.6))));
   if (phoneHist.size > 5000) phoneHist.delete(phoneHist.keys().next().value!);
   return item;
 }
+const firstName = (name: string, fallback: string) => {
+  const f = (name.trim().split(/\s+/)[0] || '').toLowerCase();
+  return f ? f.charAt(0).toUpperCase() + f.slice(1) : fallback;
+};
 
 // ------------------------------------------------------------------ Evolution API
 /**
@@ -499,11 +516,11 @@ export async function diagnoseWhatsApp(extra: { jobsEnabled: boolean; lastJobRun
 const brl = (c: number) => (c / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function buildApprovedMessage(p: { phone: string; name: string; totalCents: number; items: { name: string; url: string | null; note?: string | null; kind?: string }[]; accessUrl?: string }) {
-  const first = (p.name.trim().split(/\s+/)[0] || p.name || '').toLowerCase();
-  const nome = first ? first.charAt(0).toUpperCase() + first.slice(1) : 'tudo bem';
+  const nome = firstName(p.name, 'tudo bem');
   const main = p.items.find((i) => i.kind === 'main') ?? p.items[0];
   const extras = p.items.filter((i) => i !== main);
   const pick = (pool: string[], key: string) => pickFresh(pool, p.phone, key);
+  const valor = `R$ ${brl(p.totalCents)}`;
   const saudacao = pick(
     [
       `Olá, ${nome}! Pagamento confirmado por aqui. ✅`,
@@ -516,106 +533,181 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
       `Olá, ${nome}! Seu pedido foi processado.`,
       `Oi, ${nome}! Pagamento aprovado, obrigado pela compra.`,
       `Olá, ${nome}! Recebemos sua confirmação de pagamento.`,
+      `${nome}, seu Pix caiu certinho por aqui! 🎉`,
+      `Oba, ${nome}! Pagamento recebido.`,
+      `Oi, ${nome}, tudo bem? Seu pagamento foi confirmado.`,
+      `Olá, ${nome}! Que bom ter você com a gente. Pagamento aprovado.`,
+      `Oi, ${nome}! Confirmamos o seu Pix agora há pouco.`,
+      `${nome}, deu tudo certo com a sua compra! ✅`,
+      `Olá, ${nome}! Seu acesso já está liberado.`,
+      `Oi, ${nome}! Pagamento identificado com sucesso.`,
+      `Olá, ${nome}, obrigado pela confiança! Pagamento confirmado.`,
+      `Oi, ${nome}! Passando para avisar que seu pedido foi aprovado.`,
+      `Boa notícia, ${nome}: seu pagamento foi aprovado!`,
+      `Olá, ${nome}! Recebemos tudo certinho.`,
+      `Oi, ${nome}! Compra concluída com sucesso. 🙌`,
+      `Olá, ${nome}! Seu pedido está confirmado e liberado.`,
     ],
     'ep_saudacoes',
   );
-  const rotVal = pick(['Valor', 'Total', 'Valor pago', 'Total da compra'], 'ep_rot_valor');
-  const rotProd = pick(['Produto', 'Seu produto', 'Item adquirido', 'Produto adquirido'], 'ep_rot_prod');
-  const convite = pick(['👉 Seu link de acesso:', '👉 Acesse aqui:', '👉 Link do seu produto:', '👉 É só tocar para acessar:'], 'ep_convites');
-  const lembrete = pick(['Também enviamos uma cópia para o seu e-mail.', 'Uma cópia foi enviada ao seu e-mail para consulta.', 'Guardamos uma cópia no seu e-mail também.', 'Você também recebe estas informações por e-mail.'], 'ep_lembretes');
-  const dica = pick(['Dica: salve este contato para o link ficar clicável e não se perder.', 'Dica: se o link não abrir, salve nosso número e toque de novo.', 'Dica: no Google Drive, entre com sua conta Google para baixar.'], 'ep_dicas');
+  const rotVal = pick(['Valor', 'Total', 'Valor pago', 'Total da compra', 'Valor do pedido', 'Pago'], 'ep_rot_valor');
+  const rotProd = pick(['Produto', 'Seu produto', 'Item adquirido', 'Produto adquirido', 'Você comprou', 'Pedido', 'Sua compra'], 'ep_rot_prod');
+  const convite = pick(
+    ['👉 Seu link de acesso:', '👉 Acesse aqui:', '👉 Link do seu produto:', '👉 É só tocar para acessar:', '📥 Seu acesso:', '🔗 Link para acessar:', '👇 Acesse pelo link abaixo:', '📂 Seu material está aqui:', '✅ Acesso liberado neste link:', '👉 Para abrir o seu produto:', '🔓 Seu link exclusivo:', '📲 Toque para acessar:'],
+    'ep_convites',
+  );
+  const lembrete = pick(
+    ['Também enviamos uma cópia para o seu e-mail.', 'Uma cópia foi enviada ao seu e-mail para consulta.', 'Guardamos uma cópia no seu e-mail também.', 'Você também recebe estas informações por e-mail.', 'Mandamos tudo para o seu e-mail também, caso precise depois.', 'Uma cópia do acesso também está no seu e-mail.', 'Se perder esta mensagem, o acesso também está no seu e-mail.', 'O mesmo link chegou no seu e-mail, para guardar.', 'Confira também seu e-mail (e a caixa de spam, por garantia).', 'Deixamos uma cópia no seu e-mail para você ter sempre à mão.'],
+    'ep_lembretes',
+  );
+  const dica = pick(
+    ['Dica: salve este contato para o link ficar clicável e não se perder.', 'Dica: se o link não abrir, salve nosso número e toque de novo.', 'Dica: no Google Drive, entre com sua conta Google para baixar.', 'Dica: abra pelo navegador do celular ou do computador, como preferir.', 'Dica: baixe o material para ter acesso mesmo sem internet.', 'Dica: se aparecer "solicitar acesso", entre com uma conta Google e tente de novo.', 'Dica: guarde esta conversa para encontrar o link rapidinho depois.', 'Dica: no computador, a visualização dos arquivos fica ainda melhor.', 'Dica: marque esta mensagem com estrela para achar fácil depois.', 'Dica: se o arquivo for grande, aguarde alguns segundos para carregar.'],
+    'ep_dicas',
+  );
   const fechamento = pick(
-    ['Se precisar de qualquer coisa, é só responder por aqui.', 'Qualquer dúvida, estamos à disposição.', 'Bom proveito! Qualquer dúvida, é só chamar.', 'Obrigado pela confiança. Estamos por aqui se precisar.', 'Se surgir alguma dúvida, pode responder esta mensagem.'],
+    [
+      'Se precisar de qualquer coisa, é só responder por aqui.',
+      'Qualquer dúvida, estamos à disposição.',
+      'Bom proveito! Qualquer dúvida, é só chamar.',
+      'Obrigado pela confiança. Estamos por aqui se precisar.',
+      'Se surgir alguma dúvida, pode responder esta mensagem.',
+      'Aproveite bastante! Estamos por aqui para ajudar.',
+      'Desejamos ótimos resultados! Qualquer coisa, chame.',
+      'Muito obrigado pela compra! Conte com a gente.',
+      'Esperamos que goste! Se precisar, responda aqui.',
+      'Ficamos felizes com sua compra. Qualquer dúvida, é só falar.',
+      'Bons estudos e bom uso! Estamos à disposição.',
+      'Valeu pela confiança! Precisando, é só mandar mensagem.',
+      'Qualquer dificuldade para acessar, responda que a gente resolve.',
+      'Seja muito bem-vindo(a)! Estamos por aqui.',
+    ],
     'ep_fechamentos',
   );
-  const titulo = pick(['Seus acessos:', 'Itens liberados:', 'Produtos disponíveis:'], 'ep_titulos');
+  const optout = pick(
+    ['— Se preferir não receber mensagens sobre esta compra, responda SAIR.', '— Não quer mais receber mensagens sobre este pedido? É só responder SAIR.', '— Para não receber mais avisos sobre esta compra, responda SAIR.', '— Caso não queira mais mensagens por aqui, responda SAIR.', '— Prefere não receber mensagens? Basta que você responda SAIR.'],
+    'ep_optout',
+  );
+  const titulo = pick(['Seus acessos:', 'Itens liberados:', 'Produtos disponíveis:', 'Tudo o que você adquiriu:', 'Seus produtos:', 'Acessos liberados:'], 'ep_titulos');
   const linkOf = (it?: { url: string | null }) => it?.url || p.accessUrl || null;
 
-  let m = `${saudacao}\n\n${rotProd}: *${main?.name ?? ''}*\n${rotVal}: R$ ${brl(p.totalCents)}\n\n`;
+  // corpo com os acessos
+  let acessos = '';
   if (!extras.length) {
     const link = linkOf(main);
-    if (main?.note) m += `${main.note}\n\n`;
-    if (link) m += `${convite}\n${link}\n\n`;
+    if (main?.note) acessos += `${main.note}\n\n`;
+    if (link) acessos += `${convite}\n${link}`;
   } else {
-    m += `${titulo}\n\n`;
+    acessos += `${titulo}\n\n`;
     for (const it of [main, ...extras]) {
       if (!it) continue;
       const link = linkOf(it);
-      m += `• *${it.name}*\n${it.note ? `  ${it.note}\n` : ''}${link ? `  ${link}\n` : ''}\n`;
+      acessos += `• *${it.name}*\n${it.note ? `  ${it.note}\n` : ''}${link ? `  ${link}\n` : ''}\n`;
     }
+    acessos = acessos.trimEnd();
   }
-  m += `${dica}\n${lembrete}\n\n${fechamento}\n\n— Se preferir não receber mensagens sobre esta compra, responda SAIR.`;
-  return m;
+  const resumo = extras.length ? `${rotVal}: ${valor}` : `${rotProd}: *${main?.name ?? ''}*\n${rotVal}: ${valor}`;
+
+  // estrutura também varia (não só as frases)
+  const layout = pick(['a', 'b', 'c', 'd'], 'ep_layout');
+  const partes =
+    layout === 'a'
+      ? [saudacao, resumo, acessos, `${dica}\n${lembrete}`, fechamento]
+      : layout === 'b'
+        ? [saudacao, acessos, resumo, lembrete, `${dica}\n\n${fechamento}`]
+        : layout === 'c'
+          ? [saudacao, `${resumo}\n\n${acessos}`, `${lembrete} ${fechamento}`]
+          : [saudacao, resumo, acessos, dica, `${lembrete}\n${fechamento}`];
+  return `${partes.filter(Boolean).join('\n\n')}\n\n${optout}`;
 }
 
 export function buildRecoveryMessage(p: { phone: string; name: string; link: string; attempt: number; pixCode?: string | null }) {
-  const n = p.name.split(' ')[0] || 'tudo bem';
-  const pick = (pool: string[], key: string) => pickFresh(pool, p.phone, `t${p.attempt >= 2 ? 2 : 1}_${key}`);
+  const n = firstName(p.name, 'tudo bem');
+  const t = p.attempt >= 2 ? 2 : 1;
+  const pick = (pool: string[], key: string) => pickFresh(pool, p.phone, `t${t}_${key}`);
   const blocks =
-    p.attempt <= 1
+    t === 1
       ? {
-          abertura: [`Olá, ${n}! Tudo bem?`, `Oi, ${n}! Tudo certo?`, `Olá, ${n}! 🙂`, `Oi, ${n}!`, `Olá, ${n}! Espero que esteja bem.`, `Oi, ${n}! Como vai?`, `Olá, ${n}! Aqui é da equipe de atendimento.`, `Oi, ${n}! Passando rapidinho por aqui.`, `Olá, ${n}! Tudo tranquilo?`, `Oi, ${n}! Espero não incomodar.`],
-          corpo: [
-            'Seu pedido ficou salvo por aqui e ainda pode ser concluído quando você quiser.',
-            'Vi que você começou um pedido e não chegou a finalizar. Deixei ele guardado para você.',
-            'Notei que seu pedido ficou em aberto. Ele continua disponível, sem pressa.',
-            'Seu pedido continua reservado no sistema, caso queira retomar.',
-            'Percebi que o pagamento não foi concluído. Seu pedido segue salvo.',
-            'Seu carrinho ainda está aqui do jeitinho que você deixou.',
-            'O pedido que você iniciou ficou pendente, mas segue disponível.',
-            'Deixei seu pedido guardado, caso tenha acontecido algum imprevisto na hora de finalizar.',
+          abertura: [
+            `Olá, ${n}! Tudo bem?`, `Oi, ${n}! Tudo certo?`, `Olá, ${n}! 🙂`, `Oi, ${n}!`, `Olá, ${n}! Espero que esteja bem.`, `Oi, ${n}! Como vai?`,
+            `Olá, ${n}! Aqui é da equipe de atendimento.`, `Oi, ${n}! Passando rapidinho por aqui.`, `Olá, ${n}! Tudo tranquilo?`, `Oi, ${n}! Espero não incomodar.`,
+            `${n}, tudo bem por aí?`, `Olá, ${n}! Só um recadinho rápido.`, `Oi, ${n}! Vi seu pedido aqui.`, `Olá, ${n}, como você está?`, `Oi, ${n}! Tudo joia?`,
           ],
-          cta: ['Se quiser finalizar, é só usar o link abaixo:', 'Para concluir quando for melhor pra você:', 'O link para finalizar é este:', 'Caso queira retomar, use este link:', 'Você pode concluir por aqui:', 'Deixo o link à disposição:', 'Se fizer sentido, dá para finalizar por aqui:'],
+          corpo: [
+            'Seu Pix foi gerado, mas o pagamento ainda não caiu. Seu pedido ficou guardado.',
+            'Vi que você gerou o Pix e não chegou a pagar. Deixei tudo guardado para você.',
+            'Notei que seu pedido ficou em aberto. Ele continua disponível, sem pressa.',
+            'Seu pedido continua reservado, caso queira concluir.',
+            'Percebi que o pagamento não foi concluído. Seu pedido segue salvo, com o mesmo valor.',
+            'O Pix do seu pedido ainda está esperando o pagamento.',
+            'Seu pedido ficou pendente, mas segue disponível do jeitinho que você deixou.',
+            'Pode ter acontecido algum imprevisto na hora de pagar, então guardei seu pedido.',
+            'Às vezes o app do banco trava ou a gente se distrai, acontece! Seu pedido continua salvo.',
+            'Seu pedido está separado aqui, só falta o pagamento do Pix.',
+            'Ficou faltando só o Pix para liberar o seu acesso.',
+            'Seu acesso está a um Pix de distância. 😉',
+          ],
+          cta: [
+            'Para pagar, é só abrir o seu Pix:', 'Seu Pix está aqui, pronto para pagar:', 'O link do seu Pix é este:', 'Toque para abrir o seu Pix:',
+            'Você pode pagar por aqui, sem preencher nada de novo:', 'Deixo o seu Pix à disposição:', 'Se fizer sentido, é só pagar por aqui:', 'Seu pedido com o Pix está neste link:',
+            'Abra e pague em poucos segundos:', 'É só tocar e pagar:',
+          ],
           fecho: [
-            'Qualquer dúvida, é só responder esta mensagem.',
-            'Se precisar de ajuda, estou por aqui.',
-            'Qualquer dúvida sobre o produto ou o pagamento, me chame.',
-            'Estou à disposição para o que precisar.',
-            'Se preferir não seguir, tudo bem também — é só me avisar.',
-            'Fico à disposição, sem compromisso.',
-            'Se tiver qualquer pergunta, pode responder por aqui.',
+            'Qualquer dúvida, é só responder esta mensagem.', 'Se precisar de ajuda, estou por aqui.', 'Qualquer dúvida sobre o produto ou o pagamento, me chame.',
+            'Estou à disposição para o que precisar.', 'Se preferir não seguir, tudo bem também, é só me avisar.', 'Fico à disposição, sem compromisso.',
+            'Se tiver qualquer pergunta, pode responder por aqui.', 'Assim que o Pix cair, seu acesso chega na hora.', 'O acesso é liberado automaticamente após o pagamento.',
+            'Teve alguma dificuldade com o Pix? Me conta que eu ajudo.',
           ],
         }
       : {
-          abertura: [`Oi, ${n}! 🙂`, `Olá, ${n}! Tudo bem?`, `Oi, ${n}!`, `Olá, ${n}!`, `Oi, ${n}! Tudo certo por aí?`, `Olá, ${n}! Só passando rapidamente.`, `Oi, ${n}! Espero que esteja tudo bem.`, `Olá, ${n}! Último contato sobre seu pedido.`],
+          abertura: [
+            `Oi, ${n}! 🙂`, `Olá, ${n}! Tudo bem?`, `Oi, ${n}!`, `Olá, ${n}!`, `Oi, ${n}! Tudo certo por aí?`, `Olá, ${n}! Só passando rapidamente.`,
+            `Oi, ${n}! Espero que esteja tudo bem.`, `Olá, ${n}! Último contato sobre seu pedido.`, `${n}, tudo bem?`, `Oi, ${n}, desculpa a insistência!`, `Olá, ${n}! Prometo que é a última mensagem. 😊`,
+          ],
           corpo: [
             'Este é o segundo (e último) lembrete sobre o pedido que ficou em aberto.',
             'Só um segundo lembrete: seu pedido ainda está salvo, caso queira finalizar.',
             'Passando uma última vez para deixar seu pedido à disposição.',
             'Para não deixar em aberto: seu pedido ainda pode ser concluído.',
-            'Este é o último aviso sobre o pedido pendente — depois disso não envio mais.',
+            'Este é o último aviso sobre o pedido pendente, depois disso não envio mais.',
             'Antes de encerrar o assunto, deixo seu pedido disponível mais uma vez.',
             'Seu pedido segue salvo, mas este é o último lembrete que envio.',
             'Só finalizando o assunto: o pedido continua disponível para conclusão.',
+            'Seu pedido ainda está guardado com o mesmo valor. Se o Pix venceu, dá para gerar outro com um toque.',
+            'Não queria que você perdesse: seu pedido continua disponível.',
           ],
-          cta: ['Link para concluir:', 'Se quiser retomar, o link continua ativo:', 'O link para finalizar é este:', 'Caso ainda faça sentido, é por aqui:', 'Deixo o link disponível:', 'Você pode concluir por este link:'],
+          cta: ['Link do seu Pix:', 'Se quiser concluir, o link continua ativo:', 'O link para pagar é este:', 'Caso ainda faça sentido, é por aqui:', 'Deixo o link disponível:', 'Você pode pagar por este link:', 'Seu Pix (ou um novo, se tiver vencido) está aqui:'],
           fecho: [
             'Se preferir não receber mais mensagens sobre esta compra, é só responder SAIR.',
-            'Se não for o momento, sem problema algum — obrigado pela consideração.',
+            'Se não for o momento, sem problema algum. Obrigado pela consideração.',
             'Caso não queira mais receber mensagens sobre isso, responda SAIR que eu paro por aqui.',
-            'Se não tiver mais interesse, tudo certo — obrigado pelo interesse.',
+            'Se não tiver mais interesse, tudo certo. Obrigado pelo interesse.',
             'Não quer mais receber mensagens? Basta responder SAIR.',
             'Sem compromisso: se preferir, responda SAIR e não envio mais nada.',
+            'Qualquer dúvida, é só responder. Se não quiser mais mensagens, responda SAIR.',
           ],
         };
-  let m = `${pick(blocks.abertura, 'abertura')}\n\n${pick(blocks.corpo, 'corpo')}\n\n${pick(blocks.cta, 'cta')}\n${p.link}\n\n${pick(blocks.fecho, 'fecho')}`;
-  if (p.pixCode) {
-    const titulo = pick(
-      [
-        'Pix copia e cola (toque e segure para copiar):',
-        'Se preferir, aqui está o Pix copia e cola:',
-        'Código Pix para pagar direto no app do banco:',
-        'Pix disponível abaixo — é só copiar e colar:',
-        'Se for mais prático, use o Pix copia e cola:',
-        'Deixo também o código Pix, caso prefira:',
-        'Pix copia e cola, se preferir pagar pelo banco:',
-        'Código Pix abaixo, caso seja mais fácil pra você:',
-      ],
-      'pix',
-    );
-    m += `\n\n${titulo}\n\n${p.pixCode}`;
-  }
-  return m;
+  const pixTitulo = pick(
+    [
+      'Pix copia e cola (toque e segure para copiar):', 'Se preferir, aqui está o Pix copia e cola:', 'Código Pix para pagar direto no app do banco:',
+      'Pix disponível abaixo, é só copiar e colar:', 'Se for mais prático, use o Pix copia e cola:', 'Deixo também o código Pix, caso prefira:',
+      'Pix copia e cola, se preferir pagar pelo banco:', 'Código Pix abaixo, caso seja mais fácil pra você:', 'Ou copie o código abaixo e cole no app do banco:', 'Pix copia e cola 👇',
+    ],
+    'pix',
+  );
+  const abertura = pick(blocks.abertura, 'abertura');
+  const corpo = pick(blocks.corpo, 'corpo');
+  const cta = `${pick(blocks.cta, 'cta')}\n${p.link}`;
+  const fecho = pick(blocks.fecho, 'fecho');
+  const pix = p.pixCode ? `${pixTitulo}\n\n${p.pixCode}` : '';
+  const sair = t === 1 ? pick(['— Se não quiser receber mensagens sobre este pedido, responda SAIR.', '— Prefere não receber lembretes? Responda SAIR.', '— Para não receber mais avisos, é só responder SAIR.', '— Não quer mais lembretes deste pedido? Responda SAIR.'], 'sair') : '';
+  const layout = pick(['a', 'b', 'c'], 'layout');
+  const partes =
+    layout === 'a'
+      ? [abertura, corpo, cta, pix, fecho]
+      : layout === 'b'
+        ? [`${abertura} ${corpo}`, cta, fecho, pix]
+        : [abertura, corpo, pix, cta, fecho];
+  return [...partes, sair].filter(Boolean).join('\n\n');
 }
 
 // ------------------------------------------------------------------ disparos
@@ -684,7 +776,8 @@ export async function sendWhatsAppRecoveries(max = 10) {
     if (error) continue;
     const phone = normalizePhoneBR(o.customer.phone);
     const pixValid = cfg.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
-    const link = `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout.slug}&recover=${o.public_token}&utm_source=whatsapp&utm_medium=recovery`;
+    // link direto para o Pix pendente (se vencer, a página gera outro com um toque, sem preencher nada)
+    const link = `${env.PUBLIC_URL}/pedido/${o.public_token}?utm_source=whatsapp&utm_medium=recovery`;
     const r = await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: next, pixCode: pixValid ? o.pix_code : null }), cfg);
     await logWa(o.id, `recovery_${next}`, r);
     sent++;

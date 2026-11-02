@@ -3,7 +3,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { clientIp, HttpError, must, productCode, supabase } from '../lib/core.js';
-import { createOrder, createOrderSchema, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
+import { createOrder, createOrderSchema, renewOrder, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
 
@@ -120,6 +120,14 @@ publicRouter.get('/orders/:token', pollLimiter, async (req, res) => {
 });
 
 /** Botão "Já paguei": força consulta ao gateway. */
+/** Pix vencido: gera um novo Pix para a mesma compra, sem preencher nada. */
+publicRouter.post('/orders/:token/renew', orderLimiter, async (req, res) => {
+  const token = tokenSchema.parse(String(req.params.token));
+  const r = await renewOrder(token);
+  const { _id, ...o } = await publicOrder(r.token);
+  res.json({ token: r.token, renewed: r.renewed, order: o });
+});
+
 publicRouter.post('/orders/:token/refresh', pollLimiter, async (req, res) => {
   const token = tokenSchema.parse(String(req.params.token));
   const { data } = await supabase.from('orders').select('id, status').eq('public_token', token).maybeSingle();

@@ -346,3 +346,82 @@ export async function notifyPixExpired(orderId: string, checkoutId: string | nul
   void dispatchTracking(orderId, 'sale.canceled');
   return true;
 }
+
+/**
+ * Pix vencido → novo Pix com UM toque, sem preencher nada de novo.
+ * Gera uma nova cobrança para a mesma compra (mesmos itens, preço e cupom já aplicados);
+ * o pedido antigo é encerrado como "cancelado" (substituído) para não duplicar vendas pendentes.
+ * Se o Pix atual ainda estiver válido, devolve o mesmo pedido.
+ */
+export async function renewOrder(token: string): Promise<{ token: string; renewed: boolean }> {
+  const { data } = await supabase
+    .from('orders')
+    .select('id, status, expires_at, public_token, checkout_id, customer_id, subtotal_cents, discount_cents, total_cents, coupon_id, tracking, ip, user_agent, customer:customers(name, email, phone, document), items:order_items(kind, name, price_cents, product_id, bump_id)')
+    .eq('public_token', token)
+    .maybeSingle();
+  const old: any = data;
+  if (!old) throw new HttpError(404, 'Pedido não encontrado');
+  if (old.status === 'paid') return { token: old.public_token, renewed: false };
+  if (old.status === 'canceled') {
+    // link antigo de um Pix já renovado: segue para o pedido mais novo dessa compra
+    const { data: next } = await supabase.from('orders').select('public_token').eq('tracking->>renewed_from', old.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (next) return renewOrder((next as any).public_token);
+  }
+  if (old.status !== 'pending') throw new HttpError(400, 'Este pedido não pode mais ser pago. Faça um novo pedido pelo checkout.');
+  if (old.expires_at && new Date(old.expires_at).getTime() > Date.now() + 30_000) return { token: old.public_token, renewed: false };
+
+  const { data: ck } = await supabase.from('checkouts').select('id, slug, name, provider, pix_expires_minutes, theme, tracking, product:products(name, number)').eq('id', old.checkout_id).maybeSingle();
+  const checkout: any = ck;
+  if (!checkout) throw new HttpError(404, 'Checkout não encontrado');
+  const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
+
+  const tracking = { ...(old.tracking ?? {}), renewed_from: old.id };
+  const order = must(
+    await supabase
+      .from('orders')
+      .insert({
+        checkout_id: old.checkout_id,
+        customer_id: old.customer_id,
+        provider: provider.name,
+        subtotal_cents: old.subtotal_cents,
+        discount_cents: old.discount_cents,
+        total_cents: old.total_cents,
+        coupon_id: old.coupon_id,
+        tracking,
+        ip: old.ip,
+        user_agent: old.user_agent,
+        recovery_sent_at: new Date().toISOString(), // a pessoa já voltou: sem novo e-mail de recuperação
+      })
+      .select('id, number, public_token')
+      .single(),
+  ) as { id: string; number: number; public_token: string };
+  const itemsSaved = supabase.from('order_items').insert(old.items.map((i: any) => ({ kind: i.kind, name: i.name, price_cents: i.price_cents, product_id: i.product_id, bump_id: i.bump_id, order_id: order.id })));
+
+  try {
+    const charge = await provider.createCharge({
+      orderId: order.id,
+      amountCents: old.total_cents,
+      description: `Pedido #${order.number} - ${checkout.product?.name ?? checkout.name}`,
+      expiresInSeconds: checkout.pix_expires_minutes * 60,
+      customer: { name: old.customer?.name ?? '', email: old.customer?.email ?? '', phone: old.customer?.phone ?? null, document: old.customer?.document ?? null },
+    });
+    const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
+    const expiresAt = charge.expiresAt.toISOString();
+    await Promise.all([
+      itemsSaved,
+      supabase.from('orders').update({ provider_charge_id: charge.chargeId, pix_code: charge.pixCode, pix_qr_image: qrImage, expires_at: expiresAt }).eq('id', order.id),
+      supabase.from('orders').update({ status: 'canceled', error: `Pix renovado no pedido ${productCode(order.number)}` }).eq('id', old.id).eq('status', 'pending'),
+      // a tentativa de recuperação já feita conta para o novo pedido (não reinicia os lembretes)
+      supabase.from('events').insert([
+        { checkout_id: old.checkout_id, order_id: order.id, type: 'pix_generated', data: { total_cents: old.total_cents, renewed_from: old.id } },
+        { checkout_id: old.checkout_id, order_id: order.id, type: 'wa_recovery', data: { attempt: 'renewed' } },
+        { checkout_id: old.checkout_id, order_id: order.id, type: 'wa_recovery', data: { attempt: 'renewed' } },
+      ]),
+    ]);
+    return { token: order.public_token, renewed: true };
+  } catch (e: any) {
+    await supabase.from('orders').update({ status: 'failed', error: String(e?.message ?? e).slice(0, 500) }).eq('id', order.id);
+    logger.error({ orderId: order.id, err: e?.message }, 'Falha ao renovar PIX');
+    throw e instanceof HttpError ? e : new HttpError(502, 'Não foi possível gerar o novo Pix. Tente novamente.');
+  }
+}

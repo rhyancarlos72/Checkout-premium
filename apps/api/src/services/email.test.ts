@@ -24,7 +24,7 @@ describe('e-mail de recuperação', () => {
     expect(m.subject).toBe('Maria, seu pedido de Pack Etiquetas ficou pendente');
     expect(m.from.name).toBe('Loja Teste');
     expect(m.replyTo).toBe('suporte@loja.com');
-    expect(m.text).toContain('Concluir meu pedido: https://checkout.loja.com/checkout');
+    expect(m.text).toContain('Pagar meu Pix: https://checkout.loja.com/checkout');
     expect(m.headers['List-Unsubscribe-Post']).toBe('List-Unsubscribe=One-Click');
     expect(m.headers['List-Unsubscribe']).toContain(unsubscribeSig('maria@x.com'));
     expect(m.html).not.toMatch(/URGENTE|GRÁTIS|!!!/);
