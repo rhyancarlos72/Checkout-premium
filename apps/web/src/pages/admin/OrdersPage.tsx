@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Download, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, MailCheck, MailPlus, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Badge, Button, Card, cn, EmptyState, Input, Modal, PageLoader, Select, StatusBadge, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { brl, dateTime, productCode } from '@/lib/format';
@@ -14,6 +15,7 @@ interface OrderRow {
   total_cents: number;
   created_at: string;
   paid_at: string | null;
+  recovery_sent_at?: string | null;
   tracking: Record<string, string>;
   customer: { name: string; email: string; phone: string | null } | null;
   checkout: { name: string; slug: string } | null;
@@ -75,7 +77,7 @@ export default function OrdersPage() {
                     <td className="px-5 py-3 text-gray-600">{(() => { const m = o.items.find((i) => i.kind === 'main'); return m ? <>{m.product?.number && <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID: {productCode(m.product.number)}</span>}{m.name}</> : null; })()}{o.items.some((i) => i.kind === 'bump') && <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-teal-700"><Zap className="h-3 w-3" />+{o.items.filter((i) => i.kind === 'bump').length}</span>}</td>
                     <td className="px-5 py-3 text-xs text-gray-500">{o.tracking?.utm_source ?? 'direto'}{o.tracking?.utm_campaign ? ` / ${o.tracking.utm_campaign}` : ''}</td>
                     <td className="px-5 py-3 text-right font-semibold tabular-nums">{brl(o.total_cents)}</td>
-                    <td className="px-5 py-3"><StatusBadge status={o.status} /></td>
+                    <td className="px-5 py-3"><div className="flex items-center gap-2"><StatusBadge status={o.status} />{o.status === 'pending' && <RecoveryEmailButton order={o} />}</div></td>
                   </tr>
                 ))}
               </tbody>
@@ -91,6 +93,44 @@ export default function OrdersPage() {
         </div>
       )}
       {open && <OrderDetail id={open} onClose={() => setOpen(null)} />}
+    </>
+  );
+}
+
+/** Ícone ao lado do status: envia na hora o e-mail de recuperação para o cliente do pedido pendente. */
+function RecoveryEmailButton({ order }: { order: OrderRow }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const send = useMutation({
+    mutationFn: () => adminApi.post<{ ok: boolean; message: string }>(`/orders/${order.id}/recovery-email`),
+    onSuccess: (r) => {
+      (r.ok ? toast.ok : toast.err)(r.message);
+      if (r.ok) qc.invalidateQueries({ queryKey: ['orders'] });
+    },
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao enviar'),
+  });
+  const sent = Boolean(order.recovery_sent_at);
+  const title = sent ? `Recuperação enviada em ${dateTime(order.recovery_sent_at!)}. Clique para enviar de novo` : `Enviar e-mail de recuperação para ${order.customer?.email ?? 'o cliente'}`;
+  return (
+    <>
+      <button
+        type="button"
+        title={title}
+        aria-label={title}
+        disabled={send.isPending}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (sent && !confirm(`Este cliente já recebeu a recuperação em ${dateTime(order.recovery_sent_at!)}. Enviar de novo?`)) return;
+          send.mutate();
+        }}
+        className={cn(
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition disabled:opacity-60',
+          sent ? 'border-emerald-500/30 bg-emerald-50 text-emerald-700 hover:bg-emerald-100' : 'border-blue-500/30 bg-blue-50 text-blue-600 hover:bg-blue-500/20',
+        )}
+      >
+        {send.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : sent ? <MailCheck className="h-4 w-4" /> : <MailPlus className="h-4 w-4" />}
+      </button>
+      {toast.node && createPortal(toast.node, document.body)}
     </>
   );
 }

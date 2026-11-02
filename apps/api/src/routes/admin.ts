@@ -6,7 +6,7 @@ import { HttpError, must, productCode, supabase } from '../lib/core.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
 import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
-import { testEmail } from '../services/email.js';
+import { sendRecoveryEmail, testEmail } from '../services/email.js';
 import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
@@ -334,7 +334,7 @@ function ordersQuery(f: z.infer<typeof orderListQuery>, select: string, count = 
   return q;
 }
 
-const orderListSelect = 'id, number, status, provider, total_cents, discount_cents, created_at, paid_at, tracking, customer:customers!inner(name, email, phone), checkout:checkouts(name, slug), items:order_items(kind, name, price_cents, product:products(number))';
+const orderListSelect = 'id, number, status, provider, total_cents, discount_cents, created_at, paid_at, recovery_sent_at, tracking, customer:customers!inner(name, email, phone), checkout:checkouts(name, slug), items:order_items(kind, name, price_cents, product:products(number))';
 
 adminRouter.get('/orders', async (req, res) => {
   const f = orderListQuery.parse(req.query);
@@ -383,6 +383,34 @@ adminRouter.post('/orders/:id/resend-delivery', async (req, res) => {
   await resendDelivery(uuid.parse(req.params.id));
   res.json({ ok: true });
 });
+/** Recuperação manual por e-mail (ícone ao lado do status, só pedidos pendentes). */
+adminRouter.post('/orders/:id/recovery-email', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  if (!features.email) return res.json({ ok: false, message: 'Configure o SMTP (variáveis SMTP_*) para enviar e-mails de recuperação' });
+  const { data: o }: any = await supabase
+    .from('orders')
+    .select('id, status, public_token, total_cents, customer:customers(name, email), checkout:checkouts(slug, theme), items:order_items(kind, name)')
+    .eq('id', id)
+    .maybeSingle();
+  if (!o) throw new HttpError(404, 'Pedido não encontrado');
+  if (o.status !== 'pending') throw new HttpError(400, 'Só pedidos pendentes recebem recuperação');
+  if (!o.customer?.email || !o.checkout) throw new HttpError(400, 'Pedido sem e-mail do cliente');
+  const main = o.items.find((i: any) => i.kind === 'main');
+  const ok = await sendRecoveryEmail({
+    orderId: o.id,
+    to: o.customer.email,
+    name: o.customer.name ?? '',
+    productName: main?.name ?? 'seu produto',
+    totalCents: o.total_cents,
+    url: `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout.slug}&recover=${o.public_token}&utm_source=recovery&utm_medium=email`,
+    accent: o.checkout.theme?.primaryColor,
+  });
+  if (!ok) return res.json({ ok: false, message: 'Falha ao enviar o e-mail. Veja o motivo em Integrações → Últimos envios' });
+  const sentAt = new Date().toISOString();
+  await supabase.from('orders').update({ recovery_sent_at: sentAt }).eq('id', id);
+  res.json({ ok: true, message: `E-mail de recuperação enviado para ${o.customer.email}`, sent_at: sentAt });
+});
+
 adminRouter.post('/orders/:id/refund', async (req, res) => {
   // Marca como reembolsado no sistema (o estorno do PIX é feito no painel do gateway)
   const id = uuid.parse(req.params.id);
