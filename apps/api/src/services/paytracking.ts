@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../config/env.js';
-import { fetchWithTimeout, logger, productCode, sleep, supabase } from '../lib/core.js';
+import { fetchWithTimeout, logger, phoneE164BR, productCode, sleep, supabase } from '../lib/core.js';
 import { allWebhooks, targetsFor } from './webhooks.js';
 
 /**
@@ -30,6 +30,7 @@ export interface OrderForTracking {
   user_agent: string | null;
   tracking: Record<string, any>;
   checkout_slug: string | null;
+  customer_id?: string | null;
   customer: { name: string; email: string; phone: string | null; document: string | null } | null;
   items: { kind: string; name: string; price_cents: number; product_id: string | null; bump_id: string | null; product?: { number: number | null } | null }[];
 }
@@ -47,7 +48,12 @@ export function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
         : null;
 
   let fbc = t.fbc ?? null;
-  if (!fbc && t.fbclid) fbc = `fb.1.${new Date(o.created_at).getTime()}.${t.fbclid}`;
+  // sem cookie _fbc: monta pelo fbclid com o horário do clique (ou do pedido, se não houver)
+  if (!fbc && t.fbclid) fbc = `fb.1.${Number(t.fbclid_at) || new Date(o.created_at).getTime()}.${t.fbclid}`;
+  // external_id estável: o da URL (PayTracking/anúncio) ou o ID do cliente no checkout
+  const externalId = t.external_id || t.pt_xid || o.customer_id || null;
+  const phone = phoneE164BR(o.customer?.phone);
+  const codes = o.items.map(code).filter(Boolean);
 
   const [first, ...rest] = (o.customer?.name ?? '').trim().split(/\s+/);
   const main = o.items.find((i) => i.kind === 'main');
@@ -82,21 +88,30 @@ export function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
       quantity: 1,
       price: Number((i.price_cents / 100).toFixed(2)),
     })),
+    // padrão de e-commerce da Meta (Purchase/InitiateCheckout)
+    content_ids: codes,
+    content_type: 'product',
+    num_items: o.items.length,
+    contents: o.items.map((i) => ({ id: code(i) || i.product_id || i.bump_id || '', quantity: 1, item_price: Number((i.price_cents / 100).toFixed(2)) })),
+    event_time: Math.floor(Date.now() / 1000),
+    created_at: o.created_at,
     customer: {
       first_name: first || null,
       last_name: rest.join(' ') || null,
       name: o.customer?.name ?? null,
-      email: o.customer?.email ?? null,
-      phone: o.customer?.phone ?? null,
+      email: o.customer?.email?.trim().toLowerCase() ?? null,
+      phone, // com 55 (a Meta exige o código do país)
+      phone_raw: o.customer?.phone ?? null,
       document: o.customer?.document ?? null,
       country: 'BR',
-      external_id: t.external_id ?? null,
+      external_id: externalId,
     },
     tracking: {
       event_id: eventId,
       purchase_event_id: status === 'paid' ? eventId : null,
-      external_id: t.external_id ?? null,
-      pt_xid: t.external_id ?? null,
+      external_id: externalId,
+      pt_xid: t.pt_xid || t.external_id || null,
+      visitor_id: t.visitor_id || t.session_id || null,
       fbp: t.fbp ?? null,
       fbc,
       fbclid: t.fbclid ?? null,
@@ -106,6 +121,13 @@ export function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
       utm_content: t.utm_content ?? null,
       utm_term: t.utm_term ?? null,
       utm_id: t.utm_id ?? null,
+      src: t.src ?? null,
+      sck: t.sck ?? null,
+      xcod: t.xcod ?? null,
+      gclid: t.gclid ?? null,
+      ttclid: t.ttclid ?? null,
+      page_url: t.page_url ?? null,
+      referrer: t.referrer ?? null,
       client_ip_address: o.ip,
       client_user_agent: o.user_agent,
     },

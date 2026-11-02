@@ -6,6 +6,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-key-test-key-test-key';
 process.env.NODE_ENV = 'test';
 const { productCode } = await import('../lib/core.js');
 const { buildPayload } = await import('./paytracking.js');
+const { clientIp, phoneE164BR } = await import('../lib/core.js');
 
 const order = {
   id: 'o1',
@@ -15,9 +16,10 @@ const order = {
   created_at: new Date().toISOString(),
   ip: null,
   user_agent: null,
-  tracking: {},
+  tracking: { fbclid: 'AbC123', fbclid_at: '1700000000000', fbp: 'fb.1.1700000000000.123456789', utm_source: 'FB', src: 'x' } as Record<string, any>,
   checkout_slug: '8939361',
-  customer: { name: 'Maria Souza', email: 'm@x.com', phone: null, document: null },
+  customer_id: 'cust-1',
+  customer: { name: 'Maria Souza', email: ' M@X.com ', phone: '(11) 98888-7777', document: null },
   items: [
     { kind: 'main', name: 'Pack', price_cents: 1999, product_id: 'uuid-main', bump_id: null, product: { number: 1002 } },
     { kind: 'bump', name: 'Extra', price_cents: 991, product_id: 'uuid-bump', bump_id: 'b1', product: { number: 1003 } },
@@ -32,5 +34,27 @@ describe('PayTracking: ID do produto casa com o pixel', () => {
     expect(p.product_uuid).toBe('uuid-main');
     expect(p.product_ids).toEqual([productCode(1002), productCode(1003)]);
     expect(p.products[1].id).toBe(productCode(1003));
+  });
+});
+
+describe('taxa de correspondência (dados enviados)', () => {
+  it('telefone com 55, e-mail normalizado, external_id estável, fbc pelo horário do clique', () => {
+    const p = buildPayload(order, 'sale.approved');
+    expect(p.customer.phone).toBe('5511988887777');
+    expect(p.customer.email).toBe('m@x.com');
+    expect(p.customer.external_id).toBe('cust-1');
+    expect(p.tracking.fbc).toBe('fb.1.1700000000000.AbC123');
+    expect(p.tracking.fbp).toBe('fb.1.1700000000000.123456789');
+    expect(p.content_ids).toHaveLength(2);
+    expect(p.num_items).toBe(2);
+    expect(p.tracking.src).toBe('x');
+  });
+  it('phoneE164BR e IP real atrás de proxy', () => {
+    expect(phoneE164BR('11 98888-7777')).toBe('5511988887777');
+    expect(phoneE164BR('5511988887777')).toBe('5511988887777');
+    expect(phoneE164BR('123')).toBeNull();
+    expect(clientIp({ ip: '10.0.0.5', headers: { 'x-forwarded-for': '10.0.0.2, 187.10.20.30, 172.16.0.1' } })).toBe('187.10.20.30');
+    expect(clientIp({ ip: '10.0.0.5', headers: { 'cf-connecting-ip': '2804:14c::1' } })).toBe('2804:14c::1');
+    expect(clientIp({ ip: '::ffff:189.1.2.3', headers: {} })).toBe('189.1.2.3');
   });
 });

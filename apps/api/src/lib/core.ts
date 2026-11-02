@@ -104,3 +104,30 @@ export function escapeHtml(s: string): string {
  * então dois produtos nunca têm o mesmo ID, e o ID nunca muda.
  */
 export const productCode = (n?: number | null) => (n ? String(((n * 7919 + 4523) % 9_000_000) + 1_000_000) : '');
+
+/** Telefone BR no formato da Meta/PayTracking: só dígitos, com 55 (ex.: 5511999998888). */
+export function phoneE164BR(raw: string | null | undefined) {
+  let d = onlyDigits(raw);
+  if (!d) return null;
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.length === 10 || d.length === 11) d = `55${d}`;
+  return d.length >= 12 && d.length <= 13 ? d : null;
+}
+
+const isPrivateIp = (ip: string) => /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|169\.254\.|::1$|fc|fd|fe80:)/i.test(ip);
+/**
+ * IP real do comprador (fator de correspondência da Meta). Atrás de CDN/proxy (Hostinger,
+ * Cloudflare, LiteSpeed) o req.ip pode ser o do proxy: usa os cabeçalhos próprios e o
+ * primeiro IP público do X-Forwarded-For.
+ */
+export function clientIp(req: { ip?: string; headers: Record<string, string | string[] | undefined> }) {
+  const h = (k: string) => {
+    const v = req.headers[k];
+    return (Array.isArray(v) ? v[0] : v)?.trim() || '';
+  };
+  const clean = (ip: string) => ip.replace(/^::ffff:/, '').replace(/^\[|\](:\d+)?$/g, '').replace(/^(\d+\.\d+\.\d+\.\d+):\d+$/, '$1');
+  for (const k of ['cf-connecting-ip', 'true-client-ip', 'x-real-ip']) if (h(k) && !isPrivateIp(clean(h(k)))) return clean(h(k));
+  const fwd = h('x-forwarded-for').split(',').map((x) => clean(x.trim())).filter(Boolean);
+  const pub = fwd.find((ip) => !isPrivateIp(ip));
+  return pub ?? (req.ip ? clean(req.ip) : null);
+}

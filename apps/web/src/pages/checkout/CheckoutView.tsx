@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
 import { brl, digits, maskPhone, productCode } from '@/lib/format';
-import { collectTracking, initMetaPixel, pixel, track } from '@/lib/tracking';
+import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
 
 function makeSchema(fields: PublicCheckout['fields']) {
@@ -166,6 +166,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   useEffect(() => {
     if (preview) return;
     document.title = `${checkout.product.name} · Pagamento seguro`;
+    ensureMetaCookies(); // registra fbclid/fbp já na chegada (horário do clique)
     initMetaPixel(checkout.tracking.metaPixelId);
     track(checkout.slug, 'page_view');
     const recover = params.get('recover');
@@ -193,7 +194,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     if (preview || startedRef.current || !(values.email || values.name)) return;
     startedRef.current = true;
     track(checkout.slug, 'initiate_checkout');
-    pixel('InitiateCheckout', { value: checkout.price_cents / 100, currency: 'BRL', content_name: checkout.product.name }, eventIds.ic);
+    pixel('InitiateCheckout', { value: checkout.price_cents / 100, currency: 'BRL', content_name: checkout.product.name, content_type: 'product', content_ids: checkout.product.number ? [productCode(checkout.product.number)] : [], num_items: 1 }, eventIds.ic);
   }, [values.email, values.name]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedBumps = checkout.bumps.filter((b) => bumps.includes(b.id));
@@ -244,7 +245,11 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
       }),
     onSuccess: (r) => {
       // a resposta já traz o Pix (QR + copia e cola): a próxima tela abre sem nova consulta
-      if (r.order) qc.setQueryData(['order', r.token], r.order);
+      if (r.order) {
+        qc.setQueryData(['order', r.token], r.order);
+        const o = r.order as { customer?: { name: string; email: string; phone: string | null }; external_id?: string | null };
+        setPixelUser(checkout.tracking.metaPixelId, { email: o.customer?.email, phone: o.customer?.phone, name: o.customer?.name, externalId: o.external_id });
+      }
       navigate(`/pedido/${r.token}`);
     },
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Não foi possível gerar o Pix. Tente novamente.'),

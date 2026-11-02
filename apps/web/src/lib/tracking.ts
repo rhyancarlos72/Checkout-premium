@@ -1,6 +1,6 @@
 import { publicApi } from './api';
 
-const KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck', 'fbclid', 'gclid', 'ttclid', 'external_id'];
+const KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck', 'xcod', 'fbclid', 'gclid', 'ttclid', 'external_id', 'pt_xid'];
 
 function safeStorage() {
   try {
@@ -12,6 +12,36 @@ function safeStorage() {
 
 function cookie(name: string) {
   return document.cookie.split('; ').find((c) => c.startsWith(`${name}=`))?.split('=')[1];
+}
+function setCookie(name: string, value: string, days = 90) {
+  try {
+    document.cookie = `${name}=${value}; path=/; max-age=${days * 86400}; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
+  } catch {
+    /* cookies bloqueados */
+  }
+}
+
+/**
+ * Garante os cookies da Meta mesmo sem o Pixel carregar (bloqueador, Pixel só na página de vendas etc.):
+ *  - _fbp: identificador do navegador (formato oficial fb.1.<ms>.<aleatório>)
+ *  - _fbc: criado a partir do fbclid do anúncio com o horário do clique
+ * São os mesmos valores que o Pixel geraria, e aumentam a taxa de correspondência dos eventos.
+ */
+export function ensureMetaCookies() {
+  const now = Date.now();
+  if (!cookie('_fbp')) setCookie('_fbp', `fb.1.${now}.${Math.floor(1e9 + Math.random() * 9e9)}`);
+  const fbclid = new URLSearchParams(location.search).get('fbclid');
+  if (fbclid) {
+    const cur = cookie('_fbc');
+    if (!cur || !cur.endsWith(`.${fbclid}`)) {
+      setCookie('_fbc', `fb.1.${now}.${fbclid}`);
+      try {
+        safeStorage()?.setItem('ck_fbclid_at', String(now));
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 export function sessionId() {
@@ -42,12 +72,16 @@ export function collectTracking(): Record<string, string> {
   }
   const data = Object.keys(fresh).length ? { ...stored, ...fresh } : stored;
   s?.setItem('ck_utm', JSON.stringify({ data, exp: Date.now() + 30 * 86400000 }));
+  ensureMetaCookies();
   const fbp = cookie('_fbp');
   const fbc = cookie('_fbc');
+  const fbclidAt = s?.getItem('ck_fbclid_at');
   return {
     ...data,
     ...(fbp ? { fbp } : {}),
     ...(fbc ? { fbc } : {}),
+    ...(fbclidAt ? { fbclid_at: fbclidAt } : {}),
+    visitor_id: sessionId(),
     page_url: window.location.href.slice(0, 500),
     referrer: document.referrer.slice(0, 300),
     session_id: sessionId(),
@@ -65,8 +99,34 @@ declare global {
     _fbq?: any;
   }
 }
-export function initMetaPixel(pixelId: string | null | undefined) {
-  if (!pixelId || window.fbq) return;
+export interface PixelUser {
+  email?: string | null;
+  phone?: string | null;
+  name?: string | null;
+  externalId?: string | null;
+}
+/** Correspondência avançada do Pixel: o próprio Pixel normaliza e criptografa (SHA-256) antes de enviar. */
+function pixelUserData(u?: PixelUser) {
+  if (!u) return undefined;
+  const [fn, ...ln] = (u.name ?? '').trim().toLowerCase().split(/\s+/);
+  let ph = (u.phone ?? '').replace(/\D/g, '');
+  if (ph.length === 10 || ph.length === 11) ph = `55${ph}`;
+  const d: Record<string, string> = { country: 'br' };
+  if (u.email) d.em = u.email.trim().toLowerCase();
+  if (ph) d.ph = ph;
+  if (fn) d.fn = fn;
+  if (ln.length) d.ln = ln.join(' ');
+  if (u.externalId) d.external_id = u.externalId;
+  return d;
+}
+/** Atualiza os dados do comprador no Pixel já carregado (antes do Purchase). */
+export function setPixelUser(pixelId: string | null | undefined, u: PixelUser) {
+  if (pixelId && window.fbq) window.fbq('init', pixelId, pixelUserData(u));
+}
+export function initMetaPixel(pixelId: string | null | undefined, user?: PixelUser) {
+  if (!pixelId) return;
+  ensureMetaCookies();
+  if (window.fbq) return setPixelUser(pixelId, user ?? {});
   const f: any = function (...args: unknown[]) {
     f.callMethod ? f.callMethod(...args) : f.queue.push(args);
   };
@@ -79,7 +139,7 @@ export function initMetaPixel(pixelId: string | null | undefined) {
   s.async = true;
   s.src = 'https://connect.facebook.net/en_US/fbevents.js';
   document.head.appendChild(s);
-  window.fbq('init', pixelId);
+  window.fbq('init', pixelId, pixelUserData(user));
   window.fbq('track', 'PageView');
 }
 export function pixel(event: string, data: Record<string, unknown> = {}, eventId?: string) {

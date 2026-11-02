@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { HttpError, must, supabase } from '../lib/core.js';
+import { clientIp, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { createOrder, createOrderSchema, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
@@ -76,7 +76,7 @@ publicRouter.post('/checkouts/:slug/quote', quoteLimiter, async (req, res) => {
 
 publicRouter.post('/orders', orderLimiter, async (req, res) => {
   const input = createOrderSchema.parse(req.body);
-  const result = await createOrder(input, { ip: req.ip ?? null, userAgent: req.get('user-agent') ?? null });
+  const result = await createOrder(input, { ip: clientIp(req as any), userAgent: req.get('user-agent') ?? null });
   res.status(201).json(result);
 });
 
@@ -86,7 +86,7 @@ async function publicOrder(token: string) {
   const o: any = must(
     await supabase
       .from('orders')
-      .select('id, number, status, total_cents, subtotal_cents, discount_cents, pix_code, pix_qr_image, expires_at, paid_at, provider, created_at, customer:customers(name, email, phone), checkout:checkouts(slug, name, theme, tracking), items:order_items(kind, name, price_cents), tracking')
+      .select('id, number, status, customer_id, total_cents, subtotal_cents, discount_cents, pix_code, pix_qr_image, expires_at, paid_at, provider, created_at, customer:customers(name, email, phone), checkout:checkouts(slug, name, theme, tracking), items:order_items(kind, name, price_cents, product:products(number)), tracking')
       .eq('public_token', token)
       .maybeSingle(),
     'Pedido não encontrado',
@@ -102,7 +102,9 @@ async function publicOrder(token: string) {
     expires_at: o.expires_at,
     paid_at: o.paid_at,
     created_at: o.created_at,
-    items: o.items,
+    items: o.items.map((i: any) => ({ kind: i.kind, name: i.name, price_cents: i.price_cents })),
+    external_id: o.tracking?.external_id || o.tracking?.pt_xid || o.customer_id || null,
+    content_ids: o.items.map((i: any) => productCode(i.product?.number)).filter(Boolean),
     customer: o.customer,
     checkout: o.checkout ? { slug: o.checkout.slug, name: o.checkout.name, theme: o.checkout.theme, metaPixelId: o.checkout.tracking?.metaPixelId ?? null } : null,
     purchase_event_id: o.tracking?.purchase_event_id ?? null,

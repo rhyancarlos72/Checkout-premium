@@ -21,7 +21,9 @@ interface PublicOrder {
   expires_at: string | null;
   created_at: string;
   items: { kind: string; name: string; price_cents: number }[];
-  customer: { name: string; email: string } | null;
+  customer: { name: string; email: string; phone?: string | null } | null;
+  content_ids?: string[];
+  external_id?: string | null;
   checkout: { slug: string; name: string; theme: Theme; metaPixelId: string | null } | null;
   purchase_event_id: string | null;
   delivery: { name: string; url: string | null; note: string | null }[];
@@ -116,7 +118,7 @@ export default function PaymentPage() {
 
   useEffect(() => {
     if (!order?.checkout) return;
-    initMetaPixel(order.checkout.metaPixelId);
+    initMetaPixel(order.checkout.metaPixelId, { email: order.customer?.email, phone: order.customer?.phone, name: order.customer?.name, externalId: order.external_id });
     if (order.status === 'pending') track(order.checkout.slug, 'payment_page_view');
   }, [order?.checkout?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -131,7 +133,7 @@ export default function PaymentPage() {
     } catch {
       /* ignore */
     }
-    pixel('Purchase', { value: order.total_cents / 100, currency: 'BRL' }, order.purchase_event_id ?? undefined);
+    pixel('Purchase', { value: order.total_cents / 100, currency: 'BRL', content_type: 'product', content_ids: order.content_ids ?? [], num_items: order.items.length, contents: order.items.map((i, idx) => ({ id: order.content_ids?.[idx] ?? i.name, quantity: 1, item_price: i.price_cents / 100 })) }, order.purchase_event_id ?? undefined);
   }, [order?.status, order?.total_cents, order?.purchase_event_id, token]);
 
   async function copy() {

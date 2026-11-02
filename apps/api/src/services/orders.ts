@@ -14,6 +14,7 @@ const trackingKeys = [
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck',
   'fbclid', 'fbp', 'fbc', 'gclid', 'ttclid', 'external_id', 'page_url', 'referrer',
   'event_id', 'initiate_checkout_event_id', 'purchase_event_id', 'session_id',
+  'pt_xid', 'xcod', 'visitor_id', 'fbclid_at',
 ] as const;
 
 export const createOrderSchema = z.object({
@@ -203,6 +204,8 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
         paid_at: null,
         created_at: new Date().toISOString(),
         items: q.lines.map((l) => ({ kind: l.kind, name: l.name, price_cents: l.price_cents })),
+        content_ids: [productCode(checkout.product.number)].filter(Boolean),
+        external_id: tracking.external_id || tracking.pt_xid || customer.id,
         customer: { name: input.customer.name, email: input.customer.email, phone: onlyDigits(input.customer.phone) || null },
         checkout: { slug: checkout.slug, name: checkout.name, theme: checkout.theme, metaPixelId: checkout.tracking?.metaPixelId ?? null },
         purchase_event_id: (tracking as any).purchase_event_id ?? null,
@@ -219,7 +222,7 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
 export async function loadOrderForTracking(orderId: string): Promise<OrderForTracking | null> {
   const { data } = await supabase
     .from('orders')
-    .select('id, number, provider, total_cents, created_at, ip, user_agent, tracking, checkout:checkouts(slug), customer:customers(name, email, phone, document), items:order_items(kind, name, price_cents, product_id, bump_id, product:products(number))')
+    .select('id, number, provider, total_cents, created_at, ip, user_agent, tracking, customer_id, checkout:checkouts(slug), customer:customers(name, email, phone, document), items:order_items(kind, name, price_cents, product_id, bump_id, product:products(number))')
     .eq('id', orderId)
     .maybeSingle();
   if (!data) return null;
