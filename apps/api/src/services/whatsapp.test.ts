@@ -76,6 +76,16 @@ describe('mensagens (porta do checkout antigo)', () => {
     expect(m).toContain('https://b');
     expect(m).toContain('responda SAIR');
   });
+  it('aprovado: link do Drive do produto e nome do cliente com inicial maiúscula', () => {
+    const m = wa.buildApprovedMessage({ phone: '5511900000009', name: 'rhyan carlos', totalCents: 1999, items: [{ name: 'Pack Etiquetas', url: 'https://drive.google.com/drive/folders/abc', note: 'Baixe a pasta inteira.', kind: 'main' }], accessUrl: 'https://loja.com/pedido/t' });
+    expect(m).toContain('Rhyan');
+    expect(m).toContain('*Pack Etiquetas*');
+    expect(m).toContain('https://drive.google.com/drive/folders/abc');
+    expect(m).toContain('Baixe a pasta inteira.');
+    // sem link cadastrado, manda a página de acessos do pedido
+    const sem = wa.buildApprovedMessage({ phone: '5511900000010', name: 'Ana', totalCents: 100, items: [{ name: 'P', url: null, kind: 'main' }], accessUrl: 'https://loja.com/pedido/t' });
+    expect(sem).toContain('https://loja.com/pedido/t');
+  });
   it('recuperação: link e Pix copia e cola na mesma mensagem', () => {
     const m = wa.buildRecoveryMessage({ phone: '5511900000002', name: 'João', link: 'https://link', attempt: 1, pixCode: '000201PIX' });
     expect(m).toContain('João');
@@ -106,6 +116,13 @@ describe('envio pela Evolution API', () => {
     const r2 = await wa.sendWhatsAppText('11988887777', 'Texto B', c);
     expect(r1.ok && r2.ok).toBe(true);
     expect(r1.instance).not.toBe(r2.instance);
+  });
+  it('rodízio justo com 3 instâncias: usa sempre a que está há mais tempo sem enviar', async () => {
+    const c = cfg([{ name: 'r1', token: 'x' }, { name: 'r2', token: 'y' }, { name: 'r3', token: 'z' }]);
+    const used: string[] = [];
+    for (let i = 0; i < 6; i++) used.push((await wa.sendWhatsAppText('11988887777', `Mensagem ${i}`, c)).instance!);
+    expect(used.slice(0, 3).sort()).toEqual(['r1', 'r2', 'r3']);
+    expect(used.slice(3)).toEqual(used.slice(0, 3)); // mesma ordem na segunda volta: nenhuma repete antes das outras
   });
   it('explica quando não há instância configurada', async () => {
     expect((await wa.sendWhatsAppText('11988887777', 'x', cfg([]))).ok).toBe(false);

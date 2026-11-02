@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { HttpError, logger, must, onlyDigits, supabase } from '../lib/core.js';
+import { HttpError, logger, must, onlyDigits, productCode, supabase } from '../lib/core.js';
 import { getProvider, type ProviderName } from '../providers/index.js';
 import { globalProvider } from './gateways.js';
 import { pixQrDataUrl } from '../lib/qr.js';
@@ -240,8 +240,9 @@ export async function dispatchTracking(orderId: string, event: PayTrackingEvent)
 export async function deliveryItems(orderId: string): Promise<DeliveryItem[]> {
   const { data } = await supabase
     .from('order_items')
-    .select('name, product:products(delivery_type, delivery_url, delivery_note)')
-    .eq('order_id', orderId);
+    .select('name, kind, product:products(image_url, delivery_type, delivery_url, delivery_note)')
+    .eq('order_id', orderId)
+    .order('kind', { ascending: false }); // "main" antes de "bump"
   const items: DeliveryItem[] = [];
   for (const it of (data ?? []) as any[]) {
     const p = it.product;
@@ -251,7 +252,7 @@ export async function deliveryItems(orderId: string): Promise<DeliveryItem[]> {
       const { data: s } = await supabase.storage.from('deliverables').createSignedUrl(p.delivery_url, 60 * 60 * 24 * 7);
       url = s?.signedUrl ?? null;
     }
-    items.push({ name: it.name, url, note: p?.delivery_note ?? null });
+    items.push({ name: it.name, url, note: p?.delivery_note ?? null, image: p?.image_url ?? null, kind: it.kind });
   }
   return items;
 }
@@ -259,16 +260,17 @@ export async function deliveryItems(orderId: string): Promise<DeliveryItem[]> {
 async function fulfill(orderId: string) {
   const { data: o } = await supabase
     .from('orders')
-    .select('id, number, public_token, delivered_at, customer:customers(name, email), checkout:checkouts(theme)')
+    .select('id, number, public_token, total_cents, delivered_at, customer:customers(name, email), checkout:checkouts(theme)')
     .eq('id', orderId)
     .maybeSingle();
   const order: any = o;
   if (!order || order.delivered_at || !order.customer) return;
   const ok = await sendDeliveryEmail({
     orderId,
-    orderNumber: order.number,
+    orderCode: productCode(order.number),
     to: order.customer.email,
-    name: order.customer.name,
+    name: order.customer.name ?? '',
+    totalCents: order.total_cents,
     items: await deliveryItems(orderId),
     accessUrl: `${env.PUBLIC_URL}/pedido/${order.public_token}`,
     accent: order.checkout?.theme?.primaryColor,

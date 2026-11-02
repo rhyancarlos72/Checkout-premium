@@ -111,7 +111,30 @@ const hashText = (t: string) => crypto.createHash('md5').update(t.replace(/https
 const MSG_HIST_PER_INSTANCE = 5;
 const instanceHist = new Map<string, string[]>();
 const phoneHist = new Map<string, Record<string, string[]>>();
-let rotation = -1;
+/**
+ * Rodízio de instâncias: cada envio sai pela instância usada há MAIS tempo (nunca usada = primeiro).
+ * O histórico é recuperado dos logs ao iniciar, então o rodízio continua mesmo após reiniciar o servidor.
+ * Assim nenhum número concentra os envios (menos risco de bloqueio).
+ */
+const lastUsed = new Map<string, number>();
+let seeded: Promise<void> | null = null;
+function seedLastUsed() {
+  seeded ??= (async () => {
+    try {
+      const { data } = await supabase.from('integration_logs').select('message, created_at').eq('integration', 'whatsapp').eq('ok', true).order('created_at', { ascending: false }).limit(200);
+      for (const l of (data ?? []) as any[]) {
+        const name = /enviado \((.+)\)/.exec(String(l.message ?? ''))?.[1];
+        if (name && !lastUsed.has(name)) lastUsed.set(name, new Date(l.created_at).getTime());
+      }
+    } catch {
+      /* sem histórico: começa do zero */
+    }
+  })();
+  return seeded;
+}
+export const rotationOrder = <T extends { name: string }>(list: T[]) =>
+  list.map((inst, i) => ({ inst, i })).sort((a, b) => (lastUsed.get(a.inst.name) ?? 0) - (lastUsed.get(b.inst.name) ?? 0) || a.i - b.i).map((x) => x.inst);
+export const markUsed = (name: string) => lastUsed.set(name, Date.now());
 
 /** Escolhe item ainda não usado para este telefone (reseta ao usar 80% do pool). */
 function pickFresh(pool: string[], phone: string, key: string) {
@@ -293,6 +316,7 @@ export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?
   const phone = normalizePhoneBR(phoneRaw);
   if (!phone) return { ok: false, error: `Telefone inválido: ${phoneRaw || '(vazio)'}`, hint: 'Use DDD + número, ex.: (11) 99999-9999.' };
   const hash = hashText(text);
+  await seedLastUsed();
 
   const tried = new Set<string>();
   const reasons: string[] = [];
@@ -300,9 +324,8 @@ export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?
   for (let attempt = 0; attempt < instances.length; attempt++) {
     let chosen: (typeof instances)[number] | null = null;
     for (const respectHist of [true, false]) {
-      for (let k = 1; k <= instances.length && !chosen; k++) {
-        const idx = (rotation + k) % instances.length;
-        const inst = instances[idx];
+      for (const inst of rotationOrder(instances)) {
+        if (chosen) break;
         if (tried.has(inst.name)) continue;
         if (respectHist && (instanceHist.get(inst.name) ?? []).includes(hash)) continue;
         const chk = await checkInstance(cfg, inst);
@@ -313,7 +336,7 @@ export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?
           continue;
         }
         chosen = inst;
-        rotation = idx;
+        markUsed(inst.name); // reserva já na escolha: envios simultâneos vão para instâncias diferentes
       }
       if (chosen) break;
     }
@@ -475,8 +498,9 @@ export async function diagnoseWhatsApp(extra: { jobsEnabled: boolean; lastJobRun
 // ------------------------------------------------------------------ mensagens
 const brl = (c: number) => (c / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function buildApprovedMessage(p: { phone: string; name: string; totalCents: number; items: { name: string; url: string | null; kind?: string }[] }) {
-  const nome = p.name.split(' ')[0] || p.name;
+export function buildApprovedMessage(p: { phone: string; name: string; totalCents: number; items: { name: string; url: string | null; note?: string | null; kind?: string }[]; accessUrl?: string }) {
+  const first = (p.name.trim().split(/\s+/)[0] || p.name || '').toLowerCase();
+  const nome = first ? first.charAt(0).toUpperCase() + first.slice(1) : 'tudo bem';
   const main = p.items.find((i) => i.kind === 'main') ?? p.items[0];
   const extras = p.items.filter((i) => i !== main);
   const pick = (pool: string[], key: string) => pickFresh(pool, p.phone, key);
@@ -490,33 +514,37 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
       `Olá, ${nome}! Compra registrada com sucesso.`,
       `Oi, ${nome}! Está tudo certo com o seu pagamento.`,
       `Olá, ${nome}! Seu pedido foi processado.`,
-      `Oi, ${nome}! Pagamento aprovado — obrigado pela compra.`,
+      `Oi, ${nome}! Pagamento aprovado, obrigado pela compra.`,
       `Olá, ${nome}! Recebemos sua confirmação de pagamento.`,
     ],
     'ep_saudacoes',
   );
   const rotVal = pick(['Valor', 'Total', 'Valor pago', 'Total da compra'], 'ep_rot_valor');
   const rotProd = pick(['Produto', 'Seu produto', 'Item adquirido', 'Produto adquirido'], 'ep_rot_prod');
-  const convite = pick(['Segue seu link de acesso:', 'Aqui está seu acesso:', 'Link de acesso abaixo:', 'Pronto para usar — é só acessar:'], 'ep_convites');
+  const convite = pick(['👉 Seu link de acesso:', '👉 Acesse aqui:', '👉 Link do seu produto:', '👉 É só tocar para acessar:'], 'ep_convites');
   const lembrete = pick(['Também enviamos uma cópia para o seu e-mail.', 'Uma cópia foi enviada ao seu e-mail para consulta.', 'Guardamos uma cópia no seu e-mail também.', 'Você também recebe estas informações por e-mail.'], 'ep_lembretes');
+  const dica = pick(['Dica: salve este contato para o link ficar clicável e não se perder.', 'Dica: se o link não abrir, salve nosso número e toque de novo.', 'Dica: no Google Drive, entre com sua conta Google para baixar.'], 'ep_dicas');
   const fechamento = pick(
     ['Se precisar de qualquer coisa, é só responder por aqui.', 'Qualquer dúvida, estamos à disposição.', 'Bom proveito! Qualquer dúvida, é só chamar.', 'Obrigado pela confiança. Estamos por aqui se precisar.', 'Se surgir alguma dúvida, pode responder esta mensagem.'],
     'ep_fechamentos',
   );
   const titulo = pick(['Seus acessos:', 'Itens liberados:', 'Produtos disponíveis:'], 'ep_titulos');
+  const linkOf = (it?: { url: string | null }) => it?.url || p.accessUrl || null;
 
-  let m = `${saudacao}\n\n${rotVal}: R$ ${brl(p.totalCents)}\n\n`;
+  let m = `${saudacao}\n\n${rotProd}: *${main?.name ?? ''}*\n${rotVal}: R$ ${brl(p.totalCents)}\n\n`;
   if (!extras.length) {
-    m += `${rotProd}: ${main?.name ?? ''}\n\n`;
-    if (main?.url) m += `${convite}\n${main.url}\n\n`;
+    const link = linkOf(main);
+    if (main?.note) m += `${main.note}\n\n`;
+    if (link) m += `${convite}\n${link}\n\n`;
   } else {
     m += `${titulo}\n\n`;
     for (const it of [main, ...extras]) {
       if (!it) continue;
-      m += `• ${it.name}\n${it.url ? `  ${it.url}\n` : ''}\n`;
+      const link = linkOf(it);
+      m += `• *${it.name}*\n${it.note ? `  ${it.note}\n` : ''}${link ? `  ${link}\n` : ''}\n`;
     }
   }
-  m += `${lembrete}\n\n${fechamento}\n\n— Se preferir não receber mensagens sobre esta compra, responda SAIR.`;
+  m += `${dica}\n${lembrete}\n\n${fechamento}\n\n— Se preferir não receber mensagens sobre esta compra, responda SAIR.`;
   return m;
 }
 
@@ -602,18 +630,18 @@ async function logWa(orderId: string | null, event: string, r: SendResult) {
 }
 
 /** Pagamento aprovado → acesso por WhatsApp (uma vez por pedido). */
-export async function sendWhatsAppApproved(orderId: string, items: { name: string; url: string | null; kind?: string }[]) {
+export async function sendWhatsAppApproved(orderId: string, items: { name: string; url: string | null; note?: string | null; kind?: string }[]) {
   try {
     const cfg = await getWhatsAppConfig();
     if (!cfg.enabled || !cfg.approved.enabled) return;
-    const { data: o } = await supabase.from('orders').select('id, checkout_id, total_cents, customer:customers(name, phone)').eq('id', orderId).maybeSingle();
+    const { data: o } = await supabase.from('orders').select('id, checkout_id, total_cents, public_token, customer:customers(name, phone)').eq('id', orderId).maybeSingle();
     const order: any = o;
     if (!order?.customer?.phone) return;
     const { count } = await supabase.from('events').select('id', { count: 'exact', head: true }).eq('order_id', orderId).eq('type', 'wa_approved');
     if ((count ?? 0) > 0) return;
     await supabase.from('events').insert({ order_id: orderId, checkout_id: order.checkout_id, type: 'wa_approved', data: {} });
     const phone = normalizePhoneBR(order.customer.phone);
-    const r = await sendWhatsAppText(phone, buildApprovedMessage({ phone, name: order.customer.name, totalCents: order.total_cents, items }), cfg);
+    const r = await sendWhatsAppText(phone, buildApprovedMessage({ phone, name: order.customer.name ?? '', totalCents: order.total_cents, items, accessUrl: `${env.PUBLIC_URL}/pedido/${order.public_token}` }), cfg);
     await logWa(orderId, 'approved', r);
   } catch (e) {
     logger.error({ err: e, orderId }, 'WhatsApp aprovado falhou');
