@@ -537,27 +537,27 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                     )}
                   >
                     {/* faixa superior */}
-                    <div className={cn('flex items-center justify-between gap-2 px-4 py-2 text-[12px] font-extrabold uppercase tracking-wider', on ? 'bg-brand text-brand-fg' : 'bg-[#fff4c2] text-[#7a5200]')}>
+                    <div className={cn('flex items-center justify-between gap-2 px-3.5 py-1.5 text-[11px] font-extrabold uppercase tracking-wider', on ? 'bg-brand text-brand-fg' : 'bg-[#fff4c2] text-[#7a5200]')}>
                       <span className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 fill-current" /> Oferta única · só nesta página</span>
                       {off > 0 && <span className={cn('rounded-full px-2 py-0.5', on ? 'bg-black/15' : 'bg-[#ffe27a] text-[#6b4700]')}>-{off}%</span>}
                     </div>
 
                     <button type="button" onClick={() => toggleBump(b.id)} aria-pressed={on} className="block w-full text-left">
-                      <div className="flex gap-4 p-4 @lg:p-5">
+                      <div className="flex gap-3 p-3.5 @lg:p-4">
                         <div className="relative shrink-0">
                           {b.image_url ? (
-                            <img src={b.image_url} alt="" className="h-[88px] w-[88px] rounded-[calc(var(--ck-r)*.6)] object-cover shadow-md ring-1 ring-ck-border @md:h-24 @md:w-24" loading="lazy" />
+                            <img src={b.image_url} alt="" className="h-16 w-16 rounded-[calc(var(--ck-r)*.5)] object-cover shadow-sm ring-1 ring-ck-border @md:h-[72px] @md:w-[72px]" loading="lazy" />
                           ) : (
-                            <div className="flex h-[88px] w-[88px] items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-[#fff1b8] text-[#7a5200] shadow-md @md:h-24 @md:w-24"><Gift className="h-9 w-9" /></div>
+                            <div className="flex h-16 w-16 items-center justify-center rounded-[calc(var(--ck-r)*.5)] bg-[#fff1b8] text-[#7a5200] shadow-sm @md:h-[72px] @md:w-[72px]"><Gift className="h-7 w-7" /></div>
                           )}
-                          {off > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[11px] font-extrabold text-white shadow-md">-{off}%</span>}
+                          {off > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-md">-{off}%</span>}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-[15px] font-bold leading-snug">{b.title}</p>
-                          {b.description && <p className="mt-1 text-[13px] leading-relaxed text-ck-muted">{b.description}</p>}
-                          <div className="mt-2.5 flex flex-wrap items-baseline gap-x-2">
-                            {b.compare_at_cents ? <span className="text-[13px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
-                            <span className="text-[22px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
+                          <p className="text-[13.5px] font-bold leading-snug">{b.title}</p>
+                          {b.description && <p className="mt-0.5 text-[12px] leading-relaxed text-ck-muted">{b.description}</p>}
+                          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2">
+                            {b.compare_at_cents ? <span className="text-[12px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
+                            <span className="text-[18px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
                           </div>
                         </div>
                       </div>
@@ -565,13 +565,13 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                       {/* barra de ação */}
                       <div
                         className={cn(
-                          'flex items-center gap-3 border-t-2 border-dashed px-4 py-3.5 text-[14px] font-extrabold transition-colors duration-300',
+                          'flex items-center gap-2.5 border-t-2 border-dashed px-3.5 py-2.5 text-[12.5px] font-bold transition-colors duration-300',
                           on ? 'border-brand/30 bg-brand text-brand-fg' : 'border-amber-200 bg-[#fff9e0] text-[#5c3d00]',
                         )}
                       >
-                        {!on && <ArrowRight className="ck-nudge h-5 w-5 shrink-0" strokeWidth={3} />}
-                        <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-[#c9a227] bg-[#fff]')}>
-                          {on && <Check className="h-4 w-4" strokeWidth={3.5} />}
+                        {!on && <ArrowRight className="ck-nudge h-4 w-4 shrink-0" strokeWidth={3} />}
+                        <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-[#c9a227] bg-[#fff]')}>
+                          {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
                         </span>
                         <span className="flex-1 leading-snug">{on ? 'Adicionado ao seu pedido!' : `Sim! Quero adicionar por ${brl(b.price_cents)}`}</span>
                       </div>
