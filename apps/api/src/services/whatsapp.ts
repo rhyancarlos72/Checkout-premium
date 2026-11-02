@@ -784,3 +784,90 @@ export async function sendWhatsAppRecoveries(max = 10) {
     await sleep(3500); // pausa natural entre envios
   }
 }
+
+// ------------------------------------------------------------------ criar/conectar instância pelo painel (QR Code)
+const qrSrc = (v: unknown) => {
+  const s = typeof v === 'string' ? v : '';
+  if (!s) return null;
+  return s.startsWith('data:') ? s : `data:image/png;base64,${s}`;
+};
+async function evoCall(cfg: WhatsAppConfig, method: string, path: string, key: string, body?: unknown) {
+  const res = await fetchWithTimeout(`${await base(cfg)}${path}`, {
+    method,
+    headers: { apikey: key, 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    timeoutMs: 20_000,
+  });
+  const raw = await res.text();
+  let json: any = null;
+  try {
+    json = raw ? JSON.parse(raw) : null;
+  } catch {
+    /* não-JSON */
+  }
+  return { ok: res.ok, status: res.status, json, raw };
+}
+const evoMsg = (j: any, raw: string) => {
+  const m = j?.response?.message ?? j?.message ?? j?.error ?? raw;
+  return (Array.isArray(m) ? m.join(' ') : typeof m === 'string' ? m : JSON.stringify(m ?? '')).slice(0, 200);
+};
+
+/** Cria a instância na Evolution (precisa da API Key global) e já devolve o QR Code. */
+export async function evolutionCreateInstance(cfg: WhatsAppConfig, name: string, number?: string | null) {
+  if (!cfg.apiUrl) return { ok: false as const, error: 'Informe e salve a URL da Evolution API primeiro' };
+  if (!cfg.globalApiKey) return { ok: false as const, error: 'Informe e salve a API Key global da Evolution (AUTHENTICATION_API_KEY) para criar instâncias pelo painel' };
+  const num = number ? normalizePhoneBR(number) : '';
+  try {
+    const r = await evoCall(cfg, 'POST', '/instance/create', cfg.globalApiKey, {
+      instanceName: name,
+      qrcode: true,
+      integration: 'WHATSAPP-BAILEYS', // v2 (a v1 ignora o campo)
+      ...(num ? { number: num } : {}),
+    });
+    if (r.status === 401 || r.status === 403) {
+      const txt = evoMsg(r.json, r.raw);
+      if (/already|exist|in use|em uso/i.test(txt)) return { ok: false as const, error: `Já existe uma instância “${name}” na Evolution. Escolha outro nome ou use “Buscar instâncias” para importar.` };
+      return { ok: false as const, error: `A Evolution recusou a API Key global (HTTP ${r.status}): ${txt}` };
+    }
+    if (!r.ok) return { ok: false as const, error: `A Evolution respondeu HTTP ${r.status}: ${evoMsg(r.json, r.raw)}` };
+    const j = r.json ?? {};
+    const token = (typeof j.hash === 'string' ? j.hash : j.hash?.apikey) ?? j.instance?.token ?? j.token ?? '';
+    return { ok: true as const, token: String(token || ''), qr: qrSrc(j.qrcode?.base64 ?? j.base64), pairingCode: j.qrcode?.pairingCode ?? j.pairingCode ?? null };
+  } catch (e) {
+    const d = describeNetworkError(e, cfg.apiUrl);
+    return { ok: false as const, error: d.message, hint: d.hint };
+  }
+}
+
+/** QR Code atualizado (ele expira em ~40 s) + se já conectou, com o número do WhatsApp. */
+export async function evolutionConnectStatus(cfg: WhatsAppConfig, name: string, number?: string | null) {
+  const inst = cfg.instances.find((i) => i.name === name);
+  const key = (inst && tokenFor(cfg, inst)) || cfg.globalApiKey;
+  if (!key) return { ok: false as const, error: 'Instância sem token' };
+  try {
+    const st = await evoCall(cfg, 'GET', `/instance/connectionState/${encodeURIComponent(name)}`, key);
+    const state = String(st.json?.instance?.state ?? st.json?.state ?? '').toLowerCase();
+    if (['open', 'connected'].includes(state)) {
+      let phone: string | null = null;
+      let profile: string | null = null;
+      if (cfg.globalApiKey) {
+        const list = await fetchEvolutionInstances(cfg.apiUrl, cfg.globalApiKey);
+        if (list.ok) {
+          const me = list.items.find((i) => i.name === name);
+          phone = me?.number ?? null;
+          profile = me?.profileName ?? null;
+        }
+      }
+      return { ok: true as const, connected: true, number: phone, profileName: profile, qr: null, pairingCode: null };
+    }
+    const num = number ? normalizePhoneBR(number) : '';
+    const c = await evoCall(cfg, 'GET', `/instance/connect/${encodeURIComponent(name)}${num ? `?number=${num}` : ''}`, key);
+    if (!c.ok) return { ok: false as const, error: `A Evolution respondeu HTTP ${c.status}: ${evoMsg(c.json, c.raw)}` };
+    const j = c.json ?? {};
+    if (['open', 'connected'].includes(String(j.instance?.state ?? '').toLowerCase())) return { ok: true as const, connected: true, number: null, profileName: null, qr: null, pairingCode: null };
+    return { ok: true as const, connected: false, number: null, profileName: null, qr: qrSrc(j.base64 ?? j.qrcode?.base64), pairingCode: j.pairingCode ?? j.qrcode?.pairingCode ?? null };
+  } catch (e) {
+    const d = describeNetworkError(e, cfg.apiUrl);
+    return { ok: false as const, error: d.message, hint: d.hint };
+  }
+}

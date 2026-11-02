@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Eye, EyeOff, MessageCircle, Plus, Radio, Search, Send, Stethoscope, Trash2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Eye, EyeOff, MessageCircle, Plus, QrCode, Radio, Search, Send, Stethoscope, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button, cn, Field, Input, PageLoader, Select, Switch } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
+import { ConnectInstanceModal } from './ConnectInstanceModal';
 
 interface Instance { name: string; token?: string; active: boolean; token_hint?: string; has_token?: boolean }
 interface Config {
@@ -43,6 +44,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
   const [found, setFound] = useState<{ name: string; status: string | null; connected: boolean; number: string | null; profileName: string | null; hasToken: boolean }[] | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [discoverErr, setDiscoverErr] = useState<{ error: string; hint?: string } | null>(null);
+  const [connecting, setConnecting] = useState(false);
   const discover = useMutation({
     mutationFn: () => adminApi.post<any>('/whatsapp/discover', { apiUrl: c?.apiUrl, apiKey: c?.globalApiKey || undefined }),
     onSuccess: (r) => {
@@ -153,6 +155,14 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
           <Field label="API Key global da Evolution (opcional, recomendado)" hint={c.has_globalApiKey ? `Salva: ${c.globalApiKey_hint} · deixe em branco para manter` : 'Variável AUTHENTICATION_API_KEY da Evolution. Vale para todas as instâncias e permite buscar a lista abaixo.'}>
             <TokenInput value={c.globalApiKey} onChange={(v) => set({ globalApiKey: v })} placeholder={c.has_globalApiKey ? '••••••••' : 'API Key global'} />
           </Field>
+
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-zinc-700"><b>Conectar novo número (QR Code)</b><br /><span className="text-xs text-zinc-500">Cria a instância na Evolution e mostra o QR Code aqui. Ao ler, o número entra no rodízio.</span></p>
+              <Button size="sm" className="shrink-0 whitespace-nowrap" disabled={!data?.apiUrl || !data?.has_globalApiKey} onClick={() => setConnecting(true)}><QrCode className="h-3.5 w-3.5" /> Conectar número</Button>
+            </div>
+            {(!data?.apiUrl || !data?.has_globalApiKey) && <p className="mt-2 text-xs text-zinc-500">Para liberar, preencha e salve a URL da Evolution e a API Key global.</p>}
+          </div>
 
           <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -298,6 +308,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
           </div>
         </div>
       </div>
+      {connecting && <ConnectInstanceModal existing={data?.instances.map((x) => x.name) ?? []} onClose={() => setConnecting(false)} toast={toast} />}
     </section>
   );
 }

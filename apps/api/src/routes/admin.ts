@@ -12,7 +12,7 @@ import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
-import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
+import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
 
@@ -490,7 +490,13 @@ adminRouter.post('/orders/:id/recovery-email', async (req, res) => {
   if (o.status !== 'pending' && o.status !== 'expired') throw new HttpError(400, 'Só pedidos pendentes recebem recuperação');
   if (!o.customer?.email || !o.checkout) throw new HttpError(400, 'Pedido sem e-mail do cliente');
   const ok = await sendRecoveryForOrder(o);
-  if (!ok) return res.json({ ok: false, message: 'E-mail não enviado (falha no SMTP ou o cliente pediu para não receber). Veja o motivo em Integrações → Últimos envios' });
+  if (!ok) {
+    // mostra o motivo real (ex.: senha do SMTP recusada, cliente descadastrado)
+    const { data: last } = await supabase.from('integration_logs').select('message').eq('order_id', id).eq('integration', 'email').eq('event', 'recovery').order('created_at', { ascending: false }).limit(1).maybeSingle();
+    const why = String((last as any)?.message ?? '');
+    const hint = /auth|535|credentials|password|login/i.test(why) ? ' Confira SMTP_USER e SMTP_PASS (senha do e-mail na Hostinger).' : /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout/i.test(why) ? ' Confira SMTP_HOST=smtp.hostinger.com e SMTP_PORT=465.' : '';
+    return res.json({ ok: false, message: `E-mail não enviado${why ? `: ${why}` : ''}.${hint}` });
+  }
   const sentAt = new Date().toISOString();
   await supabase.from('orders').update({ recovery_sent_at: sentAt }).eq('id', id);
   res.json({ ok: true, message: `E-mail de recuperação enviado para ${o.customer.email}`, sent_at: sentAt });
@@ -905,6 +911,27 @@ adminRouter.post('/whatsapp/import', async (req, res) => {
   await saveWhatsAppConfig({ ...cur, apiUrl, globalApiKey, instances: [...keep, ...imported] });
   res.json({ ok: true, count: imported.length });
 });
+/** Cria uma instância nova na Evolution pelo painel e já a deixa no rodízio do checkout. */
+adminRouter.post('/whatsapp/instances', async (req, res) => {
+  const b = z
+    .object({
+      name: z.string().trim().regex(/^[A-Za-z0-9_-]{2,40}$/, 'Use de 2 a 40 letras, números, - ou _ (sem espaços)'),
+      number: z.string().trim().max(30).optional().nullable(),
+    })
+    .parse(req.body);
+  const cfg = await getWhatsAppConfig();
+  if (cfg.instances.some((i) => i.name === b.name)) throw new HttpError(400, 'Já existe uma instância com esse nome no checkout');
+  const r = await evolutionCreateInstance(cfg, b.name, b.number);
+  if (!r.ok) return res.json(r);
+  await saveWhatsAppConfig({ ...cfg, instances: [...cfg.instances, { name: b.name, token: r.token, active: true }] });
+  res.json({ ok: true, name: b.name, qr: r.qr, pairingCode: r.pairingCode });
+});
+adminRouter.get('/whatsapp/instances/:name/connect', async (req, res) => {
+  const name = z.string().regex(/^[A-Za-z0-9_-]{2,40}$/).parse(req.params.name);
+  const number = typeof req.query.number === 'string' ? req.query.number : null;
+  res.set('Cache-Control', 'no-store').json(await evolutionConnectStatus(await getWhatsAppConfig(), name, number));
+});
+
 adminRouter.get('/whatsapp/diagnose', async (_req, res) => res.json(await diagnoseWhatsApp({ jobsEnabled: env.JOBS_ENABLED, lastJobRunAt })));
 adminRouter.get('/whatsapp/logs', async (_req, res) => {
   const { data } = await supabase.from('integration_logs').select('event, ok, message, created_at, order_id').eq('integration', 'whatsapp').order('created_at', { ascending: false }).limit(15);

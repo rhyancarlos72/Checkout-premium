@@ -13,6 +13,14 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => (b += c));
   req.on('end', () => {
     calls.push({ path: req.url!, apikey: req.headers.apikey as string, body: b ? JSON.parse(b) : null });
+    if (req.url === '/instance/create') {
+      const body = b ? JSON.parse(b) : {};
+      if (req.headers.apikey !== 'GLOBAL') return res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"response":{"message":["Unauthorized"]}}');
+      if (body.instanceName === 'existe') return res.writeHead(403, { 'Content-Type': 'application/json' }).end('{"response":{"message":["This name \\"existe\\" is already in use."]}}');
+      return res.writeHead(201, { 'Content-Type': 'application/json' }).end(JSON.stringify({ instance: { instanceName: body.instanceName, status: 'connecting' }, hash: 'tok-nova', qrcode: { base64: 'data:image/png;base64,QRCODE', pairingCode: body.number ? 'ABCD-1234' : null } }));
+    }
+    if (req.url!.startsWith('/instance/connectionState/nova')) return res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"instance":{"state":"connecting"}}');
+    if (req.url!.startsWith('/instance/connect/nova')) return res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"base64":"QRNOVO","pairingCode":null}');
     if (req.url === '/instance/fetchInstances') {
       if (req.headers.apikey !== 'GLOBAL' && req.headers.apikey !== 'V1') return res.writeHead(401).end('{}');
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -223,5 +231,35 @@ describe('buscar instâncias na Evolution (puxando nome e número)', () => {
     expect(r.hint).toMatch(/Buscar instâncias/);
     // tentou também o formato @s.whatsapp.net
     expect(calls.some((x) => x.path === '/message/sendText/fantasma' && String(x.body?.number).endsWith('@s.whatsapp.net'))).toBe(true);
+  });
+});
+
+describe('criar instância pelo painel (QR Code)', () => {
+  it('cria na Evolution com a API Key global e devolve token + QR Code', async () => {
+    const c = wa.whatsappSchema.parse({ apiUrl: url, globalApiKey: 'GLOBAL' });
+    const r = await wa.evolutionCreateInstance(c, 'nova', '(11) 98888-7777');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.token).toBe('tok-nova');
+      expect(r.qr).toBe('data:image/png;base64,QRCODE');
+      expect(r.pairingCode).toBe('ABCD-1234');
+    }
+  });
+  it('explica nome já usado e falta da API Key global', async () => {
+    const r = await wa.evolutionCreateInstance(wa.whatsappSchema.parse({ apiUrl: url, globalApiKey: 'GLOBAL' }), 'existe');
+    expect(!r.ok && r.error).toMatch(/Já existe/);
+    const sem = await wa.evolutionCreateInstance(wa.whatsappSchema.parse({ apiUrl: url }), 'x1');
+    expect(!sem.ok && sem.error).toMatch(/API Key global/);
+  });
+  it('enquanto não conecta, devolve o QR Code atualizado', async () => {
+    const c = wa.whatsappSchema.parse({ apiUrl: url, globalApiKey: 'GLOBAL', instances: [{ name: 'nova', token: 'tok-nova' }] });
+    const r = await wa.evolutionConnectStatus(c, 'nova');
+    expect(r.ok && !r.connected && r.qr).toBe('data:image/png;base64,QRNOVO');
+  });
+  it('quando conecta, avisa e traz o número', async () => {
+    const c = wa.whatsappSchema.parse({ apiUrl: url, globalApiKey: 'GLOBAL', instances: [{ name: 'Checkout-A', token: 'tok-a' }] });
+    const r = await wa.evolutionConnectStatus(c, 'Checkout-A');
+    expect(r.ok && r.connected).toBe(true);
+    if (r.ok) expect(r.number).toBe('5521988887777');
   });
 });
