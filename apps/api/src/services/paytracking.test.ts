@@ -6,7 +6,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY = 'test-key-test-key-test-key';
 process.env.NODE_ENV = 'test';
 const { productCode } = await import('../lib/core.js');
 const { buildPayload } = await import('./paytracking.js');
-const { clientIp, phoneE164BR } = await import('../lib/core.js');
+const { clientIp, geoFromHeaders, phoneE164BR } = await import('../lib/core.js');
 
 const order = {
   id: 'o1',
@@ -16,7 +16,7 @@ const order = {
   created_at: new Date().toISOString(),
   ip: null,
   user_agent: null,
-  tracking: { fbclid: 'AbC123', fbclid_at: '1700000000000', fbp: 'fb.1.1700000000000.123456789', utm_source: 'FB', src: 'x' } as Record<string, any>,
+  tracking: { fbclid: 'AbC123', fbclid_at: '1700000000000', fbp: 'fb.1.1700000000000.123456789', utm_source: 'FB', src: 'x', initiate_checkout_event_id: 'ic_1', add_payment_info_event_id: 'api_1', purchase_event_id: 'purchase_1', geo_city: 'Fortaleza', geo_state: 'CE', geo_zip: '60000000', geo_country: 'BR' } as Record<string, any>,
   checkout_slug: '8939361',
   customer_id: 'cust-1',
   customer: { name: 'Maria Souza', email: ' M@X.com ', phone: '(11) 98888-7777', document: null },
@@ -56,5 +56,23 @@ describe('taxa de correspondência (dados enviados)', () => {
     expect(clientIp({ ip: '10.0.0.5', headers: { 'x-forwarded-for': '10.0.0.2, 187.10.20.30, 172.16.0.1' } })).toBe('187.10.20.30');
     expect(clientIp({ ip: '10.0.0.5', headers: { 'cf-connecting-ip': '2804:14c::1' } })).toBe('2804:14c::1');
     expect(clientIp({ ip: '::ffff:189.1.2.3', headers: {} })).toBe('189.1.2.3');
+  });
+});
+
+describe('deduplicação e localização', () => {
+  it('leva os IDs de todos os eventos, cidade/estado/CEP e action_source', () => {
+    const p = buildPayload(order, 'sale.approved');
+    expect(p.tracking.event_id).toBe('purchase_1');
+    expect(p.tracking.initiate_checkout_event_id).toBe('ic_1');
+    expect(p.tracking.add_payment_info_event_id).toBe('api_1');
+    expect(buildPayload(order, 'sale.pending').tracking.event_id).toBe('ic_1');
+    expect(p.customer.city).toBe('Fortaleza');
+    expect(p.customer.state).toBe('CE');
+    expect(p.customer.zip).toBe('60000000');
+    expect(p.action_source).toBe('website');
+  });
+  it('lê a localização dos cabeçalhos da CDN', () => {
+    expect(geoFromHeaders({ 'cf-ipcity': 'S%C3%A3o%20Paulo', 'cf-region-code': 'SP', 'cf-postal-code': '01000-000', 'cf-ipcountry': 'br' })).toEqual({ geo_city: 'São Paulo', geo_state: 'SP', geo_zip: '01000000', geo_country: 'BR' });
+    expect(geoFromHeaders({})).toEqual({});
   });
 });

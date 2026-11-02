@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
 import { brl, digits, maskPhone, productCode } from '@/lib/format';
-import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track } from '@/lib/tracking';
+import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track, visitorExternalId } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
 
 function makeSchema(fields: PublicCheckout['fields']) {
@@ -154,7 +154,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const footerRef = useRef<HTMLElement>(null);
   const [footerVisible, setFooterVisible] = useState(false);
   const startedRef = useRef(false);
-  const eventIds = useMemo(() => ({ ic: `ic_${crypto.randomUUID()}`, purchase: `purchase_${crypto.randomUUID()}` }), []);
+  const eventIds = useMemo(() => ({ ic: `ic_${crypto.randomUUID()}`, api: `api_${crypto.randomUUID()}`, purchase: `purchase_${crypto.randomUUID()}` }), []);
 
   const schema = useMemo(() => makeSchema(checkout.fields), [checkout.fields]);
   const { register, handleSubmit, setValue, formState, watch, reset, getFieldState } = useForm<FormValues>({
@@ -167,7 +167,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     if (preview) return;
     document.title = `${checkout.product.name} · Pagamento seguro`;
     ensureMetaCookies(); // registra fbclid/fbp já na chegada (horário do clique)
-    initMetaPixel(checkout.tracking.metaPixelId);
+    initMetaPixel(checkout.tracking.metaPixelId, { externalId: visitorExternalId() });
     track(checkout.slug, 'page_view');
     const recover = params.get('recover');
     if (recover && /^[a-f0-9]{48}$/.test(recover)) {
@@ -190,12 +190,19 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   }, []);
 
   const values = watch();
-  useEffect(() => {
-    if (preview || startedRef.current || !(values.email || values.name)) return;
+  const contentIds = checkout.product.number ? [productCode(checkout.product.number)] : [];
+  // InitiateCheckout sai quando o e-mail já é válido: vai com e-mail/nome/telefone (correspondência alta).
+  // Se a pessoa finalizar sem passar por aqui, dispara no envio.
+  const fireInitiate = () => {
+    if (preview || startedRef.current) return;
     startedRef.current = true;
+    setPixelUser(checkout.tracking.metaPixelId, { email: values.email, phone: values.phone, name: values.name, externalId: visitorExternalId() });
     track(checkout.slug, 'initiate_checkout');
-    pixel('InitiateCheckout', { value: checkout.price_cents / 100, currency: 'BRL', content_name: checkout.product.name, content_type: 'product', content_ids: checkout.product.number ? [productCode(checkout.product.number)] : [], num_items: 1 }, eventIds.ic);
-  }, [values.email, values.name]); // eslint-disable-line react-hooks/exhaustive-deps
+    pixel('InitiateCheckout', { value: checkout.price_cents / 100, currency: 'BRL', content_name: checkout.product.name, content_type: 'product', content_ids: contentIds, num_items: 1 }, eventIds.ic);
+  };
+  useEffect(() => {
+    if (/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(values.email ?? '')) fireInitiate();
+  }, [values.email]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedBumps = checkout.bumps.filter((b) => bumps.includes(b.id));
   const subtotal = checkout.price_cents + selectedBumps.reduce((s, b) => s + b.price_cents, 0);
@@ -241,7 +248,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         customer: { name: v.name, email: v.email, phone: v.phone ? digits(v.phone) : null, document: null },
         bump_ids: bumps,
         coupon_code: coupon?.code ?? null,
-        tracking: { ...collectTracking(), initiate_checkout_event_id: eventIds.ic, purchase_event_id: eventIds.purchase },
+        tracking: { ...collectTracking(), initiate_checkout_event_id: eventIds.ic, add_payment_info_event_id: eventIds.api, purchase_event_id: eventIds.purchase },
       }),
     onSuccess: (r) => {
       // a resposta já traz o Pix (QR + copia e cola): a próxima tela abre sem nova consulta
@@ -250,6 +257,8 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         const o = r.order as { customer?: { name: string; email: string; phone: string | null }; external_id?: string | null };
         setPixelUser(checkout.tracking.metaPixelId, { email: o.customer?.email, phone: o.customer?.phone, name: o.customer?.name, externalId: o.external_id });
       }
+      // Pix gerado = AddPaymentInfo (mesmo event_id enviado ao servidor → a Meta deduplica)
+      pixel('AddPaymentInfo', { value: subtotal / 100, currency: 'BRL', content_type: 'product', content_ids: contentIds, payment_type: 'pix' }, eventIds.api);
       navigate(`/pedido/${r.token}`);
     },
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Não foi possível gerar o Pix. Tente novamente.'),
@@ -259,6 +268,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     (v) => {
       setServerError(null);
       if (preview) return setServerError('Pré-visualização: o pagamento funciona no link publicado.');
+      fireInitiate();
       submit.mutate(v);
     },
     () => document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(),

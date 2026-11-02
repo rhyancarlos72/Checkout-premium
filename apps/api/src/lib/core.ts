@@ -131,3 +131,34 @@ export function clientIp(req: { ip?: string; headers: Record<string, string | st
   const pub = fwd.find((ip) => !isPrivateIp(ip));
   return pub ?? (req.ip ? clean(req.ip) : null);
 }
+
+/**
+ * Localização aproximada do comprador pelos cabeçalhos da CDN (Cloudflare, Vercel, LiteSpeed/Hostinger CDN).
+ * Cidade/estado/CEP somam pontos na correspondência da Meta. Só usa o que o proxy informar.
+ */
+export function geoFromHeaders(headers: Record<string, string | string[] | undefined>) {
+  const h = (...keys: string[]) => {
+    for (const k of keys) {
+      const v = headers[k];
+      const val = (Array.isArray(v) ? v[0] : v)?.trim();
+      if (val) {
+        try {
+          return decodeURIComponent(val).slice(0, 80);
+        } catch {
+          return val.slice(0, 80);
+        }
+      }
+    }
+    return undefined;
+  };
+  const out: Record<string, string> = {};
+  const city = h('cf-ipcity', 'x-vercel-ip-city', 'x-geo-city', 'x-client-city');
+  const state = h('cf-region-code', 'x-vercel-ip-country-region', 'x-geo-region', 'x-client-region');
+  const zip = h('cf-postal-code', 'x-vercel-ip-postal-code', 'x-geo-postal-code');
+  const country = h('cf-ipcountry', 'x-vercel-ip-country', 'x-geo-country', 'x-country-code');
+  if (city) out.geo_city = city;
+  if (state) out.geo_state = state;
+  if (zip) out.geo_zip = zip.replace(/\D/g, '');
+  if (country && /^[A-Za-z]{2}$/.test(country)) out.geo_country = country.toUpperCase();
+  return out;
+}

@@ -103,12 +103,19 @@ export function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
       phone, // com 55 (a Meta exige o código do país)
       phone_raw: o.customer?.phone ?? null,
       document: o.customer?.document ?? null,
-      country: 'BR',
+      country: (t.geo_country || 'BR').toUpperCase(),
+      city: t.geo_city ?? null,
+      state: t.geo_state ?? null,
+      zip: t.geo_zip ?? null,
       external_id: externalId,
     },
+    action_source: 'website',
     tracking: {
       event_id: eventId,
-      purchase_event_id: status === 'paid' ? eventId : null,
+      // IDs de todos os eventos do funil: a PayTracking/Meta deduplica com os do Pixel do navegador
+      initiate_checkout_event_id: t.initiate_checkout_event_id ?? null,
+      add_payment_info_event_id: t.add_payment_info_event_id ?? null,
+      purchase_event_id: t.purchase_event_id ?? (status === 'paid' ? eventId : null),
       external_id: externalId,
       pt_xid: t.pt_xid || t.external_id || null,
       visitor_id: t.visitor_id || t.session_id || null,

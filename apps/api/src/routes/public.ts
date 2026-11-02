@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
-import { clientIp, HttpError, must, productCode, supabase } from '../lib/core.js';
+import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
@@ -82,7 +82,7 @@ publicRouter.post('/checkouts/:slug/quote', quoteLimiter, async (req, res) => {
 
 publicRouter.post('/orders', orderLimiter, async (req, res) => {
   const input = createOrderSchema.parse(req.body);
-  const result = await createOrder(input, { ip: clientIp(req as any), userAgent: req.get('user-agent') ?? null });
+  const result = await createOrder(input, { ip: clientIp(req as any), userAgent: req.get('user-agent') ?? null, geo: geoFromHeaders(req.headers as any) });
   res.status(201).json(result);
 });
 

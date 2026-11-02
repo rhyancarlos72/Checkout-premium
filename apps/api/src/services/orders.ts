@@ -15,7 +15,7 @@ const trackingKeys = [
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck',
   'fbclid', 'fbp', 'fbc', 'gclid', 'ttclid', 'external_id', 'page_url', 'referrer',
   'event_id', 'initiate_checkout_event_id', 'purchase_event_id', 'session_id',
-  'pt_xid', 'xcod', 'visitor_id', 'fbclid_at',
+  'pt_xid', 'xcod', 'visitor_id', 'fbclid_at', 'add_payment_info_event_id',
 ] as const;
 
 export const createOrderSchema = z.object({
@@ -133,7 +133,7 @@ async function upsertCustomer(c: CreateOrderInput['customer']) {
   return must(await supabase.from('customers').upsert(row, { onConflict: 'email' }).select('id').single()) as { id: string };
 }
 
-export async function createOrder(input: CreateOrderInput, meta: { ip: string | null; userAgent: string | null }) {
+export async function createOrder(input: CreateOrderInput, meta: { ip: string | null; userAgent: string | null; geo?: Record<string, string> }) {
   const q = await quote(input.checkout_slug, input.bump_ids, input.coupon_code);
   if (q.couponError) throw new HttpError(400, q.couponError);
   const { checkout } = q;
@@ -146,7 +146,8 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
   // gateway global (Integrações) vale para todos os produtos; senão, o do checkout
   const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
   const customer = await upsertCustomer(input.customer);
-  const tracking = sanitizeTracking(input.tracking);
+  // geo vem só do servidor (cabeçalhos da CDN), nunca do navegador
+  const tracking = { ...sanitizeTracking(input.tracking), ...(meta.geo ?? {}) };
 
   const order = must(
     await supabase
@@ -475,7 +476,7 @@ export async function createUpsellOrder(parentToken: string): Promise<{ token: s
   const checkout: any = ck;
   if (!checkout || !up) throw new HttpError(404, 'Oferta indisponível');
   const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
-  const { initiate_checkout_event_id: _ic, purchase_event_id: _pe, event_id: _e, renewed_from: _r, ...keep } = parent.tracking ?? {};
+  const { initiate_checkout_event_id: _ic, add_payment_info_event_id: _api, purchase_event_id: _pe, event_id: _e, renewed_from: _r, ...keep } = parent.tracking ?? {};
   const tracking = { ...keep, upsell_of: parent.id, purchase_event_id: `purchase_${crypto.randomUUID()}` };
 
   const order = must(

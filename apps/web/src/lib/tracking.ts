@@ -78,6 +78,8 @@ export function collectTracking(): Record<string, string> {
   const fbclidAt = s?.getItem('ck_fbclid_at');
   return {
     ...data,
+    // external_id estável do visitante (o da URL/PayTracking, se houver): o MESMO no Pixel e no servidor
+    external_id: data.external_id || data.pt_xid || sessionId(),
     ...(fbp ? { fbp } : {}),
     ...(fbc ? { fbc } : {}),
     ...(fbclidAt ? { fbclid_at: fbclidAt } : {}),
@@ -144,4 +146,16 @@ export function initMetaPixel(pixelId: string | null | undefined, user?: PixelUs
 }
 export function pixel(event: string, data: Record<string, unknown> = {}, eventId?: string) {
   window.fbq?.('track', event, data, eventId ? { eventID: eventId } : undefined);
+}
+
+/** external_id do visitante (igual ao enviado no pedido), para o Pixel desde o primeiro evento. */
+export function visitorExternalId() {
+  try {
+    const raw = JSON.parse(safeStorage()?.getItem('ck_utm') ?? '{}');
+    const d = raw?.data ?? {};
+    const p = new URLSearchParams(window.location.search);
+    return p.get('external_id') || p.get('pt_xid') || d.external_id || d.pt_xid || sessionId();
+  } catch {
+    return sessionId();
+  }
 }
