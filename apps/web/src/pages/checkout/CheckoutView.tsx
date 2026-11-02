@@ -349,32 +349,16 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     </div>
   );
 
-  const guarantee = (
-    <div className="ck-card space-y-4 p-5 text-sm">
-      {t.guaranteeDays > 0 && (
-        <div className="flex gap-3">
-          <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
-            <ShieldCheck className="h-5 w-5" />
-            <span className="absolute -bottom-1 -right-1 rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{t.guaranteeDays}d</span>
-          </div>
-          <div>
-            <p className="font-semibold">Garantia incondicional de {t.guaranteeDays} dias</p>
-            <p className="mt-0.5 leading-relaxed text-ck-muted">{t.guaranteeText || 'Se não gostar por qualquer motivo, devolvemos 100% do seu dinheiro.'}</p>
-          </div>
-        </div>
-      )}
+  const guarantee = t.guaranteeDays > 0 && (
+    <div className="ck-card p-5 text-sm">
       <div className="flex gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-500"><Zap className="h-5 w-5" /></div>
-        <div>
-          <p className="font-semibold">Acesso imediato</p>
-          <p className="mt-0.5 leading-relaxed text-ck-muted">Assim que o Pix é confirmado, o acesso chega no seu e-mail.</p>
+        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
+          <ShieldCheck className="h-5 w-5" />
+          <span className="absolute -bottom-1 -right-1 rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{t.guaranteeDays}d</span>
         </div>
-      </div>
-      <div className="flex gap-3">
-        <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-sky-500/10 text-sky-500"><Lock className="h-5 w-5" /></div>
         <div>
-          <p className="font-semibold">Compra 100% segura</p>
-          <p className="mt-0.5 leading-relaxed text-ck-muted">Conexão criptografada e pagamento processado por instituição autorizada pelo Banco Central.</p>
+          <p className="font-semibold">Garantia incondicional de {t.guaranteeDays} dias</p>
+          <p className="mt-0.5 leading-relaxed text-ck-muted">{t.guaranteeText || 'Se não gostar por qualquer motivo, devolvemos 100% do seu dinheiro.'}</p>
         </div>
       </div>
     </div>
