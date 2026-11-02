@@ -7,7 +7,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
-import { brl, digits, maskPhone, productCode } from '@/lib/format';
+import { brl, contrastText, digits, maskPhone, productCode } from '@/lib/format';
 import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track, visitorExternalId } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
 
@@ -46,6 +46,8 @@ export function PixLogo({ className }: { className?: string }) {
     </span>
   );
 }
+
+const validHex = (v?: string | null) => !!v && /^#[0-9a-f]{6}$/i.test(v);
 
 function Countdown({ minutes, text, preview }: { minutes: number; text?: string; preview?: boolean }) {
   const [left, setLeft] = useState(() => {
@@ -387,7 +389,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     <div style={themeStyle(t, prefersDark)} className={cn('@container relative bg-ck-bg font-checkout text-ck-text antialiased [overflow:clip]', preview ? 'min-h-full' : 'min-h-screen')}>
       {/* Barra de anúncio / cronômetro */}
       {(t.showTimer || t.announcement) && (
-        <div className="bg-brand text-brand-fg">
+        <div className={cn(!validHex(t.timerBgColor) && 'bg-brand text-brand-fg')} style={validHex(t.timerBgColor) ? { background: t.timerBgColor!, color: validHex(t.timerTextColor) ? t.timerTextColor! : contrastText(t.timerBgColor!) } : validHex(t.timerTextColor) ? { color: t.timerTextColor! } : undefined}>
           <div className="mx-auto flex min-h-10 max-w-[1120px] flex-wrap items-center justify-center gap-x-6 gap-y-1 px-4 py-2 text-center text-[13px] font-medium">
             {t.announcement && <span className="inline-flex items-center gap-2"><Megaphone className="h-4 w-4" /> {t.announcement}</span>}
             {t.showTimer && <Countdown minutes={t.timerMinutes} text={t.timerText} preview={preview} />}

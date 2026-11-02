@@ -349,6 +349,41 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                       <Field label="Texto"><Input value={theme.timerText ?? ''} onChange={(e) => setT({ timerText: e.target.value })} placeholder="Oferta reservada por" /></Field>
                     </div>
                   )}
+                  {(theme.showTimer || theme.announcement) && (
+                    <div className="space-y-3">
+                      <div>
+                        <p className="mb-2 text-sm font-medium text-zinc-700">Cor da barra do cronômetro</p>
+                        <div className="flex flex-wrap gap-2">
+                          {[
+                            { c: null, label: 'Cor principal' },
+                            { c: '#dc2626', label: 'Vermelho' },
+                            { c: '#111827', label: 'Preto' },
+                            { c: '#f59e0b', label: 'Amarelo' },
+                            { c: '#ea580c', label: 'Laranja' },
+                            { c: '#16a34a', label: 'Verde' },
+                            { c: '#7c3aed', label: 'Roxo' },
+                          ].map((o) => {
+                            const on = (theme.timerBgColor ?? null) === o.c;
+                            return (
+                              <button key={o.label} type="button" title={o.label} onClick={() => setT({ timerBgColor: o.c, timerTextColor: null })} className={cn('flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition', on ? 'border-blue-600 ring-2 ring-blue-600/20' : 'border-zinc-200 hover:border-zinc-300')}>
+                                <span className="h-4 w-4 rounded-full ring-1 ring-black/10" style={{ background: o.c ?? (theme.primaryColor || '#16a34a') }} />
+                                {o.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <Field label="Fundo (personalizado)">{colorInput(theme.timerBgColor ?? (theme.primaryColor || '#16a34a'), (v) => setT({ timerBgColor: v }))}</Field>
+                        <Field label="Texto" hint="Vazio = automático (contraste)">
+                          <div className="flex gap-2">
+                            {colorInput(theme.timerTextColor ?? '#ffffff', (v) => setT({ timerTextColor: v }))}
+                            {theme.timerTextColor && <Button type="button" variant="ghost" className="h-12 shrink-0" onClick={() => setT({ timerTextColor: null })}>Auto</Button>}
+                          </div>
+                        </Field>
+                      </div>
+                    </div>
+                  )}
                 </Group>
                 <Group title="Confiança e celular">
                   <div className="flex flex-col gap-3">

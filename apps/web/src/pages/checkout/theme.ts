@@ -27,6 +27,10 @@ export interface Theme {
   showTimer?: boolean;
   timerMinutes?: number;
   timerText?: string;
+  /** cor de fundo da barra do cronômetro/aviso (vazio = cor principal) */
+  timerBgColor?: string | null;
+  /** cor do texto da barra (vazio = automático, contrastando com o fundo) */
+  timerTextColor?: string | null;
   showSeals?: boolean;
   stickyMobileCta?: boolean;
 }
