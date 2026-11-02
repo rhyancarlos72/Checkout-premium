@@ -349,21 +349,6 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     </div>
   );
 
-  const guarantee = t.guaranteeDays > 0 && (
-    <div className="ck-card p-5 text-sm">
-      <div className="flex gap-3">
-        <div className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600">
-          <ShieldCheck className="h-5 w-5" />
-          <span className="absolute -bottom-1 -right-1 rounded-full bg-emerald-600 px-1 text-[10px] font-bold text-white">{t.guaranteeDays}d</span>
-        </div>
-        <div>
-          <p className="font-semibold">Garantia incondicional de {t.guaranteeDays} dias</p>
-          <p className="mt-0.5 leading-relaxed text-ck-muted">{t.guaranteeText || 'Se não gostar por qualquer motivo, devolvemos 100% do seu dinheiro.'}</p>
-        </div>
-      </div>
-    </div>
-  );
-
   const testimonials = (t.testimonials?.length ?? 0) > 0 && (
     <div className="space-y-3">
       {t.testimonials!.filter((x) => x.text).map((tm, i) => (
@@ -536,13 +521,13 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                     key={b.id}
                     className={cn(
                       'relative overflow-hidden rounded-ck border-2 border-dashed transition-all duration-300',
-                      on ? 'border-brand bg-brand/[.06] shadow-xl shadow-brand/15' : 'ck-bump-idle border-amber-400 bg-ck-surface',
+                      on ? 'border-brand bg-brand/[.06] shadow-xl shadow-brand/15' : 'ck-bump-idle border-amber-300 bg-ck-surface',
                     )}
                   >
                     {/* faixa superior */}
-                    <div className={cn('flex items-center justify-between gap-2 px-4 py-2 text-[12px] font-extrabold uppercase tracking-wider', on ? 'bg-brand text-brand-fg' : 'bg-gradient-to-r from-amber-400 to-orange-400 text-amber-950')}>
+                    <div className={cn('flex items-center justify-between gap-2 px-4 py-2 text-[12px] font-extrabold uppercase tracking-wider', on ? 'bg-brand text-brand-fg' : 'bg-[#fff4c2] text-[#7a5200]')}>
                       <span className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 fill-current" /> Oferta única · só nesta página</span>
-                      {off > 0 && <span className="rounded-full bg-black/15 px-2 py-0.5">-{off}%</span>}
+                      {off > 0 && <span className={cn('rounded-full px-2 py-0.5', on ? 'bg-black/15' : 'bg-[#ffe27a] text-[#6b4700]')}>-{off}%</span>}
                     </div>
 
                     <button type="button" onClick={() => toggleBump(b.id)} aria-pressed={on} className="block w-full text-left">
@@ -551,7 +536,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                           {b.image_url ? (
                             <img src={b.image_url} alt="" className="h-[88px] w-[88px] rounded-[calc(var(--ck-r)*.6)] object-cover shadow-md ring-1 ring-ck-border @md:h-24 @md:w-24" loading="lazy" />
                           ) : (
-                            <div className="flex h-[88px] w-[88px] items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-gradient-to-br from-amber-300 to-orange-400 text-amber-950 shadow-md @md:h-24 @md:w-24"><Gift className="h-9 w-9" /></div>
+                            <div className="flex h-[88px] w-[88px] items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-[#fff1b8] text-[#7a5200] shadow-md @md:h-24 @md:w-24"><Gift className="h-9 w-9" /></div>
                           )}
                           {off > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[11px] font-extrabold text-white shadow-md">-{off}%</span>}
                         </div>
@@ -569,11 +554,11 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                       <div
                         className={cn(
                           'flex items-center gap-3 border-t-2 border-dashed px-4 py-3.5 text-[14px] font-extrabold transition-colors duration-300',
-                          on ? 'border-brand/30 bg-brand text-brand-fg' : 'border-amber-300 bg-amber-300 text-amber-950',
+                          on ? 'border-brand/30 bg-brand text-brand-fg' : 'border-amber-200 bg-[#fff9e0] text-[#5c3d00]',
                         )}
                       >
                         {!on && <ArrowRight className="ck-nudge h-5 w-5 shrink-0" strokeWidth={3} />}
-                        <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-amber-950/60 bg-[#fff]')}>
+                        <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-[#c9a227] bg-[#fff]')}>
                           {on && <Check className="h-4 w-4" strokeWidth={3.5} />}
                         </span>
                         <span className="flex-1 leading-snug">{on ? 'Adicionado ao seu pedido!' : `Sim! Quero adicionar por ${brl(b.price_cents)}`}</span>
@@ -608,7 +593,6 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           </div>
 
           <div className="space-y-5 @4xl:hidden">
-            {guarantee}
             {testimonials}
           </div>
         </form>
@@ -623,7 +607,6 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
               {couponBlock}
               {totals}
             </section>
-            {guarantee}
             {testimonials}
           </div>
         </aside>

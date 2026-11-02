@@ -167,7 +167,7 @@ html.admin-dark ::selection { background: rgb(16 185 129 / .35); }
 /* campos sem ícone (estilo "Dados pessoais") */
 .ck-input-plain { padding-left: 1rem; padding-right: 2.75rem; border-width: 1px; height: 50px; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; }
 /* order bump: brilho pulsante quando ainda não marcado + seta "cutucando" */
-@keyframes ck-bump-glow { 0%, 100% { box-shadow: 0 0 0 0 rgb(251 191 36 / .0) } 50% { box-shadow: 0 0 0 6px rgb(251 191 36 / .22) } }
+@keyframes ck-bump-glow { 0%, 100% { box-shadow: 0 0 0 0 rgb(251 191 36 / .0) } 50% { box-shadow: 0 0 0 5px rgb(253 224 71 / .25) } }
 .ck-bump-idle { animation: ck-bump-glow 2.2s ease-in-out infinite; }
 @keyframes ck-nudge { 0%, 100% { transform: translateX(0) } 50% { transform: translateX(5px) } }
 .ck-nudge { animation: ck-nudge 1s ease-in-out infinite; }
