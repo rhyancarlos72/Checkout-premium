@@ -9,6 +9,7 @@ import { PageHeader } from './AdminApp';
 import { GatewayCards } from './GatewayCards';
 import { WebhooksCard } from './WebhooksCard';
 import { WhatsAppCard } from './WhatsAppCard';
+import { InvoicesCard } from './InvoicesCard';
 
 interface Integrations {
   providers: { name: string; configured: boolean }[];
@@ -58,6 +59,8 @@ export default function IntegrationsPage() {
 
         <WhatsAppCard toast={toast} />
 
+        <InvoicesCard toast={toast} />
+
         <WebhooksCard toast={toast} />
 
         <Card title="E-mail (entrega e recuperação)" action={<Status ok={data.email.configured} />}>
@@ -72,7 +75,7 @@ export default function IntegrationsPage() {
 
         <Card title="Conciliação de pagamentos" className="lg:col-span-2">
           <div className="flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-zinc-600">A cada 2 minutos o sistema confere Pix pendentes direto no gateway, expira os vencidos e envia a recuperação. Dados da loja, meta e recuperação ficam em <Link to="/admin/configuracoes?tab=loja" className="font-medium text-blue-600 hover:underline">Configurações</Link>.</p>
+            <p className="text-zinc-600">A cada 2 minutos o sistema confere Pix pendentes direto no gateway, envia a recuperação e atualiza as notas fiscais. Dados da loja, meta e recuperação ficam em <Link to="/admin/configuracoes?tab=loja" className="font-medium text-blue-600 hover:underline">Configurações</Link>.</p>
             <Button variant="secondary" className="shrink-0" loading={run.isPending && run.variables?.path === '/jobs/run'} onClick={() => run.mutate({ path: '/jobs/run' })}><RefreshCw className="h-4 w-4" /> Rodar agora</Button>
           </div>
         </Card>

@@ -1,11 +1,12 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Download, MailCheck, MailPlus, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, MailCheck, MailPlus, Receipt, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Badge, Button, Card, cn, EmptyState, Input, Modal, PageLoader, Select, StatusBadge, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { brl, dateTime, productCode } from '@/lib/format';
 import { PageHeader } from './AdminApp';
+import { invoiceStatus } from './InvoicesCard';
 
 interface OrderRow {
   id: string;
@@ -144,6 +145,7 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
     onSuccess: (r, a) => {
       qc.invalidateQueries({ queryKey: ['order', id] });
       qc.invalidateQueries({ queryKey: ['orders'] });
+      if (a.startsWith('invoice')) return (r?.ok === false ? toast.err : toast.ok)(r?.message ?? 'Feito');
       toast.ok(a === 'sync' ? `Consulta ao gateway: ${r.result}` : 'Feito');
     },
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
@@ -186,6 +188,33 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
               <div className="truncate"><span className="text-gray-500">ip:</span> <span className="font-mono text-xs">{o.ip}</span></div>
             </div>
           </div>
+          {o.status === 'paid' && (
+            <div className="rounded-xl border border-gray-200 p-4 text-sm">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <p className="flex items-center gap-2 font-semibold"><Receipt className="h-4 w-4 text-zinc-500" /> Nota fiscal</p>
+                {o.invoice && <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', invoiceStatus[o.invoice.status]?.cls)}>{invoiceStatus[o.invoice.status]?.label ?? o.invoice.status}</span>}
+              </div>
+              {o.invoice ? (
+                <div className="space-y-2">
+                  <p className="text-gray-600">{o.invoice.type === 'product' ? 'NF-e (produto)' : 'NFS-e (serviço)'} · {brl(o.invoice.amount_cents)}{o.invoice.number && ` · nº ${o.invoice.number}`} · {dateTime(o.invoice.updated_at)}</p>
+                  {o.invoice.message && <p className={cn('rounded-lg p-2 text-xs', o.invoice.status === 'error' ? 'bg-red-50 text-red-700' : 'bg-zinc-50 text-zinc-600')}>{o.invoice.message}</p>}
+                  <div className="flex flex-wrap gap-2">
+                    {o.invoice.status === 'error' && <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'invoice'} onClick={() => action.mutate('invoice')}><RefreshCw className="h-3.5 w-3.5" /> Tentar emitir de novo</Button>}
+                    {o.invoice.provider_id && o.invoice.status !== 'error' && <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'invoice/refresh'} onClick={() => action.mutate('invoice/refresh')}><RefreshCw className="h-3.5 w-3.5" /> Atualizar status</Button>}
+                    {o.invoice.status === 'issued' && <>
+                      <Button size="sm" variant="ghost" onClick={() => adminApi.download(`/orders/${id}/invoice/pdf`, `nota-${productCode(o.number)}.pdf`).catch(() => toast.err('PDF ainda não disponível'))}><Download className="h-3.5 w-3.5" /> PDF</Button>
+                      <Button size="sm" variant="ghost" onClick={() => adminApi.download(`/orders/${id}/invoice/xml`, `nota-${productCode(o.number)}.xml`).catch(() => toast.err('XML ainda não disponível'))}><Download className="h-3.5 w-3.5" /> XML</Button>
+                    </>}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-gray-500">Nenhuma nota emitida para esta venda.</p>
+                  <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'invoice'} onClick={() => action.mutate('invoice')}><Receipt className="h-3.5 w-3.5" /> Emitir nota agora</Button>
+                </div>
+              )}
+            </div>
+          )}
           {o.error && <p className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{o.error}</p>}
           <div className="rounded-xl border border-gray-200 p-4 text-sm">
             <p className="mb-2 font-semibold">Histórico de integrações</p>

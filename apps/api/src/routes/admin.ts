@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { env, features, isProd } from '../config/env.js';
 import { HttpError, must, productCode, supabase } from '../lib/core.js';
 import { clearAuthCache, requireAdmin, requireOwner } from '../middleware/auth.js';
+import { emitInvoice, getInvoiceSettings, invoiceFile, refreshInvoice, saveInvoiceSettings, testSpedy } from '../services/invoices.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
 import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder, testEmail } from '../services/email.js';
@@ -431,7 +432,8 @@ adminRouter.get('/orders/:id', async (req, res) => {
     supabase.from('integration_logs').select('*').eq('order_id', id).order('created_at', { ascending: false }).limit(50),
     supabase.from('events').select('*').eq('order_id', id).order('created_at', { ascending: false }).limit(50),
   ]);
-  res.json({ ...order, logs: logs.data ?? [], events: events.data ?? [] });
+  const { data: invoice } = await supabase.from('invoices').select('type, status, number, message, amount_cents, attempts, created_at, updated_at, provider_id').eq('order_id', id).maybeSingle();
+  res.json({ ...order, invoice: invoice ?? null, logs: logs.data ?? [], events: events.data ?? [] });
 });
 
 adminRouter.post('/orders/:id/sync', async (req, res) => {
@@ -458,6 +460,47 @@ adminRouter.post('/orders/:id/recovery-email', async (req, res) => {
   const sentAt = new Date().toISOString();
   await supabase.from('orders').update({ recovery_sent_at: sentAt }).eq('id', id);
   res.json({ ok: true, message: `E-mail de recuperação enviado para ${o.customer.email}`, sent_at: sentAt });
+});
+
+// ------------------------------------------------------------------ nota fiscal do pedido (Spedy)
+adminRouter.post('/orders/:id/invoice', async (req, res) => {
+  res.json(await emitInvoice(uuid.parse(req.params.id), { retry: true, manual: true }));
+});
+adminRouter.post('/orders/:id/invoice/refresh', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const { data } = await supabase.from('invoices').select('type, provider_id').eq('order_id', id).maybeSingle();
+  if (!(data as any)?.provider_id) throw new HttpError(400, 'Nota ainda não foi criada na Spedy');
+  const st = await refreshInvoice(id, (data as any).type, (data as any).provider_id);
+  res.json({ ok: Boolean(st), message: st ? `Status atualizado: ${({ issued: 'emitida', processing: 'em processamento', error: 'com erro', canceled: 'cancelada' } as any)[st]}` : 'Não foi possível consultar a Spedy' });
+});
+adminRouter.get('/orders/:id/invoice/:kind', async (req, res) => {
+  const kind = z.enum(['pdf', 'xml']).parse(req.params.kind);
+  const f = await invoiceFile(uuid.parse(req.params.id), kind);
+  if (!f) throw new HttpError(404, 'Arquivo da nota ainda não disponível');
+  res.setHeader('Content-Type', f.type);
+  res.setHeader('Content-Disposition', `attachment; filename="nota-fiscal.${kind}"`);
+  res.send(f.body);
+});
+
+// configuração da Spedy (somente o dono: rota em /integrations)
+adminRouter.get('/integrations/invoices', async (_req, res) => {
+  const s = await getInvoiceSettings();
+  res.json({ ...s, apiKey: '', apiKey_hint: gwMask(s.apiKey), has_apiKey: Boolean(s.apiKey) });
+});
+adminRouter.put('/integrations/invoices', async (req, res) => {
+  try {
+    await saveInvoiceSettings(req.body);
+  } catch (e: any) {
+    if (e?.status === 400) throw new HttpError(400, e.message);
+    throw e;
+  }
+  res.json({ ok: true });
+});
+adminRouter.post('/integrations/invoices/test', async (req, res) => res.json(await testSpedy(req.body ?? {})));
+adminRouter.get('/integrations/invoices/list', async (_req, res) => {
+  const { data, error } = await supabase.from('invoices').select('order_id, type, status, number, message, amount_cents, updated_at, order:orders(number, customer:customers(name))').order('created_at', { ascending: false }).limit(30);
+  if (error) throw new HttpError(500, error.message);
+  res.json(data ?? []);
 });
 
 adminRouter.post('/orders/:id/refund', async (req, res) => {

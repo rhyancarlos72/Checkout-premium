@@ -5,6 +5,7 @@ import { HttpError, logger, must, onlyDigits, productCode, supabase } from '../l
 import { getProvider, type ProviderName } from '../providers/index.js';
 import { globalProvider } from './gateways.js';
 import { pixQrDataUrl } from '../lib/qr.js';
+import { emitInvoice } from './invoices.js';
 import { sendDeliveryEmail, type DeliveryItem } from './email.js';
 import { sendWhatsAppApproved } from './whatsapp.js';
 import { checkCoupon, computeTotals, type CouponRow, type PriceLine } from './pricing.js';
@@ -309,6 +310,7 @@ export async function syncOrderWithProvider(orderId: string): Promise<string> {
       await Promise.allSettled([
         fulfill(orderId),
         dispatchTracking(orderId, 'sale.approved'),
+        emitInvoice(orderId), // uma nota por venda (produto + order bumps)
         deliveryItems(orderId).then((items) => sendWhatsAppApproved(orderId, items.map((it, i) => ({ ...it, kind: i === 0 ? 'main' : 'bump' })))),
       ]);
       return 'paid';

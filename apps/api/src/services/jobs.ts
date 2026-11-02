@@ -4,6 +4,7 @@ import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
 import { notifyPixExpired, syncOrderWithProvider } from './orders.js';
 import { getSettings } from './settings.js';
+import { refreshPendingInvoices } from './invoices.js';
 
 /**
  * Jobs de manutenção:
@@ -107,6 +108,7 @@ export async function runJobs() {
     await expireOrders();
     await sendRecoveries();
     await sendWhatsAppRecoveries();
+    await refreshPendingInvoices();
   } catch (e) {
     logger.error({ err: e }, 'Jobs falharam');
   } finally {
