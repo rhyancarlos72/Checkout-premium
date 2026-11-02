@@ -1,7 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronLeft, ChevronRight, Download, MailCheck, MailPlus, Receipt, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Badge, Button, Card, cn, EmptyState, Input, Modal, PageLoader, Select, StatusBadge, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { brl, dateTime, productCode } from '@/lib/format';
@@ -131,7 +130,7 @@ function RecoveryEmailButton({ order }: { order: OrderRow }) {
       >
         {send.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : sent ? <MailCheck className="h-4 w-4" /> : <MailPlus className="h-4 w-4" />}
       </button>
-      {toast.node && createPortal(toast.node, document.body)}
+      {toast.node}
     </>
   );
 }

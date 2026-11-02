@@ -42,10 +42,15 @@ export function InvoicesCard({ toast }: { toast: Toast }) {
   const { data, isLoading } = useQuery({ queryKey: ['invoice-settings'], queryFn: () => adminApi.get<InvoiceSettings>('/integrations/invoices') });
   const list = useQuery({ queryKey: ['invoice-list'], queryFn: () => adminApi.get<InvoiceRow[]>('/integrations/invoices/list') });
   const [open, setOpen] = useState(false);
+  const [lastTest, setLastTest] = useState<{ ok: boolean; message: string; at: number } | null>(null);
   const test = useMutation({
     mutationFn: () => adminApi.post<{ ok: boolean; message: string }>('/integrations/invoices/test'),
-    onSuccess: (r) => (r.ok ? toast.ok : toast.err)(r.message),
-    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
+    onSuccess: (r) => (setLastTest({ ...r, at: Date.now() }), (r.ok ? toast.ok : toast.err)(r.message)),
+    onError: (e) => {
+      const message = e instanceof ApiError ? e.message : 'Não foi possível testar agora';
+      setLastTest({ ok: false, message, at: Date.now() });
+      toast.err(message);
+    },
   });
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => adminApi.put('/integrations/invoices', { ...data, apiKey: '', enabled }),
@@ -80,8 +85,15 @@ export function InvoicesCard({ toast }: { toast: Toast }) {
 
       <div className="mt-4 flex flex-wrap gap-2">
         <Button onClick={() => setOpen(true)}><Settings2 className="h-4 w-4" /> Configurar</Button>
-        <Button variant="secondary" disabled={!data.has_apiKey} loading={test.isPending} onClick={() => test.mutate()}><PlugZap className="h-4 w-4" /> Testar conexão</Button>
+        <Button variant="secondary" disabled={!data.has_apiKey} loading={test.isPending} onClick={() => test.mutate()}><PlugZap className="h-4 w-4" /> {test.isPending ? 'Testando…' : 'Testar conexão'}</Button>
       </div>
+      {!data.has_apiKey && <p className="mt-2 text-xs text-zinc-500">Salve a chave da API em <b>Configurar</b> para liberar o teste.</p>}
+      {lastTest && (
+        <p className={cn('mt-3 flex items-start gap-2 rounded-xl px-3 py-2.5 text-sm', lastTest.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700')}>
+          {lastTest.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+          <span><b>{lastTest.ok ? 'Funcionou:' : 'Falhou:'}</b> {lastTest.message} <span className="opacity-60">· {new Date(lastTest.at).toLocaleTimeString('pt-BR')}</span></span>
+        </p>
+      )}
 
       {(list.data?.length ?? 0) > 0 && (
         <div className="mt-5 overflow-hidden rounded-xl border border-zinc-200">
@@ -116,6 +128,12 @@ function InvoicesModal({ data, toast, onClose, onSaved }: { data: InvoiceSetting
   const set = (p: Partial<InvoiceSettings>) => setF((x) => ({ ...x, ...p }));
   const setS = (p: Partial<InvoiceSettings['service']>) => setF((x) => ({ ...x, service: { ...x.service, ...p } }));
   const setP = (p: Partial<InvoiceSettings['product']>) => setF((x) => ({ ...x, product: { ...x.product, ...p } }));
+  const [modalTest, setModalTest] = useState<{ ok: boolean; message: string } | null>(null);
+  const testNow = useMutation({
+    mutationFn: () => adminApi.post<{ ok: boolean; message: string }>('/integrations/invoices/test', { apiKey: f.apiKey, type: f.type, apiUrl: f.apiUrl }),
+    onSuccess: (r) => setModalTest(r),
+    onError: (e) => setModalTest({ ok: false, message: e instanceof ApiError ? e.message : 'Não foi possível testar agora' }),
+  });
   const save = useMutation({
     mutationFn: () => {
       const { apiKey_hint: _h, has_apiKey: _k, ...rest } = f;
@@ -189,7 +207,14 @@ function InvoicesModal({ data, toast, onClose, onSaved }: { data: InvoiceSetting
           </div>
         )}
         <p className="rounded-xl bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">Confira códigos e tributação com seu contador. Os valores padrão vieram do sistema antigo.</p>
-        <div className="flex justify-end gap-2">
+        {modalTest && (
+          <p className={cn('flex items-start gap-2 rounded-xl px-3 py-2.5 text-sm', modalTest.ok ? 'bg-emerald-50 text-emerald-800' : 'bg-red-50 text-red-700')}>
+            {modalTest.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+            <span><b>{modalTest.ok ? 'Funcionou:' : 'Falhou:'}</b> {modalTest.message}</span>
+          </p>
+        )}
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button variant="secondary" loading={testNow.isPending} disabled={!f.apiKey && !data.has_apiKey} onClick={() => testNow.mutate()}><PlugZap className="h-4 w-4" /> Testar esta chave</Button>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
           <Button loading={save.isPending} onClick={() => save.mutate()}>Salvar</Button>
         </div>

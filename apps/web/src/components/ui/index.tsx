@@ -194,10 +194,14 @@ export function useToast() {
     const t = setTimeout(() => setToast(null), 3500);
     return () => clearTimeout(t);
   }, [toast]);
-  const node = toast ? (
-    <div className={cn('animate-fade-in fixed bottom-4 left-1/2 z-[60] -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg', toast.tone === 'ok' ? 'bg-zinc-900 text-zinc-50' : 'bg-red-600')}>
-      {toast.msg}
-    </div>
-  ) : null;
+  // Portal no <body>: dentro de uma área animada (transform), o "fixed" ficava preso ao fim da página e o aviso não aparecia na tela
+  const node = toast
+    ? createPortal(
+        <div role="status" aria-live="polite" className={cn('animate-fade-in fixed bottom-4 left-1/2 z-[80] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg', toast.tone === 'ok' ? 'bg-zinc-900 text-zinc-50' : 'bg-red-600')}>
+          {toast.msg}
+        </div>,
+        document.body,
+      )
+    : null;
   return { node, ok: (msg: string) => setToast({ msg, tone: 'ok' }), err: (msg: string) => setToast({ msg, tone: 'err' }) };
 }

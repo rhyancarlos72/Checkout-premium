@@ -163,12 +163,12 @@ export function buildProductPayload(o: InvoiceOrder, s: InvoiceSettings) {
 }
 
 // ------------------------------------------------------------------ API Spedy
-async function spedy(s: InvoiceSettings, method: string, path: string, body?: unknown) {
+async function spedy(s: InvoiceSettings, method: string, path: string, body?: unknown, timeoutMs = 30_000) {
   const res = await fetchWithTimeout(`${s.apiUrl.replace(/\/+$/, '')}${path}`, {
     method,
     headers: { 'X-Api-Key': s.apiKey, 'Content-Type': 'application/json', Accept: 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-    timeoutMs: 30_000,
+    timeoutMs,
   });
   const raw = await res.text();
   let json: any = null;
@@ -301,12 +301,14 @@ export async function testSpedy(sIn?: Partial<InvoiceSettings>) {
   const s = { ...cur, ...sIn, apiKey: sIn?.apiKey || cur.apiKey };
   if (!s.apiKey) return { ok: false, message: 'Informe a chave da API Spedy' };
   try {
-    const r = await spedy(s as InvoiceSettings, 'GET', `${endpoint(s.type ?? 'service')}?page=1&pageSize=1`);
-    if (r.ok) return { ok: true, message: 'Conexão com a Spedy OK' };
-    if (r.status === 401 || r.status === 403) return { ok: false, message: 'Chave da API recusada pela Spedy' };
+    const r = await spedy(s as InvoiceSettings, 'GET', `${endpoint(s.type === 'product' ? 'product' : 'service')}?page=1&pageSize=1`, undefined, 15_000);
+    if (r.ok) return { ok: true, message: `Conexão com a Spedy OK · chave aceita (${s.type === 'product' ? 'NF-e' : 'NFS-e'})` };
+    if (r.status === 401 || r.status === 403) return { ok: false, message: `Chave da API recusada pela Spedy (HTTP ${r.status}). Copie de novo a chave em Spedy → Configurações → API.` };
+    // a Spedy respondeu e não reclamou da chave: autenticação OK, só a listagem não foi aceita
+    if (r.status === 400 || r.status === 404 || r.status === 405) return { ok: true, message: `Spedy respondeu e aceitou a chave (HTTP ${r.status} na listagem de teste)` };
     return { ok: false, message: `Spedy respondeu ${r.status}: ${spedyMessage(r.json, r.raw)}` };
   } catch (e: any) {
-    return { ok: false, message: `Falha de conexão com a Spedy: ${e?.message ?? e}` };
+    return { ok: false, message: e?.name === 'AbortError' ? 'A Spedy não respondeu em 15 segundos. Tente de novo em instantes.' : `Falha de conexão com a Spedy: ${e?.message ?? e}` };
   }
 }
 
