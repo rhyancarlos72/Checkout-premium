@@ -342,6 +342,8 @@ const themeSchema = z
     showTimer: z.boolean().default(false),
     timerMinutes: z.number().int().min(1).max(120).default(15),
     timerText: z.string().max(60).optional(),
+    timerBgColor: hex.nullable().optional(),
+    timerTextColor: hex.nullable().optional(),
     showSeals: z.boolean().default(true),
     stickyMobileCta: z.boolean().default(true),
   })
