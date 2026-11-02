@@ -33,13 +33,11 @@ publicRouter.get('/brand', async (_req, res) => {
   res.json(brand);
 });
 
-publicRouter.get('/checkouts/:slug', async (req, res) => {
-  const c = await loadCheckout(String(req.params.slug));
+/** Dados públicos do checkout (também embutidos no HTML da página para abrir sem esperar a API). */
+export async function publicCheckoutData(slug: string) {
+  const c = await loadCheckout(slug);
   const s = await getSettings();
-  // Sem cache: alterações no painel (bumps, preço, visual) aparecem na hora,
-  // inclusive atrás do cache da hospedagem (LiteSpeed/Hostinger)
-  res.set('Cache-Control', 'no-store, max-age=0');
-  res.json({
+  return {
     id: c.id,
     slug: c.slug,
     name: c.name,
@@ -57,7 +55,15 @@ publicRouter.get('/checkouts/:slug', async (req, res) => {
       image_url: b.image_url,
     })),
     store: { name: s.store.name, supportEmail: s.store.supportEmail, document: s.store.document },
-  });
+  };
+}
+
+publicRouter.get('/checkouts/:slug', async (req, res) => {
+  const data = await publicCheckoutData(String(req.params.slug));
+  // Sem cache: alterações no painel (bumps, preço, visual) aparecem na hora,
+  // inclusive atrás do cache da hospedagem (LiteSpeed/Hostinger)
+  res.set('Cache-Control', 'no-store, max-age=0');
+  res.json(data);
 });
 
 publicRouter.post('/checkouts/:slug/quote', quoteLimiter, async (req, res) => {

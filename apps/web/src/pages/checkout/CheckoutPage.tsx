@@ -26,6 +26,18 @@ function Skeleton() {
   );
 }
 
+/** Checkout já embutido no HTML pelo servidor (abre sem esperar a API → banner/LCP muito mais rápido). */
+function embedded(slug: string): PublicCheckout | undefined {
+  try {
+    const el = document.getElementById('ck-data');
+    if (!el?.textContent) return undefined;
+    const v = JSON.parse(el.textContent) as { slug: string; data: PublicCheckout };
+    return v.slug === slug ? v.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function CheckoutPage() {
   const params = useParams();
   const [search] = useSearchParams();
@@ -34,6 +46,7 @@ export default function CheckoutPage() {
   const { data, isLoading, error } = useQuery({
     queryKey: ['checkout', slug],
     queryFn: () => publicApi.get<PublicCheckout>(`/checkouts/${slug}`),
+    initialData: () => embedded(slug),
     retry: 1,
   });
 

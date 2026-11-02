@@ -9,7 +9,7 @@ import { pinoHttp } from 'pino-http';
 import { ZodError } from 'zod';
 import { env } from './config/env.js';
 import { escapeHtml, HttpError, logger } from './lib/core.js';
-import { loadCheckout } from './services/orders.js';
+import { publicCheckoutData } from './routes/public.js';
 import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
@@ -119,10 +119,11 @@ export function createApp() {
       const slug = p === '/checkout' ? String(req.query.produto_id ?? '') : (p.match(/^\/c\/([a-z0-9-]{3,60})$/)?.[1] ?? '');
       if (!/^[a-z0-9-]{3,60}$/.test(slug)) return null;
       try {
-        const c: any = await Promise.race([loadCheckout(slug), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))]);
+        const c: any = await Promise.race([publicCheckoutData(slug), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))]);
         const name = c.theme?.headline || c.product?.name || c.name;
         const desc = String(c.theme?.subheadline || c.product?.description || `Compre ${name} com pagamento via Pix e acesso imediato.`).replace(/\s+/g, ' ').slice(0, 155);
-        return { title: `${name} | Checkout seguro`, desc, image: c.product?.image_url || c.theme?.mockupUrl || null, url: `${env.PUBLIC_URL}/checkout?produto_id=${slug}` };
+        const banner: string | null = c.theme?.bannerUrl || c.theme?.mockupUrl || null;
+        return { title: `${name} | Checkout seguro`, desc, image: c.product?.image_url || c.theme?.mockupUrl || null, url: `${env.PUBLIC_URL}/checkout?produto_id=${slug}`, banner, data: c };
       } catch {
         return null;
       }
@@ -150,6 +151,13 @@ export function createApp() {
           body = setMeta(body, 'twitter:card', 'name', 'summary_large_image');
         }
         body = body.replace('</head>', `    <link rel="canonical" href="${escapeHtml(seo.url)}" />\n  </head>`);
+        // LCP: o navegador começa a baixar o banner junto com o HTML (antes esperava o JS + a API)
+        const preload = [`<link rel="preconnect" href="${supabaseHost}" crossorigin />`];
+        if (seo.banner) preload.push(`<link rel="preload" as="image" href="${escapeHtml(seo.banner)}" fetchpriority="high" />`);
+        body = body.replace('<head>', `<head>\n    ${preload.join('\n    ')}`);
+        // dados do checkout já no HTML (bloco JSON, não executável): a página monta sem esperar a API
+        const json = JSON.stringify({ slug: seo.data.slug, data: seo.data }).replace(/</g, '\\u003c');
+        body = body.replace('<div id="root"></div>', `<div id="root"></div>\n    <script type="application/json" id="ck-data">${json}</script>`);
       }
       res.type('html').send(body);
     });

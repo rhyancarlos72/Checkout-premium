@@ -1,11 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Copy, Crown, ImageIcon, KeyRound, Trash2, UserPlus, Users, LogOut, Mail, MonitorSmartphone, Shield, ShieldCheck, ShieldOff, Store, Target, User } from 'lucide-react';
+import { CheckCircle2, Copy, Crown, Eye, EyeOff, ImageIcon, KeyRound, Trash2, UserPlus, Users, LogOut, Mail, MonitorSmartphone, Shield, ShieldCheck, ShieldOff, Store, Target, User } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, cn, Field, Input, PageLoader, Switch, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { useMe } from '@/lib/me';
+import { maskEmail, useHideEmail } from '@/lib/privacy';
 import { BrandMark, defaultBrand, type Brand } from '@/lib/brand';
 import { ImageUpload } from '@/components/ImageUpload';
 import { centsToInput, parseMoney } from '@/lib/format';
@@ -50,6 +51,7 @@ function ProfileTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   const [name, setName] = useState((user?.user_metadata?.full_name as string) ?? '');
   const [email, setEmail] = useState(user?.email ?? '');
   const [busy, setBusy] = useState<string | null>(null);
+  const priv = useHideEmail();
 
   async function saveName() {
     setBusy('name');
@@ -71,8 +73,17 @@ function ProfileTab({ toast }: { toast: ReturnType<typeof useToast> }) {
         <Field label="Nome completo"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" autoComplete="name" /></Field>
       </Panel>
       <Panel title="E-mail de acesso" desc="Usado para entrar e para recuperar a senha." icon={<Mail className="h-5 w-5" />} footer={<Button loading={busy === 'email'} disabled={email.trim().toLowerCase() === user?.email} onClick={saveEmail}>Alterar e-mail</Button>}>
-        <Field label="E-mail" hint="A troca só vale depois de confirmar pelo link enviado por e-mail."><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" /></Field>
-        {user?.new_email && <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">Aguardando confirmação de <b>{user.new_email}</b>.</p>}
+        <Field label="E-mail" hint="A troca só vale depois de confirmar pelo link enviado por e-mail.">
+          <div className="flex gap-2">
+            {priv.hidden ? (
+              <Input value={maskEmail(email)} readOnly onFocus={priv.toggle} className="font-mono" aria-label="E-mail (oculto)" />
+            ) : (
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
+            )}
+            <Button variant="secondary" className="h-12 shrink-0" onClick={priv.toggle} aria-label={priv.hidden ? 'Mostrar e-mail' : 'Esconder e-mail'}>{priv.hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</Button>
+          </div>
+        </Field>
+        {user?.new_email && <p className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">Aguardando confirmação de <b>{priv.show(user.new_email)}</b>.</p>}
       </Panel>
     </div>
   );
@@ -320,6 +331,7 @@ interface Member { user_id: string; email: string; name: string; role: 'owner' |
 function TeamTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   const qc = useQueryClient();
   const team = useQuery({ queryKey: ['team'], queryFn: () => adminApi.get<Member[]>('/team') });
+  const priv = useHideEmail();
   const [email, setEmail] = useState('');
   const invite = useMutation({
     mutationFn: () => adminApi.post<{ message: string }>('/team', { email }),
@@ -349,8 +361,8 @@ function TeamTab({ toast }: { toast: ReturnType<typeof useToast> }) {
               <li key={m.user_id} className="flex items-center gap-3 py-3">
                 <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-semibold', m.role === 'owner' ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-600')}>{m.role === 'owner' ? <Crown className="h-4 w-4" /> : (m.name || m.email).charAt(0).toUpperCase()}</div>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-zinc-900">{m.name || m.email}</p>
-                  <p className="truncate text-xs text-zinc-500">{m.name ? `${m.email} · ` : ''}{m.role === 'owner' ? 'Dono · acesso total' : m.last_sign_in_at ? 'Equipe' : 'Equipe · convite pendente'}</p>
+                  <p className="truncate text-sm font-medium text-zinc-900">{m.name || (m.role === 'owner' ? priv.show(m.email) : m.email)}</p>
+                  <p className="truncate text-xs text-zinc-500">{m.name ? `${m.role === 'owner' ? priv.show(m.email) : m.email} · ` : ''}{m.role === 'owner' ? 'Dono · acesso total' : m.last_sign_in_at ? 'Equipe' : 'Equipe · convite pendente'}</p>
                 </div>
                 {m.role !== 'owner' && (
                   <Button size="sm" variant="ghost" aria-label="Remover acesso" onClick={() => confirm(`Remover o acesso de ${m.email}?`) && remove.mutate(m.user_id)}><Trash2 className="h-4 w-4" /></Button>

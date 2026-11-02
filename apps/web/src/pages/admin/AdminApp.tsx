@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Boxes, CreditCard, LayoutDashboard, LogOut, Menu, Moon, PlugZap, RefreshCw, Settings, ShoppingCart, Sun, Ticket, Users, X, Zap } from 'lucide-react';
+import { Boxes, CreditCard, Eye, EyeOff, LayoutDashboard, LogOut, Menu, Moon, PlugZap, RefreshCw, Settings, ShoppingCart, Sun, Ticket, Users, X, Zap } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { cn, PageLoader } from '@/components/ui';
@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from '@/lib/auth';
 import { brl } from '@/lib/format';
 import { BrandMark, defaultBrand, useBrand } from '@/lib/brand';
 import { useMe } from '@/lib/me';
+import { useHideEmail } from '@/lib/privacy';
 import { supabase } from '@/lib/supabase';
 import BumpsPage from './BumpsPage';
 import CheckoutsPage from './CheckoutsPage';
@@ -104,6 +105,7 @@ function ProgressCard() {
 function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: string; email: string; onNavigate?: () => void; theme: AdminTheme; onToggleTheme: () => void }) {
   const brand = useBrand();
   const isOwner = useMe().data?.role === 'owner';
+  const priv = useHideEmail();
   return (
     <nav className="flex h-full flex-col border-r border-white/[.06] bg-[#0d1426] font-display text-slate-300">
       <div className="flex h-16 items-center gap-3 px-5">
@@ -133,12 +135,15 @@ function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: stri
       </div>
       <div className="space-y-3 p-3">
         <ProgressCard />
-        <div className="flex items-center gap-3 rounded-xl px-2 py-1.5">
+        <div className="flex items-center gap-2 rounded-xl px-1.5 py-1.5">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-cyan-400 text-sm font-bold text-white">{(name || email)[0]?.toUpperCase()}</div>
           <Link to="/admin/configuracoes" onClick={onNavigate} className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-white">{name || 'Administrador'}</p>
-            <p className="truncate text-xs text-slate-400">{email}</p>
+            <p className="truncate text-xs text-slate-400">{priv.show(email)}</p>
           </Link>
+          <button onClick={priv.toggle} className="flex shrink-0 items-center rounded-md p-1 text-xs text-slate-400 transition hover:text-white" aria-label={priv.hidden ? 'Mostrar e-mail' : 'Esconder e-mail'} title={priv.hidden ? 'Mostrar e-mail' : 'Esconder e-mail'}>
+            {priv.hidden ? <EyeOff className="h-3.5 w-3.5 shrink-0" /> : <Eye className="h-3.5 w-3.5 shrink-0" />}
+          </button>
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
           <button onClick={() => supabase.auth.signOut()} className="rounded-lg p-2 text-slate-400 transition hover:bg-white/5 hover:text-white" aria-label="Sair" title="Sair">
             <LogOut className="h-4 w-4" />
