@@ -8,6 +8,7 @@ import { Button, cn, Field, Input, Select, Switch, Textarea } from '@/components
 import { adminApi, ApiError } from '@/lib/api';
 import { brl, centsToInput, parseMoney, productCode } from '@/lib/format';
 import { checkoutPath, checkoutUrl } from '@/lib/links';
+import { useMe } from '@/lib/me';
 import { CheckoutView } from '../checkout/CheckoutView';
 import { palettes, themeDefaults, type PublicCheckout, type Theme } from '../checkout/theme';
 import type { Bump } from './BumpsPage';
@@ -100,8 +101,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
   const [mobileView, setMobileView] = useState<'edit' | 'preview'>('edit');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const gw = useQuery({ queryKey: ['gateways'], queryFn: () => adminApi.get<{ defaultProvider: 'woovi' | 'efi' | null }>('/gateways'), staleTime: 60_000 });
-  const globalGw = gw.data?.defaultProvider ?? null;
+  const globalGw = useMe().data?.defaultProvider ?? null;
   const [f, setF] = useState({
     name: checkout?.name ?? '',
     slug: checkout?.slug ?? linkCode(),

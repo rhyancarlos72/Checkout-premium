@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Copy, ImageIcon, KeyRound, LogOut, Mail, MonitorSmartphone, Shield, ShieldCheck, ShieldOff, Store, Target, User } from 'lucide-react';
+import { CheckCircle2, Copy, Crown, ImageIcon, KeyRound, Trash2, UserPlus, Users, LogOut, Mail, MonitorSmartphone, Shield, ShieldCheck, ShieldOff, Store, Target, User } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Button, cn, Field, Input, PageLoader, Switch, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { useMe } from '@/lib/me';
 import { BrandMark, defaultBrand, type Brand } from '@/lib/brand';
 import { ImageUpload } from '@/components/ImageUpload';
 import { centsToInput, parseMoney } from '@/lib/format';
@@ -23,6 +24,7 @@ const tabs = [
   { key: 'seguranca', label: 'Segurança', icon: Shield },
   { key: 'loja', label: 'Loja e metas', icon: Store },
   { key: 'marca', label: 'Logo do sistema', icon: ImageIcon },
+  { key: 'equipe', label: 'Equipe', icon: Users, ownerOnly: true },
 ] as const;
 
 function Panel({ title, desc, icon, children, footer }: { title: string; desc?: string; icon: ReactNode; children: ReactNode; footer?: ReactNode }) {
@@ -313,15 +315,65 @@ function BrandTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   );
 }
 
+// ------------------------------------------------------------------ equipe (somente o dono)
+interface Member { user_id: string; email: string; name: string; role: 'owner' | 'staff'; created_at: string; last_sign_in_at: string | null }
+function TeamTab({ toast }: { toast: ReturnType<typeof useToast> }) {
+  const qc = useQueryClient();
+  const team = useQuery({ queryKey: ['team'], queryFn: () => adminApi.get<Member[]>('/team') });
+  const [email, setEmail] = useState('');
+  const invite = useMutation({
+    mutationFn: () => adminApi.post<{ message: string }>('/team', { email }),
+    onSuccess: (r) => (toast.ok(r.message), setEmail(''), qc.invalidateQueries({ queryKey: ['team'] })),
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao convidar'),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => adminApi.del(`/team/${id}`),
+    onSuccess: () => (toast.ok('Acesso removido'), qc.invalidateQueries({ queryKey: ['team'] })),
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao remover'),
+  });
+  return (
+    <div className="grid gap-6 xl:grid-cols-2">
+      <Panel title="Adicionar pessoa à equipe" desc="A pessoa recebe um e-mail para criar a senha." icon={<UserPlus className="h-5 w-5" />} footer={<Button loading={invite.isPending} disabled={!email.includes('@')} onClick={() => invite.mutate()}>Enviar convite</Button>}>
+        <Field label="E-mail"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="pessoa@email.com" /></Field>
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">
+          <p className="font-semibold text-zinc-800">O que a equipe pode fazer</p>
+          <p className="mt-1">Dashboard, produtos, checkouts, order bumps, cupons, vendas, clientes e as próprias configurações de perfil.</p>
+          <p className="mt-2 font-semibold text-zinc-800">Somente você (dono)</p>
+          <p className="mt-1">Integrações: Woovi, Efí Bank, WhatsApp (Evolution), webhooks/PayTracking e a gestão da equipe. As credenciais também ficam bloqueadas no banco de dados para a equipe.</p>
+        </div>
+      </Panel>
+      <Panel title="Quem tem acesso" icon={<Users className="h-5 w-5" />}>
+        {team.isLoading ? <PageLoader /> : (
+          <ul className="divide-y divide-zinc-100">
+            {(team.data ?? []).map((m) => (
+              <li key={m.user_id} className="flex items-center gap-3 py-3">
+                <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-full font-semibold', m.role === 'owner' ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-600')}>{m.role === 'owner' ? <Crown className="h-4 w-4" /> : (m.name || m.email).charAt(0).toUpperCase()}</div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-zinc-900">{m.name || m.email}</p>
+                  <p className="truncate text-xs text-zinc-500">{m.name ? `${m.email} · ` : ''}{m.role === 'owner' ? 'Dono · acesso total' : m.last_sign_in_at ? 'Equipe' : 'Equipe · convite pendente'}</p>
+                </div>
+                {m.role !== 'owner' && (
+                  <Button size="sm" variant="ghost" aria-label="Remover acesso" onClick={() => confirm(`Remover o acesso de ${m.email}?`) && remove.mutate(m.user_id)}><Trash2 className="h-4 w-4" /></Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 export default function SettingsPage() {
   const [params, setParams] = useSearchParams();
   const tab = (tabs.find((t) => t.key === params.get('tab'))?.key ?? 'perfil') as (typeof tabs)[number]['key'];
   const toast = useToast();
+  const isOwner = useMe().data?.role === 'owner';
   return (
     <>
       <PageHeader title="Configurações" subtitle="Sua conta, segurança e preferências da loja" />
       <div className="mb-6 inline-flex flex-wrap gap-1 rounded-2xl border border-zinc-200 bg-white p-1.5">
-        {tabs.map((t) => (
+        {tabs.filter((t) => !('ownerOnly' in t && t.ownerOnly) || isOwner).map((t) => (
           <button key={t.key} onClick={() => setParams({ tab: t.key })} className={cn('flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition', tab === t.key ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-md shadow-blue-600/25' : 'text-zinc-600 hover:bg-zinc-100')}>
             <t.icon className="h-4 w-4" /> {t.label}
           </button>
@@ -331,6 +383,7 @@ export default function SettingsPage() {
       {tab === 'seguranca' && <SecurityTab toast={toast} />}
       {tab === 'loja' && <StoreTab toast={toast} />}
       {tab === 'marca' && <BrandTab toast={toast} />}
+      {tab === 'equipe' && isOwner && <TeamTab toast={toast} />}
       {toast.node}
     </>
   );

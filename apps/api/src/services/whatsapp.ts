@@ -14,14 +14,28 @@ import { fetchWithTimeout, logger, sleep, supabase } from '../lib/core.js';
  * Configuração (URL + instâncias) fica em settings → chave "whatsapp".
  */
 
+/**
+ * Normaliza a URL da Evolution: completa http://, remove barra final e caminhos do
+ * painel web (ex.: "http://IP:8082/manager/" → "http://IP:8082"). Com "/manager" na URL,
+ * toda chamada ia para /manager/instance/... e a Evolution respondia 404.
+ */
+export function normalizeEvolutionUrl(raw: string) {
+  let t = raw.trim().replace(/\s+/g, '');
+  if (!t) return '';
+  if (!/^https?:\/\//i.test(t)) t = `http://${t}`;
+  try {
+    const u = new URL(t);
+    const path = u.pathname.replace(/\/(manager|docs|swagger|instance|message|chat)(\/.*)?$/i, '').replace(/\/+$/, '');
+    return `${u.protocol}//${u.host}${path}`;
+  } catch {
+    return t.replace(/\/+$/, '');
+  }
+}
+
 export const whatsappSchema = z.object({
   enabled: z.boolean().default(false),
   // aceita "1.2.3.4:8082" sem protocolo (completa com http://) e remove barra final
-  apiUrl: z.preprocess(
-    (v) => {
-      const t = String(v ?? '').trim().replace(/\/+$/, '');
-      return t && !/^https?:\/\//i.test(t) ? `http://${t}` : t;
-    },
+  apiUrl: z.preprocess((v) => normalizeEvolutionUrl(String(v ?? '')),
     z.string().url('URL da Evolution API inválida (ex.: http://SEU-IP:8082)').or(z.literal('')),
   ).default(''),
   instances: z
@@ -113,7 +127,54 @@ function pickFresh(pool: string[], phone: string, key: string) {
 }
 
 // ------------------------------------------------------------------ Evolution API
-const base = (cfg: WhatsAppConfig) => cfg.apiUrl.replace(/\/+$/, '');
+/**
+ * Endereço efetivo da Evolution. Se a URL configurada (ex.: http://IP:8082) não responder —
+ * caso típico da Hostinger, que bloqueia saída para portas fora do padrão —, tenta
+ * automaticamente o mesmo servidor via HTTPS na porta 443 (https://IP-com-traços.sslip.io,
+ * publicado pelo script docs/evolution-proxy.sh). O que funcionar fica em cache por 10 min.
+ */
+const resolved = new Map<string, { url: string; at: number }>();
+export function evolutionCandidates(apiUrl: string) {
+  const list = [apiUrl];
+  try {
+    const u = new URL(apiUrl);
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(u.hostname)) {
+      const path = u.pathname.replace(/\/+$/, '');
+      list.push(`https://${u.hostname.replace(/\./g, '-')}.sslip.io${path}`);
+      if (u.protocol === 'http:' && u.port && u.port !== '80') list.push(`http://${u.hostname}${path}`);
+    }
+  } catch {
+    /* URL inválida: usa como está */
+  }
+  return list;
+}
+async function isEvolution(url: string, accept: (status: number, body: string) => boolean) {
+  try {
+    const res = await fetchWithTimeout(url, { timeoutMs: 6000 });
+    return accept(res.status, await res.text().catch(() => ''));
+  } catch {
+    return false;
+  }
+}
+export async function resolveBase(apiUrl: string): Promise<string> {
+  const clean = normalizeEvolutionUrl(apiUrl);
+  const hit = resolved.get(clean);
+  if (hit && Date.now() - hit.at < 10 * 60_000) return hit.url;
+  const [first, ...alts] = evolutionCandidates(clean);
+  let url = first;
+  // a URL configurada vale com qualquer resposta HTTP; as alternativas precisam "parecer" a Evolution
+  if (!(await isEvolution(first, () => true))) {
+    for (const alt of alts) {
+      if (await isEvolution(alt, (st, body) => st < 500 && /evolution/i.test(body))) {
+        url = alt;
+        break;
+      }
+    }
+  }
+  resolved.set(clean, { url, at: Date.now() });
+  return url;
+}
+const base = (cfg: WhatsAppConfig) => resolveBase(cfg.apiUrl);
 /** Token usado para a instância: o dela ou, se vazio, a API Key global. */
 export const tokenFor = (cfg: WhatsAppConfig, inst: { token?: string }) => inst.token || cfg.globalApiKey || '';
 
@@ -158,7 +219,7 @@ export async function checkInstance(cfg: WhatsAppConfig, instIn: { name: string;
   const r: InstanceCheck = { name: inst.name, active: inst.active !== false, ok: false, reachable: false, http: 0, state: null, message: '' };
   if (!inst.token) return { ...r, message: 'Token não informado', hint: 'Cole o token (apikey) desta instância ou a API Key global da Evolution. Não é o número do WhatsApp. Dica: use “Buscar instâncias da Evolution”.' };
   try {
-    const res = await fetchWithTimeout(`${base(cfg)}/instance/connectionState/${encodeURIComponent(inst.name)}`, { headers: { apikey: inst.token }, timeoutMs: 8000 });
+    const res = await fetchWithTimeout(`${await base(cfg)}/instance/connectionState/${encodeURIComponent(inst.name)}`, { headers: { apikey: inst.token }, timeoutMs: 8000 });
     r.reachable = true;
     r.http = res.status;
     const j: any = await res.json().catch(() => ({}));
@@ -197,7 +258,7 @@ function explainSendError(http: number, body: any, raw: string): { error: string
 
 async function post(cfg: WhatsAppConfig, name: string, token: string, payload: Record<string, unknown>) {
   try {
-    const res = await fetchWithTimeout(`${base(cfg)}/message/sendText/${encodeURIComponent(name)}`, {
+    const res = await fetchWithTimeout(`${await base(cfg)}/message/sendText/${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json', apikey: token, Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
@@ -296,7 +357,7 @@ export async function fetchEvolutionInstances(apiUrl: string, key: string): Prom
   if (!apiUrl) return { ok: false, error: 'Informe a URL da Evolution API' };
   if (!key) return { ok: false, error: 'Informe a API Key global (ou o token de uma instância)', hint: 'A API Key global fica na variável AUTHENTICATION_API_KEY da Evolution. Com o token de uma instância, só ela aparece.' };
   try {
-    const res = await fetchWithTimeout(`${apiUrl.replace(/\/+$/, '')}/instance/fetchInstances`, { headers: { apikey: key }, timeoutMs: 10000 });
+    const res = await fetchWithTimeout(`${await resolveBase(apiUrl)}/instance/fetchInstances`, { headers: { apikey: key }, timeoutMs: 10000 });
     const raw = await res.text();
     let j: any = null;
     try {
@@ -365,12 +426,26 @@ export async function diagnoseWhatsApp(extra: { jobsEnabled: boolean; lastJobRun
     hint: url && url.protocol === 'http:' && url.port && !['80'].includes(url.port) ? `Usando HTTP na porta ${url.port}. Se der “tempo esgotado”, a hospedagem provavelmente bloqueia essa porta: use um domínio HTTPS (porta 443) apontando para a Evolution.` : undefined,
   });
   // alcance do servidor (qualquer resposta HTTP já prova que chegou lá)
+  resolved.delete(normalizeEvolutionUrl(cfg.apiUrl)); // diagnóstico sempre testa de novo
+  const effective = await base(cfg);
   try {
-    const res = await fetchWithTimeout(base(cfg), { timeoutMs: 8000 });
-    steps.push({ label: 'Conexão com o servidor da Evolution', ok: true, detail: `O servidor respondeu (HTTP ${res.status})` });
+    const res = await fetchWithTimeout(effective, { timeoutMs: 8000 });
+    const body = await res.text().catch(() => '');
+    const version = body.match(/"version"\s*:\s*"([^"]+)"/)?.[1];
+    steps.push({
+      label: 'Conexão com o servidor da Evolution',
+      ok: true,
+      detail: `O servidor respondeu (HTTP ${res.status})${version ? ` · Evolution ${version}` : ''}${effective !== cfg.apiUrl ? ` · usando ${effective} (a URL original não respondeu)` : ''}`,
+    });
   } catch (e) {
     const d = describeNetworkError(e, cfg.apiUrl);
-    steps.push({ label: 'Conexão com o servidor da Evolution', ok: false, detail: d.message, hint: d.hint });
+    const alt = evolutionCandidates(cfg.apiUrl)[1];
+    steps.push({
+      label: 'Conexão com o servidor da Evolution',
+      ok: false,
+      detail: d.message,
+      hint: `${d.hint}${alt ? ` Atalho sem comprar domínio: rode o script docs/evolution-proxy.sh na VPS da Evolution; ele publica ${alt} com HTTPS grátis e o checkout passa a usar esse endereço sozinho.` : ''}`,
+    });
   }
   const instances = await Promise.all(cfg.instances.map((i) => checkInstance(cfg, i)));
   const usable = instances.filter((i) => i.active && i.ok);

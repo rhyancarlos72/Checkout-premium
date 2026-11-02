@@ -3,7 +3,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { env, features, isProd } from '../config/env.js';
 import { HttpError, must, productCode, supabase } from '../lib/core.js';
-import { requireAdmin } from '../middleware/auth.js';
+import { clearAuthCache, requireAdmin, requireOwner } from '../middleware/auth.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
 import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder, testEmail } from '../services/email.js';
@@ -17,6 +17,9 @@ import { getSettings, saveSettings } from '../services/settings.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
+// integrações e credenciais (Woovi, Efí, Evolution/WhatsApp, webhooks) e equipe: somente o dono
+export const OWNER_ONLY_PATH = /^\/(gateways|integrations|whatsapp|webhooks|team)(\/|$)/i;
+adminRouter.use((req, res, next) => (OWNER_ONLY_PATH.test(req.path) ? requireOwner(req, res, next) : next()));
 // qualquer alteração no painel invalida o cache dos checkouts públicos
 adminRouter.use((req, _res, next) => {
   if (req.method !== 'GET') clearCheckoutCache();
@@ -26,7 +29,62 @@ adminRouter.use((req, _res, next) => {
 const uuid = z.string().uuid();
 const urlOrEmpty = z.string().url().or(z.literal('')).nullable().optional().transform((v) => v || null);
 
-adminRouter.get('/me', (req, res) => res.json({ id: req.adminId, email: req.adminEmail }));
+adminRouter.get('/me', async (req, res) => {
+  const { globalProvider } = await import('../services/gateways.js');
+  res.json({ id: req.adminId, email: req.adminEmail, role: req.adminRole ?? 'staff', defaultProvider: globalProvider() });
+});
+
+// ------------------------------------------------------------------ equipe (somente o dono)
+async function authUser(id: string) {
+  const { data } = await supabase.auth.admin.getUserById(id);
+  return data.user;
+}
+adminRouter.get('/team', async (_req, res) => {
+  const { data, error } = await supabase.from('admins').select('*').order('created_at');
+  if (error) throw new HttpError(500, error.message);
+  const rows = await Promise.all(
+    (data ?? []).map(async (a: any) => {
+      const u = await authUser(a.user_id);
+      const email = (u?.email ?? a.email ?? '').toLowerCase();
+      const owner = env.ADMIN_EMAIL ? email === env.ADMIN_EMAIL : a.role !== 'staff';
+      return { user_id: a.user_id, email, name: (u?.user_metadata?.full_name as string) ?? '', role: owner ? 'owner' : 'staff', created_at: a.created_at, last_sign_in_at: u?.last_sign_in_at ?? null };
+    }),
+  );
+  res.json(rows);
+});
+adminRouter.post('/team', async (req, res) => {
+  const { email } = z.object({ email: z.string().trim().toLowerCase().email('E-mail inválido') }).parse(req.body);
+  if (email === req.adminEmail?.toLowerCase() || email === env.ADMIN_EMAIL) throw new HttpError(400, 'Este e-mail já é o dono da conta');
+  const redirectTo = `${env.PUBLIC_URL}/admin/nova-senha`;
+  let userId: string | null = null;
+  const invited = await supabase.auth.admin.inviteUserByEmail(email, { redirectTo });
+  if (invited.data?.user) userId = invited.data.user.id;
+  else {
+    // já tem conta: localiza e manda link para definir a senha
+    for (let page = 1; page <= 20 && !userId; page++) {
+      const { data } = await supabase.auth.admin.listUsers({ page, perPage: 200 });
+      userId = data?.users.find((u) => u.email?.toLowerCase() === email)?.id ?? null;
+      if (!data || data.users.length < 200) break;
+    }
+    if (!userId) throw new HttpError(502, `Não foi possível convidar: ${invited.error?.message ?? 'erro'}`);
+    await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+  }
+  let r = await supabase.from('admins').upsert({ user_id: userId, role: 'staff', email });
+  if (r.error && /role|email/.test(r.error.message)) throw new HttpError(400, 'Rode no Supabase o SQL "20261105000000_admin_roles.sql" antes de adicionar pessoas à equipe');
+  if (r.error) throw new HttpError(500, r.error.message);
+  clearAuthCache();
+  res.json({ ok: true, message: `Convite enviado para ${email}. A pessoa define a senha pelo link do e-mail.` });
+});
+adminRouter.delete('/team/:userId', async (req, res) => {
+  const id = uuid.parse(req.params.userId);
+  if (id === req.adminId) throw new HttpError(400, 'Você não pode remover a si mesmo');
+  const u = await authUser(id);
+  if (env.ADMIN_EMAIL && u?.email?.toLowerCase() === env.ADMIN_EMAIL) throw new HttpError(400, 'O dono da conta não pode ser removido');
+  const { error } = await supabase.from('admins').delete().eq('user_id', id);
+  if (error) throw new HttpError(500, error.message);
+  clearAuthCache();
+  res.status(204).end();
+});
 
 // ------------------------------------------------------------------ CRUD genérico
 function crud<S extends z.ZodTypeAny>(path: string, table: string, schema: S, select = '*', order = 'created_at') {

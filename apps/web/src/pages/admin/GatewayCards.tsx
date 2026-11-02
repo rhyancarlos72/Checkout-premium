@@ -89,6 +89,7 @@ function DefaultGatewayCard({ current, configured, toast, onSaved }: { current: 
       toast.ok(r.message);
       onSaved();
       qc.invalidateQueries({ queryKey: ['checkouts'] });
+      qc.invalidateQueries({ queryKey: ['me'] });
     },
     onError: (err) => toast.err(err instanceof ApiError ? err.message : 'Erro ao salvar'),
   });

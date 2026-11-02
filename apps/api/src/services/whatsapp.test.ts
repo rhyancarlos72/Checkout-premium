@@ -154,6 +154,11 @@ describe('mensagens de erro para corrigir no painel', () => {
 describe('URL da Evolution', () => {
   it('completa http:// e tira a barra final', () => {
     expect(wa.whatsappSchema.parse({ apiUrl: '10.0.0.1:8082/' }).apiUrl).toBe('http://10.0.0.1:8082');
+    // URL do painel web da Evolution colada por engano
+    expect(wa.whatsappSchema.parse({ apiUrl: 'http://10.0.0.1:8082/manager/' }).apiUrl).toBe('http://10.0.0.1:8082');
+    expect(wa.normalizeEvolutionUrl(' 10.0.0.1:8082/manager/instance/abc ')).toBe('http://10.0.0.1:8082');
+    expect(wa.normalizeEvolutionUrl('https://evo.site.com/api/manager')).toBe('https://evo.site.com/api');
+    expect(wa.evolutionCandidates('http://10.0.0.1:8082')).toEqual(['http://10.0.0.1:8082', 'https://10-0-0-1.sslip.io', 'http://10.0.0.1']);
     expect(wa.whatsappSchema.parse({ apiUrl: 'https://evo.site.com' }).apiUrl).toBe('https://evo.site.com');
   });
 });

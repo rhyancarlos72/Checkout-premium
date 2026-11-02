@@ -7,6 +7,7 @@ import { adminApi } from '@/lib/api';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { brl } from '@/lib/format';
 import { BrandMark, defaultBrand, useBrand } from '@/lib/brand';
+import { useMe } from '@/lib/me';
 import { supabase } from '@/lib/supabase';
 import BumpsPage from './BumpsPage';
 import CheckoutsPage from './CheckoutsPage';
@@ -28,7 +29,7 @@ const nav = [
   { to: '/admin/checkouts', label: 'Checkouts', icon: CreditCard },
   { to: '/admin/order-bumps', label: 'Order Bumps', icon: Zap },
   { to: '/admin/cupons', label: 'Cupons', icon: Ticket },
-  { to: '/admin/integracoes', label: 'Integrações', icon: PlugZap },
+  { to: '/admin/integracoes', label: 'Integrações', icon: PlugZap, ownerOnly: true },
   { to: '/admin/configuracoes', label: 'Configurações', icon: Settings },
 ];
 
@@ -102,6 +103,7 @@ function ProgressCard() {
 // ------------------------------------------------------------------ barra lateral
 function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: string; email: string; onNavigate?: () => void; theme: AdminTheme; onToggleTheme: () => void }) {
   const brand = useBrand();
+  const isOwner = useMe().data?.role === 'owner';
   return (
     <nav className="flex h-full flex-col border-r border-white/[.06] bg-[#0d1426] font-display text-slate-300">
       <div className="flex h-16 items-center gap-3 px-5">
@@ -112,7 +114,7 @@ function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: stri
         </div>
       </div>
       <div className="flex-1 space-y-1 overflow-y-auto px-3 py-3">
-        {nav.map((n) => (
+        {nav.filter((n) => !('ownerOnly' in n && n.ownerOnly) || isOwner).map((n) => (
           <NavLink
             key={n.to}
             to={n.to}
@@ -208,12 +210,26 @@ function AuthedShell({ email, name }: { email: string; name: string }) {
             <Route path="clientes" element={<CustomersPage />} />
             <Route path="order-bumps" element={<BumpsPage />} />
             <Route path="cupons" element={<CouponsPage />} />
-            <Route path="integracoes" element={<IntegrationsPage />} />
+            <Route path="integracoes" element={<OwnerOnly><IntegrationsPage /></OwnerOnly>} />
             <Route path="configuracoes" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
           </Routes>
         </main>
       </div>
+    </div>
+  );
+}
+
+/** Integrações: só o dono da conta. */
+function OwnerOnly({ children }: { children: ReactNode }) {
+  const me = useMe();
+  if (me.isLoading) return <PageLoader />;
+  if (me.data?.role === 'owner') return <>{children}</>;
+  return (
+    <div className="mx-auto mt-16 max-w-md rounded-2xl border border-zinc-200 bg-white p-8 text-center">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-50 text-amber-600"><PlugZap className="h-6 w-6" /></div>
+      <h2 className="mt-4 font-display text-lg font-semibold text-zinc-900">Acesso restrito ao dono da conta</h2>
+      <p className="mt-1 text-sm text-zinc-500">As integrações com Woovi, Efí Bank, WhatsApp e webhooks só podem ser vistas e alteradas pelo dono.</p>
     </div>
   );
 }

@@ -107,7 +107,11 @@ As mensagens seguem o padrão cordial do checkout antigo (sem CAPS, sem urgênci
 | Número não tem WhatsApp | Confira DDD/número do cliente |
 | Rotina parada há muito tempo | Crie o Cron Job de `/api/jobs/run` (seção 7) |
 
-Proxy reverso simples (Nginx na VPS da Evolution, com certificado do Let’s Encrypt):
+**URL com `/manager`:** o endereço do painel web da Evolution (ex.: `http://SEU-IP:8082/manager/`) não é a URL da API. O checkout já corrige sozinho para `http://SEU-IP:8082`.
+
+**Hostinger bloqueando a porta 8082 (tempo esgotado):** rode na VPS da Evolution o script `docs/evolution-proxy.sh` (como root). Ele publica `https://SEU-IP-com-traços.sslip.io` com HTTPS grátis (Let’s Encrypt) apontando para a Evolution, e o checkout passa a usar esse endereço automaticamente quando `http://IP:8082` não responde.
+
+Proxy reverso manual (Nginx na VPS da Evolution, com certificado do Let’s Encrypt):
 ```nginx
 server {
   server_name evolution.seudominio.com;
