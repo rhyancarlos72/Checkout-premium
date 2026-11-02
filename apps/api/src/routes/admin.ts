@@ -393,7 +393,7 @@ adminRouter.post('/orders/:id/recovery-email', async (req, res) => {
     .eq('id', id)
     .maybeSingle();
   if (!o) throw new HttpError(404, 'Pedido não encontrado');
-  if (o.status !== 'pending') throw new HttpError(400, 'Só pedidos pendentes recebem recuperação');
+  if (o.status !== 'pending' && o.status !== 'expired') throw new HttpError(400, 'Só pedidos pendentes recebem recuperação');
   if (!o.customer?.email || !o.checkout) throw new HttpError(400, 'Pedido sem e-mail do cliente');
   const main = o.items.find((i: any) => i.kind === 'main');
   const ok = await sendRecoveryEmail({

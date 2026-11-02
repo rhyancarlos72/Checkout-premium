@@ -77,7 +77,7 @@ export default function OrdersPage() {
                     <td className="px-5 py-3 text-gray-600">{(() => { const m = o.items.find((i) => i.kind === 'main'); return m ? <>{m.product?.number && <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID: {productCode(m.product.number)}</span>}{m.name}</> : null; })()}{o.items.some((i) => i.kind === 'bump') && <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-teal-700"><Zap className="h-3 w-3" />+{o.items.filter((i) => i.kind === 'bump').length}</span>}</td>
                     <td className="px-5 py-3 text-xs text-gray-500">{o.tracking?.utm_source ?? 'direto'}{o.tracking?.utm_campaign ? ` / ${o.tracking.utm_campaign}` : ''}</td>
                     <td className="px-5 py-3 text-right font-semibold tabular-nums">{brl(o.total_cents)}</td>
-                    <td className="px-5 py-3"><div className="flex items-center gap-2"><StatusBadge status={o.status} />{o.status === 'pending' && <RecoveryEmailButton order={o} />}</div></td>
+                    <td className="px-5 py-3"><div className="flex items-center gap-2"><StatusBadge status={o.status} />{(o.status === 'pending' || o.status === 'expired') && <RecoveryEmailButton order={o} />}</div></td>
                   </tr>
                 ))}
               </tbody>

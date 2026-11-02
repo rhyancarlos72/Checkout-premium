@@ -46,6 +46,17 @@ export async function expireOrders() {
   for (const o of data) if (!notified.has(o.id)) await notifyPixExpired(o.id, o.checkout_id);
 }
 
+/**
+ * Pedidos marcados como "expirado" pela versão antiga voltam para pendente
+ * (assim aparecem em vendas pendentes e recebem recuperação), sem precisar rodar SQL.
+ */
+export async function restoreExpiredToPending() {
+  const { data } = await supabase.from('orders').update({ status: 'pending' }).eq('status', 'expired').select('id, checkout_id');
+  if (!data?.length) return;
+  await supabase.from('events').insert(data.map((o) => ({ order_id: o.id, checkout_id: o.checkout_id, type: 'pix_expired', data: {} })));
+  logger.info({ count: data.length }, 'Pedidos expirados voltaram para pendente');
+}
+
 export async function sendRecoveries() {
   const s = await getSettings();
   if (!s.recovery.enabled) return;
@@ -100,6 +111,7 @@ export async function runJobs() {
   running = true;
   lastJobRunAt = Date.now();
   try {
+    await restoreExpiredToPending();
     await reconcilePending();
     await expireOrders();
     await sendRecoveries();
@@ -112,6 +124,8 @@ export async function runJobs() {
 }
 
 export function startJobs() {
+  // roda uma vez ao iniciar, mesmo com os jobs desligados
+  setTimeout(() => void restoreExpiredToPending().catch(() => {}), 5_000).unref();
   if (!env.JOBS_ENABLED || env.NODE_ENV === 'test') return;
   setInterval(runJobs, 2 * 60 * 1000).unref();
   setTimeout(runJobs, 15_000).unref();
