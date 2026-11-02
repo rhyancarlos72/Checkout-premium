@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
@@ -9,10 +9,18 @@ import { unsubscribe, unsubscribeSig } from '../services/email.js';
 
 export const publicRouter = Router();
 
-const orderLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 8, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Muitas tentativas. Aguarde alguns minutos.' } });
-const quoteLimiter = rateLimit({ windowMs: 60 * 1000, limit: 30, standardHeaders: 'draft-8', legacyHeaders: false });
-const pollLimiter = rateLimit({ windowMs: 60 * 1000, limit: 40, standardHeaders: 'draft-8', legacyHeaders: false });
-const eventLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false });
+// Limites antiabuso por COMPRADOR, não só por IP: no Brasil muitas operadoras de celular colocam
+// milhares de clientes atrás do mesmo IP (CGNAT) e um limite só por IP bloquearia vendas reais.
+const ipOf = (req: any) => ipKeyGenerator(clientIp(req) ?? req.ip ?? '0.0.0.0');
+const rl = (windowMs: number, limit: number, key: (req: any) => string, message?: string) =>
+  rateLimit({ windowMs, limit, standardHeaders: 'draft-8', legacyHeaders: false, keyGenerator: key, ...(message ? { message: { error: message } } : {}) });
+const MSG = 'Muitas tentativas. Aguarde alguns minutos.';
+const orderLimiter = rl(10 * 60 * 1000, 6, (req) => `${ipOf(req)}|${String(req.body?.customer?.email ?? '').trim().toLowerCase()}`, MSG); // mesmo comprador
+const orderIpLimiter = rl(10 * 60 * 1000, 150, ipOf, MSG); // teto alto por IP (CGNAT)
+const tokenLimiter = rl(10 * 60 * 1000, 10, (req) => `t|${req.params.token}`, MSG); // renovar/upsell por pedido
+const quoteLimiter = rl(60 * 1000, 30, (req) => `${ipOf(req)}|${req.params.slug}|${String(req.headers['user-agent'] ?? '').slice(0, 60)}`);
+const pollLimiter = rl(60 * 1000, 40, (req) => `${ipOf(req)}|${req.params.token}`); // consulta do status do Pix, por pedido
+const eventLimiter = rl(60 * 1000, 300, ipOf);
 
 // Marca do sistema (logo + nome) para a tela de login e o painel — só dados públicos
 // Descadastro de e-mails de recuperação (link no rodapé + List-Unsubscribe de 1 clique)
@@ -80,7 +88,7 @@ publicRouter.post('/checkouts/:slug/quote', quoteLimiter, async (req, res) => {
   });
 });
 
-publicRouter.post('/orders', orderLimiter, async (req, res) => {
+publicRouter.post('/orders', orderIpLimiter, orderLimiter, async (req, res) => {
   const input = createOrderSchema.parse(req.body);
   const result = await createOrder(input, { ip: clientIp(req as any), userAgent: req.get('user-agent') ?? null, geo: geoFromHeaders(req.headers as any) });
   res.status(201).json(result);
@@ -129,7 +137,7 @@ publicRouter.get('/orders/:token', pollLimiter, async (req, res) => {
 
 /** Botão "Já paguei": força consulta ao gateway. */
 /** Upsell aceito no popup: gera o Pix do produto oferecido, sem preencher nada. */
-publicRouter.post('/orders/:token/upsell', orderLimiter, async (req, res) => {
+publicRouter.post('/orders/:token/upsell', tokenLimiter, async (req, res) => {
   const token = tokenSchema.parse(String(req.params.token));
   const r = await createUpsellOrder(token);
   const { _id, ...o } = await publicOrder(r.token);
@@ -143,7 +151,7 @@ publicRouter.post('/orders/:token/upsell/decline', pollLimiter, async (req, res)
 });
 
 /** Pix vencido: gera um novo Pix para a mesma compra, sem preencher nada. */
-publicRouter.post('/orders/:token/renew', orderLimiter, async (req, res) => {
+publicRouter.post('/orders/:token/renew', tokenLimiter, async (req, res) => {
   const token = tokenSchema.parse(String(req.params.token));
   const r = await renewOrder(token);
   const { _id, ...o } = await publicOrder(r.token);

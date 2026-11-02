@@ -179,7 +179,7 @@ function WebhookForm({ webhook, events, onClose, onSaved }: { webhook: WebhookRo
         {webhook?.has_secret && <Switch checked={clearSecret} onChange={setClearSecret} label="Remover o segredo salvo" />}
         <div>
           <p className="mb-2 text-sm font-medium text-zinc-700">Eventos enviados</p>
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {events.map((e) => {
               const on = f.events.includes(e);
               return (

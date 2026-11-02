@@ -25,7 +25,7 @@ export default function CheckoutsPage() {
       ) : !list.data?.length ? (
         <Card><EmptyState icon={<CreditCard className="h-6 w-6" />} title="Nenhum checkout" text={products.data?.length ? 'Crie um checkout para começar a vender.' : 'Cadastre um produto primeiro.'} /></Card>
       ) : (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
           {list.data.map((c) => (
             <div key={c.id} className="group overflow-hidden rounded-2xl border border-zinc-200/70 bg-white shadow-[0_1px_2px_rgba(16,24,40,.04),0_8px_24px_-12px_rgba(16,24,40,.08)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_40px_-16px_rgba(16,24,40,.22)]">
               <button type="button" onClick={() => setEditing(c)} className="relative block h-32 w-full overflow-hidden text-left" style={{ background: `linear-gradient(135deg, ${c.theme?.primaryColor || '#059669'}, ${c.theme?.mode === 'dark' ? '#0a0b10' : '#0f172a'})` }}>

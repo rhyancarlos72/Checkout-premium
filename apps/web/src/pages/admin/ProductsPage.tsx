@@ -142,9 +142,9 @@ export default function ProductsPage() {
         <div className="mb-4 max-w-md">
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar por nome ou ID (ex.: 9452335)" icon={<Search className="h-4 w-4" />} />
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {list.data.filter((p) => { const q = search.trim().toLowerCase(); return !q || p.name.toLowerCase().includes(q) || productCode(p.number).includes(q.replace(/\D/g, '') || '§'); }).map((p) => (
-            <div key={p.id} className="flex flex-col gap-4 rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,.04),0_8px_24px_-12px_rgba(16,24,40,.08)]">
+            <div key={p.id} className="flex min-w-0 flex-col gap-4 rounded-2xl border border-zinc-200/70 bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,.04),0_8px_24px_-12px_rgba(16,24,40,.08)]">
               <div className="flex gap-4">
                 {p.image_url ? <img src={p.image_url} alt="" className="h-20 w-20 shrink-0 rounded-xl object-cover" /> : <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-zinc-400"><Boxes className="h-6 w-6" /></div>}
                 <div className="min-w-0 flex-1">
@@ -165,7 +165,7 @@ export default function ProductsPage() {
               </div>
               <AdditionalProducts product={p} products={list.data ?? []} onEdit={() => setBumpsFor(p)} />
               <UpsellSection product={p} products={list.data ?? []} upsell={upsellOf(p.id)} onEdit={() => (upsells.isError ? toast.err((upsells.error as Error).message) : setUpsellFor(p))} />
-              <div className="mt-auto flex flex-wrap items-center gap-1 whitespace-nowrap border-t border-zinc-100 pt-3">
+              <div className="mt-auto flex flex-wrap items-center gap-1 border-t border-zinc-100 pt-3 [&>button]:whitespace-nowrap">
                 <Button size="sm" variant="secondary" onClick={() => setEditing(p)}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
                 <Button size="sm" variant="ghost" onClick={() => navigate('/admin/checkouts')}><Palette className="h-3.5 w-3.5" /> Personalizar</Button>
                 <Button size="sm" variant="ghost" loading={duplicate.isPending && duplicate.variables === p.id} onClick={() => duplicate.mutate(p.id)} title="Duplicar produto e checkout"><CopyPlus className="h-3.5 w-3.5" /> Duplicar</Button>

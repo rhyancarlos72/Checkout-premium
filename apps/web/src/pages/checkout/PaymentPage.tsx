@@ -305,7 +305,7 @@ export default function PaymentPage() {
             </div>
             <h1 className="mt-5 text-[26px] font-bold tracking-tight">Pagamento aprovado!</h1>
             <p className="mx-auto mt-2 max-w-md text-ck-muted">
-              Obrigado{firstName ? `, ${firstName}` : ''}! Enviamos os dados de acesso para <b className="text-ck-text">{order.customer?.email}</b>.
+              Obrigado{firstName ? `, ${firstName}` : ''}! Enviamos os dados de acesso para <b className="break-all text-ck-text">{order.customer?.email}</b>.
             </p>
           </div>
           <div className="space-y-3 px-5 pb-6 text-left sm:px-8">

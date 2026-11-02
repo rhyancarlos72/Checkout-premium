@@ -54,7 +54,7 @@ export default function IntegrationsPage() {
   return (
     <>
       <PageHeader title="Integrações" subtitle="Configure gateways de pagamento e webhooks direto por aqui. Credenciais ficam protegidas no servidor e nunca aparecem completas." />
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <GatewayCards toast={toast} />
 
         <WhatsAppCard toast={toast} />

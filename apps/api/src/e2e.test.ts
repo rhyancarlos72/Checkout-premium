@@ -1,0 +1,319 @@
+/**
+ * Venda de ponta a ponta com banco em memória, Woovi, Spedy e PayTracking falsos:
+ * checkout → cotação com bump/cupom → Pix → webhook → pago (1 vez só) → entrega,
+ * nota fiscal única, PayTracking → upsell → Pix vencido renovado em um toque.
+ */
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { createFakeClient, db } from './test/fakeSupabase.js';
+
+vi.mock('@supabase/supabase-js', () => ({ createClient: () => createFakeClient() }));
+
+// ---------- serviços externos falsos
+const charges = new Map<string, { status: string; value: number }>();
+const spedyCalls: any[] = [];
+const ptCalls: { event: string; body: any; headers: http.IncomingHttpHeaders }[] = [];
+const waSent: { instance: string; body: any }[] = [];
+const fake = http.createServer((req, res) => {
+  let b = '';
+  req.on('data', (c) => (b += c));
+  req.on('end', () => {
+    const body = b ? JSON.parse(b) : null;
+    const json = (s: number, v: unknown) => res.writeHead(s, { 'Content-Type': 'application/json' }).end(JSON.stringify(v));
+    if (req.method === 'POST' && req.url === '/woovi/api/v1/charge') {
+      charges.set(body.correlationID, { status: 'ACTIVE', value: body.value });
+      return json(200, { charge: { correlationID: body.correlationID, brCode: `00020101PIX-${body.correlationID}`, qrCodeImage: 'https://x/qr.png', expiresDate: new Date(Date.now() + body.expiresIn * 1000).toISOString() } });
+    }
+    if (req.method === 'GET' && req.url!.startsWith('/woovi/api/v1/charge/')) {
+      const id = decodeURIComponent(req.url!.split('/').pop()!);
+      const c = charges.get(id);
+      return c ? json(200, { charge: { status: c.status, value: c.value } }) : json(404, { error: 'not found' });
+    }
+    if (req.url === '/spedy/service-invoices' && req.method === 'POST') {
+      spedyCalls.push(body);
+      return json(201, { id: `inv-${spedyCalls.length}`, status: 'enqueued' });
+    }
+    if (req.url!.startsWith('/evo/instance/connectionState/')) return json(200, { instance: { state: 'open' } });
+    if (req.url!.startsWith('/evo/message/sendText/')) {
+      waSent.push({ instance: decodeURIComponent(req.url!.split('/').pop()!), body });
+      return json(201, { key: { id: 'x' } });
+    }
+    if (req.url === '/paytracking') {
+      ptCalls.push({ event: body?.event, body, headers: req.headers });
+      return json(200, { ok: true });
+    }
+    json(404, {});
+  });
+});
+
+let base = '';
+let ext = '';
+let server: http.Server;
+const api = async (method: string, path: string, body?: unknown) => {
+  const r = await fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json', 'User-Agent': 'e2e-test', 'X-Forwarded-For': '187.10.20.30' }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const text = await r.text();
+  return { status: r.status, body: text ? JSON.parse(text) : null };
+};
+const settle = () => new Promise((r) => setTimeout(r, 150));
+
+beforeAll(async () => {
+  await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
+  ext = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
+  Object.assign(process.env, {
+    NODE_ENV: 'test',
+    PUBLIC_URL: 'https://checkout.loja.com',
+    SUPABASE_URL: 'https://fake.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'test-key-test-key-test-key',
+    WOOVI_API_URL: `${ext}/woovi`,
+    JOBS_ENABLED: 'false',
+  });
+
+  // ---------- dados da loja
+  const now = new Date().toISOString();
+  db.settings = [
+    { key: 'gateways', value: { woovi: { appId: 'APP-ID-TESTE' } } },
+    { key: 'invoices', value: { enabled: true, type: 'service', apiKey: 'spedy-key', apiUrl: `${ext}/spedy`, deductCents: 50 } },
+    { key: 'whatsapp', value: { enabled: true, apiUrl: `${ext}/evo`, instances: [{ name: 'checkout1', token: 't1', active: true }, { name: 'checkout2', token: 't2', active: true }], approved: { enabled: true }, recovery: { enabled: true, firstMinutes: 20, secondMinutes: 180, includePix: true } } },
+    { key: 'webhooks', value: { items: [{ id: 'w1', name: 'PayTracking', preset: 'paytracking', url: `${ext}/paytracking`, token: 'tok', secret: 'seg', events: ['sale.pending', 'sale.approved', 'sale.canceled'], active: true, created_at: now }] } },
+  ];
+  db.products = [
+    { id: '00000000-0000-4000-8000-000000000001', number: 1001, name: 'Pack Etiquetas', price_cents: 1999, active: true, delivery_type: 'link', delivery_url: 'https://drive.google.com/main', created_at: now },
+    { id: '00000000-0000-4000-8000-000000000002', number: 1002, name: 'Bônus Capas', price_cents: 990, active: true, delivery_type: 'link', delivery_url: 'https://drive.google.com/bump', created_at: now },
+    { id: '00000000-0000-4000-8000-000000000003', number: 1003, name: 'Kit Convites', price_cents: 2990, active: true, delivery_type: 'link', delivery_url: 'https://drive.google.com/up', created_at: now },
+  ];
+  db.checkouts = [{ id: '00000000-0000-4000-8000-0000000000c1', product_id: '00000000-0000-4000-8000-000000000001', slug: '8931442', name: 'Checkout', price_cents: 1999, active: true, provider: 'woovi', pix_expires_minutes: 30, theme: {}, fields: { phone: true, document: false }, tracking: {}, created_at: now }];
+  db.order_bumps = [{ id: '00000000-0000-4000-8000-0000000000b1', product_id: '00000000-0000-4000-8000-000000000002', title: 'Leve também: Bônus Capas', price_cents: 990, compare_at_cents: 1990, active: true, created_at: now }];
+  db.checkout_bumps = [{ checkout_id: '00000000-0000-4000-8000-0000000000c1', bump_id: '00000000-0000-4000-8000-0000000000b1', sort: 0 }];
+  db.coupons = [{ id: '00000000-0000-4000-8000-0000000000aa', code: 'DEZ', type: 'percent', value: 10, used_count: 0, min_cents: 0, active: true, created_at: now }];
+  db.upsells = [{ id: '00000000-0000-4000-8000-0000000000dd', product_id: '00000000-0000-4000-8000-000000000001', offer_product_id: '00000000-0000-4000-8000-000000000003', title: null, price_cents: 790, compare_at_cents: 2990, active: true, created_at: now }];
+
+  const { createApp } = await import('./app.js');
+  const { refreshGateways } = await import('./services/gateways.js');
+  await refreshGateways(true);
+  server = createApp().listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+});
+afterAll(() => {
+  server?.close();
+  fake.close();
+});
+
+describe('venda completa', () => {
+  let token = '';
+  let orderId = '';
+
+  it('abre o checkout com o order bump', async () => {
+    const r = await api('GET', '/api/public/checkouts/8931442');
+    expect(r.status).toBe(200);
+    expect(r.body.product.name).toBe('Pack Etiquetas');
+    expect(r.body.bumps).toHaveLength(1);
+  });
+
+  it('cota com bump e cupom', async () => {
+    const r = await api('POST', '/api/public/checkouts/8931442/quote', { bump_ids: ['00000000-0000-4000-8000-0000000000b1'], coupon_code: 'dez' });
+    expect(r.status).toBe(200);
+    expect(r.body.subtotal_cents).toBe(2989);
+    expect(r.body.total_cents).toBe(2989 - Math.round(2989 * 0.1));
+  });
+
+  it('gera o Pix com QR Code local e devolve a página do pedido pronta', async () => {
+    const r = await api('POST', '/api/public/orders', {
+      checkout_slug: '8931442',
+      customer: { name: 'maria souza', email: 'Maria@X.com', phone: '(11) 98888-7777' },
+      bump_ids: ['00000000-0000-4000-8000-0000000000b1'],
+      coupon_code: 'DEZ',
+      tracking: { utm_source: 'FB', fbclid: 'IwAR0', fbp: 'fb.1.1700000000000.123456789', external_id: 'visitante-1', initiate_checkout_event_id: 'ic_1', add_payment_info_event_id: 'api_1', purchase_event_id: 'purchase_1', geo_city: 'Hackeado' },
+    });
+    expect(r.status).toBe(201);
+    token = r.body.token;
+    expect(token).toMatch(/^[a-f0-9]{48}$/);
+    expect(r.body.order.pix_code).toMatch(/^00020101PIX-/);
+    expect(r.body.order.pix_qr_image).toMatch(/^data:image\/png;base64,/);
+    expect(r.body.order.total_cents).toBe(2690);
+    expect(r.body.order.external_id).toBe('visitante-1');
+    const o = db.orders.find((x) => x.public_token === token)!;
+    orderId = o.id;
+    expect(o.ip).toBe('187.10.20.30');
+    expect(o.tracking.geo_city).toBeUndefined(); // geo só vem do servidor
+    expect(db.order_items.filter((i) => i.order_id === o.id)).toHaveLength(2);
+    expect(charges.get(o.id)?.value).toBe(2690);
+  });
+
+  it('envia sale.pending à PayTracking com o ID de 7 dígitos e telefone com 55', async () => {
+    await settle();
+    const p = ptCalls.find((c) => c.event === 'sale.pending')!;
+    expect(p).toBeTruthy();
+    expect(p.body.product_id).toMatch(/^\d{7}$/);
+    expect(p.body.customer.phone).toBe('5511988887777');
+    expect(p.body.customer.email).toBe('maria@x.com');
+    expect(p.body.tracking.event_id).toBe('ic_1');
+    expect(p.headers['x-paytrack-signature']).toMatch(/^sha256=/);
+    expect(p.headers.authorization).toBe('Bearer tok');
+  });
+
+  it('pedido pendente mostra o Pix; antes de pagar não há entrega', async () => {
+    const r = await api('GET', `/api/public/orders/${token}`);
+    expect(r.body.status).toBe('pending');
+    expect(r.body.pix_code).toBeTruthy();
+    expect(r.body.delivery).toEqual([]);
+  });
+
+  it('webhook falso (gateway ainda ACTIVE) NÃO aprova', async () => {
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: orderId } });
+    await settle();
+    expect(db.orders.find((x) => x.id === orderId)!.status).toBe('pending');
+    expect(db.invoices ?? []).toHaveLength(0);
+  });
+
+  it('pagamento confirmado no gateway aprova, emite UMA nota e manda sale.approved', async () => {
+    charges.get(orderId)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: orderId } });
+    await settle();
+    await settle();
+    const o = db.orders.find((x) => x.id === orderId)!;
+    expect(o.status).toBe('paid');
+    expect(db.coupons[0].used_count).toBe(1);
+    expect(spedyCalls).toHaveLength(1);
+    expect(spedyCalls[0].amount).toBe(26.4); // 26,90 − 0,50
+    expect(spedyCalls[0].description).toContain('Pack Etiquetas + Leve também: Bônus Capas');
+    expect(spedyCalls[0].integrationId).toBe(orderId);
+    expect(db.invoices.filter((i) => i.order_id === orderId)).toHaveLength(1);
+    const ap = ptCalls.filter((c) => c.event === 'sale.approved');
+    expect(ap).toHaveLength(1);
+    expect(ap[0].body.tracking.event_id).toBe('purchase_1');
+    expect(ap[0].body.product_ids).toHaveLength(2);
+  });
+
+  it('webhook repetido não duplica nota, evento nem contagem do cupom', async () => {
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: orderId } });
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: orderId } });
+    await settle();
+    expect(spedyCalls).toHaveLength(1);
+    expect(ptCalls.filter((c) => c.event === 'sale.approved')).toHaveLength(1);
+    expect(db.coupons[0].used_count).toBe(1);
+    expect(db.events.filter((e) => e.order_id === orderId && e.type === 'purchase')).toHaveLength(1);
+  });
+
+  it('WhatsApp de entrega sai com o nome do cliente e os links do Drive', async () => {
+    await new Promise((r) => setTimeout(r, 4000)); // o envio tem pausa natural
+    const m = waSent.find((w) => w.body?.number?.startsWith('5511988887777') || w.body?.number?.startsWith('551188887777'));
+    expect(m).toBeTruthy();
+    const text = m!.body.text ?? m!.body.textMessage?.text;
+    expect(text).toContain('Maria');
+    expect(text).toContain('https://drive.google.com/main');
+    expect(text).toContain('https://drive.google.com/bump');
+  }, 10_000);
+
+  it('página do pedido pago: sem Pix, com entrega de cada produto e oferta de upsell', async () => {
+    const r = await api('GET', `/api/public/orders/${token}`);
+    expect(r.body.status).toBe('paid');
+    expect(r.body.pix_code).toBeNull();
+    expect(r.body.delivery.map((d: any) => d.url)).toEqual(['https://drive.google.com/main', 'https://drive.google.com/bump']);
+    expect(r.body.upsell).toMatchObject({ title: 'Kit Convites', price_cents: 790 });
+  });
+
+  let upToken = '';
+  it('upsell aceito gera Pix só do adicional; clicar de novo não duplica', async () => {
+    const r = await api('POST', `/api/public/orders/${token}/upsell`);
+    expect(r.status).toBe(200);
+    upToken = r.body.token;
+    expect(upToken).not.toBe(token);
+    expect(r.body.order.total_cents).toBe(790);
+    expect(r.body.order.items).toEqual([{ kind: 'main', name: 'Kit Convites', price_cents: 790 }]);
+    expect(r.body.order.upsell).toBeNull();
+    const again = await api('POST', `/api/public/orders/${token}/upsell`);
+    expect(again.body.token).toBe(upToken);
+    const up = db.orders.find((x) => x.public_token === upToken)!;
+    expect(up.tracking.upsell_of).toBe(orderId);
+    expect(up.tracking.purchase_event_id).not.toBe('purchase_1');
+  });
+
+  it('upsell pago entrega o produto oferecido e tira a oferta do pedido original', async () => {
+    const up = db.orders.find((x) => x.public_token === upToken)!;
+    charges.get(up.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { charge: { correlationID: up.id } });
+    await settle();
+    const r = await api('GET', `/api/public/orders/${upToken}`);
+    expect(r.body.status).toBe('paid');
+    expect(r.body.delivery[0].url).toBe('https://drive.google.com/up');
+    expect(spedyCalls).toHaveLength(2); // nota própria para a venda do upsell
+    const orig = await api('GET', `/api/public/orders/${token}`);
+    expect(orig.body.upsell).toBeNull();
+  });
+});
+
+describe('recuperação pelo WhatsApp', () => {
+  it('pendente há mais de 20 min recebe 1 lembrete com link direto do Pix e o copia e cola; não repete', async () => {
+    const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Carla Dias', email: 'carla@x.com', phone: '11933332222' }, bump_ids: [], tracking: {} });
+    const o = db.orders.find((x) => x.public_token === r.body.token)!;
+    o.created_at = new Date(Date.now() - 25 * 60_000).toISOString();
+    const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
+    const before = waSent.length;
+    await sendWhatsAppRecoveries();
+    const msgs = waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'));
+    expect(msgs).toHaveLength(1);
+    const text = msgs[0].body.text ?? msgs[0].body.textMessage?.text;
+    expect(text).toContain(`https://checkout.loja.com/pedido/${r.body.token}`);
+    expect(text).toContain(o.pix_code);
+    await sendWhatsAppRecoveries();
+    expect(waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'))).toHaveLength(1);
+  }, 15_000);
+});
+
+describe('Pix vencido renovado em um toque', () => {
+  it('gera novo Pix da mesma compra e o link antigo leva ao novo', async () => {
+    const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'João Lima', email: 'joao@x.com', phone: '11977776666' }, bump_ids: [], tracking: {} });
+    const t1 = r.body.token;
+    const o1 = db.orders.find((x) => x.public_token === t1)!;
+    o1.expires_at = new Date(Date.now() - 60_000).toISOString();
+    const ren = await api('POST', `/api/public/orders/${t1}/renew`);
+    expect(ren.status).toBe(200);
+    expect(ren.body.renewed).toBe(true);
+    expect(ren.body.token).not.toBe(t1);
+    expect(ren.body.order.total_cents).toBe(1999);
+    expect(ren.body.order.pix_code).toBeTruthy();
+    expect(db.orders.find((x) => x.id === o1.id)!.status).toBe('canceled');
+    const old = await api('POST', `/api/public/orders/${t1}/renew`);
+    expect(old.body.token).toBe(ren.body.token); // link antigo → Pix atual (ainda válido)
+  });
+  it('Pix ainda válido não é recriado', async () => {
+    const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Ana Paula', email: 'ana@x.com', phone: '11966665555' }, bump_ids: [], tracking: {} });
+    const ren = await api('POST', `/api/public/orders/${r.body.token}/renew`);
+    expect(ren.body.renewed).toBe(false);
+    expect(ren.body.token).toBe(r.body.token);
+  });
+});
+
+describe('limite antiabuso não bloqueia vendas reais', () => {
+  it('vários compradores no mesmo IP (CGNAT de operadora) compram normalmente', async () => {
+    for (let i = 0; i < 12; i++) {
+      const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: `Cliente ${i} Silva`, email: `cliente${i}@x.com`, phone: '11955554444' }, bump_ids: [], tracking: {} });
+      expect(r.status).toBe(201);
+    }
+  });
+  it('o mesmo comprador repetindo muitas vezes é limitado', async () => {
+    const codes: number[] = [];
+    for (let i = 0; i < 8; i++) codes.push((await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Robo Repetido', email: 'robo@x.com', phone: '11944443333' }, bump_ids: [], tracking: {} })).status);
+    expect(codes.slice(0, 6).every((c) => c === 201)).toBe(true);
+    expect(codes.at(-1)).toBe(429);
+  });
+});
+
+describe('validações do checkout', () => {
+  it('recusa telefone inválido, e-mail inválido e cupom inexistente', async () => {
+    expect((await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Teste Nome', email: 't@x.com', phone: '123' }, tracking: {} })).status).toBe(400);
+    expect((await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Teste Nome', email: 'invalido', phone: '11988887777' }, tracking: {} })).status).toBe(400);
+    const q = await api('POST', '/api/public/checkouts/8931442/quote', { bump_ids: [], coupon_code: 'NAOEXISTE' });
+    expect(q.body.coupon_error).toBeTruthy();
+  });
+  it('checkout inexistente responde 404 e token inválido é recusado', async () => {
+    expect((await api('GET', '/api/public/checkouts/nao-existe')).status).toBe(404);
+    expect((await api('GET', '/api/public/orders/xyz')).status).toBe(400);
+  });
+  it('rotas do painel exigem login', async () => {
+    expect((await api('GET', '/api/admin/orders')).status).toBe(401);
+    expect((await api('GET', '/api/admin/gateways')).status).toBe(401);
+  });
+});

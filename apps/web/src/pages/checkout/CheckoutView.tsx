@@ -479,8 +479,8 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
           <Section step={1} title="Dados pessoais">
             <div className="grid gap-4">
-              <CkField label="Nome completo" reg={register('name')} error={err.name?.message} valid={isValid('name')} autoComplete="name" placeholder="Digite seu nome completo" enterKeyHint="next" />
-              <CkField label="E-mail" reg={register('email')} error={err.email?.message} valid={isValid('email')} type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="Digite seu melhor e-mail" hint="Você receberá o acesso neste e-mail" enterKeyHint="next" />
+              <CkField label="Nome completo" reg={register('name')} error={err.name?.message} valid={isValid('name')} autoComplete="name" placeholder="Seu nome completo" enterKeyHint="next" />
+              <CkField label="E-mail" reg={register('email')} error={err.email?.message} valid={isValid('email')} type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="Seu melhor e-mail" hint="Você receberá o acesso neste e-mail" enterKeyHint="next" />
               {checkout.fields.phone && (
                 <CkField
                   label="Celular (WhatsApp)"

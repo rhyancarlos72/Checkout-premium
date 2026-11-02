@@ -208,7 +208,7 @@ export default function DashboardPage({ name }: { name?: string }) {
       </div>
 
       {/* Resumo */}
-      <div className="grid gap-5 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-3">
         {/* destaque: faturamento aprovado */}
         <section className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0b1430] via-[#13245a] to-[#1d4ed8] p-6 text-white shadow-xl shadow-blue-900/20 sm:p-7 xl:col-span-2">
           <div className="pointer-events-none absolute -right-16 -top-24 h-64 w-64 rounded-full bg-cyan-400/20 blur-3xl" />
@@ -263,8 +263,8 @@ export default function DashboardPage({ name }: { name?: string }) {
       </div>
 
       {/* Gráficos */}
-      <div className="mt-6 grid gap-5 xl:grid-cols-3">
-        <section className="rounded-2xl border border-zinc-200 bg-white p-6 xl:col-span-2">
+      <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-3">
+        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 xl:col-span-2">
           <div className="mb-5 flex items-center justify-between">
             <h2 className="font-display text-lg font-semibold text-zinc-900">Vendas por Hora</h2>
             <span className="text-xs text-zinc-500">faturamento pago · horário de Brasília</span>
@@ -287,7 +287,7 @@ export default function DashboardPage({ name }: { name?: string }) {
           </div>
         </section>
 
-        <section className="rounded-2xl border border-zinc-200 bg-white p-6">
+        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
           <h2 className="mb-5 font-display text-lg font-semibold text-zinc-900">Vendas por método</h2>
           {methods.length === 0 ? (
             <div className="flex h-60 flex-col items-center justify-center gap-3 text-center text-sm text-zinc-500">
@@ -326,8 +326,8 @@ export default function DashboardPage({ name }: { name?: string }) {
       </div>
 
       {/* Funil + ranking */}
-      <div className="mt-6 grid gap-5 xl:grid-cols-5">
-        <section className="rounded-2xl border border-zinc-200 bg-white p-6 xl:col-span-3">
+      <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-5">
+        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 xl:col-span-3">
           <h2 className="mb-5 font-display text-lg font-semibold text-zinc-900">Funil de conversão</h2>
           <div className="space-y-4">
             {[
@@ -355,7 +355,7 @@ export default function DashboardPage({ name }: { name?: string }) {
             })}
           </div>
         </section>
-        <section className="rounded-2xl border border-zinc-200 bg-white p-6 xl:col-span-2">
+        <section className="min-w-0 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6 xl:col-span-2">
           <h2 className="mb-4 flex items-center gap-2 font-display text-lg font-semibold text-zinc-900"><Trophy className="h-5 w-5 text-amber-500" /> Mais vendidos</h2>
           {(data?.top_products.length ?? 0) === 0 ? (
             <p className="py-8 text-center text-sm text-zinc-500">Nenhuma venda paga no período.</p>

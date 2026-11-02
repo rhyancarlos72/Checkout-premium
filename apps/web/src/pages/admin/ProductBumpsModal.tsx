@@ -125,7 +125,7 @@ export function ProductBumpsModal({ product, products, onClose, onSaved }: { pro
               {others.some((p) => !list.some((i) => i.product_id === p.id)) && (
                 <div className="space-y-2">
                   <p className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Seus produtos</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                     {others
                       .filter((p) => !list.some((i) => i.product_id === p.id))
                       .map((p) => (

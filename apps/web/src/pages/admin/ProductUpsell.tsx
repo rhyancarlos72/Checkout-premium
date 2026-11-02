@@ -104,14 +104,14 @@ export function UpsellModal({ product, products, upsell, onClose, toast }: { pro
             ))}
           </Select>
         </Field>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Preço da oferta (R$)"><Input value={f.price} onChange={(e) => set({ price: e.target.value })} inputMode="decimal" placeholder="Ex.: 19,90" /></Field>
           <Field label="Preço “De” riscado (opcional)"><Input value={f.compare} onChange={(e) => set({ compare: e.target.value })} inputMode="decimal" placeholder={offer ? centsToInput(offer.price_cents) : 'Ex.: 47,00'} /></Field>
         </div>
         <Field label="Chamada do topo" hint="Ex.: Espere! Uma oferta exclusiva para você"><Input value={f.headline} onChange={(e) => set({ headline: e.target.value })} placeholder="Espere! Uma oferta exclusiva para você" /></Field>
         <Field label="Título da oferta" hint="Vazio = nome do produto"><Input value={f.title} onChange={(e) => set({ title: e.target.value })} placeholder={offer?.name ?? ''} /></Field>
         <Field label="Descrição"><Textarea rows={3} value={f.description} onChange={(e) => set({ description: e.target.value })} placeholder={offer?.description ?? 'Por que vale a pena levar agora?'} /></Field>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <ImageUpload label="Imagem (vazio = imagem do produto)" value={f.image_url} onChange={(url) => set({ image_url: url })} />
           <Field label="Texto do botão" hint="Vazio = “Sim, quero por R$ X”"><Input value={f.cta_text} onChange={(e) => set({ cta_text: e.target.value })} placeholder="Sim, quero aproveitar!" /></Field>
         </div>

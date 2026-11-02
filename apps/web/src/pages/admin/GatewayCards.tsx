@@ -252,7 +252,7 @@ function EfiModal({ data, toast, onClose, onSaved }: { data: Gateways['efi']; to
           <p className="text-sm text-zinc-500">Configure sua integração Efí Bank para pagamentos Pix. Os dados ficam protegidos no servidor e nunca aparecem completos aqui.</p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Client ID" hint={data.clientId_hint ? `Salvo: ${data.clientId_hint} · deixe em branco para manter` : 'O Client ID da sua aplicação na Efí'}>
             <SecretInput value={f.clientId} onChange={(v) => setF({ ...f, clientId: v })} placeholder={data.clientId_hint ? '••••••••••••' : 'Client_Id_...'} />
           </Field>

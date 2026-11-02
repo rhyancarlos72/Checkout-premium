@@ -68,7 +68,7 @@ function ProfileTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <Panel title="Seu nome" desc="Aparece no painel e na saudação." icon={<User className="h-5 w-5" />} footer={<Button loading={busy === 'name'} onClick={saveName}>Salvar nome</Button>}>
         <Field label="Nome completo"><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Seu nome" autoComplete="name" /></Field>
       </Panel>
@@ -146,7 +146,7 @@ function SecurityTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   }
 
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <Panel
         title="Verificação em 2 etapas"
         desc="Além da senha, pede um código do app autenticador ao entrar."
@@ -206,7 +206,7 @@ function SecurityTab({ toast }: { toast: ReturnType<typeof useToast> }) {
 
       <div className="space-y-6">
         <Panel title="Alterar senha" icon={<KeyRound className="h-5 w-5" />} footer={<Button loading={pwBusy} onClick={changePassword}>Salvar nova senha</Button>}>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Field label="Nova senha"><Input type="password" autoComplete="new-password" value={pw.next} onChange={(e) => setPw({ ...pw, next: e.target.value })} /></Field>
             <Field label="Confirmar"><Input type="password" autoComplete="new-password" value={pw.confirm} onChange={(e) => setPw({ ...pw, confirm: e.target.value })} /></Field>
           </div>
@@ -250,10 +250,10 @@ function StoreTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   const submit = () => save.mutate({ ...s, goal: { monthlyCents: parseMoney(goal) } });
 
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <Panel title="Dados da loja" desc="Usados nos e-mails e no rodapé do checkout (quando preenchidos)." icon={<Store className="h-5 w-5" />} footer={<Button loading={save.isPending} onClick={submit}>Salvar</Button>}>
         <Field label="Nome da loja (e-mails)"><Input value={s.store.name} onChange={(e) => setS({ ...s, store: { ...s.store, name: e.target.value } })} /></Field>
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="E-mail de suporte"><Input type="email" value={s.store.supportEmail} onChange={(e) => setS({ ...s, store: { ...s.store, supportEmail: e.target.value } })} /></Field>
           <Field label="CNPJ/CPF"><Input value={s.store.document} onChange={(e) => setS({ ...s, store: { ...s.store, document: e.target.value } })} /></Field>
         </div>
@@ -292,7 +292,7 @@ function BrandTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   const isDefault = (b.name.trim() || defaultBrand.name) === defaultBrand.name;
 
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <Panel
         title="Logo do sistema"
         desc="Aparece na barra lateral do painel, na tela de login e no ícone da aba do navegador."
@@ -344,7 +344,7 @@ function TeamTab({ toast }: { toast: ReturnType<typeof useToast> }) {
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao remover'),
   });
   return (
-    <div className="grid gap-6 xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <Panel title="Adicionar pessoa à equipe" desc="A pessoa recebe um e-mail para criar a senha." icon={<UserPlus className="h-5 w-5" />} footer={<Button loading={invite.isPending} disabled={!email.includes('@')} onClick={() => invite.mutate()}>Enviar convite</Button>}>
         <Field label="E-mail"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="pessoa@email.com" /></Field>
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">

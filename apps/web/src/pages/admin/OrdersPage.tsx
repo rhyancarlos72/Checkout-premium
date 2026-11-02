@@ -167,7 +167,7 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
             <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'resend-tracking'} onClick={() => action.mutate('resend-tracking')}><Zap className="h-3.5 w-3.5" /> Reenviar ao PayTracking</Button>
             {o.status === 'paid' && <Button size="sm" variant="ghost" onClick={() => confirm('Marcar como reembolsado? Faça o estorno do PIX no painel do gateway.') && action.mutate('refund')}><Undo2 className="h-3.5 w-3.5" /> Marcar reembolso</Button>}
           </div>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-gray-200 p-4 text-sm">
               <p className="mb-2 font-semibold">Cliente</p>
               <p>{o.customer?.name}</p><p className="text-gray-600">{o.customer?.email}</p><p className="text-gray-600">{o.customer?.phone}</p>

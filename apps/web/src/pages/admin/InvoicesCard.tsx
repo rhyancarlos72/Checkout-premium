@@ -152,7 +152,7 @@ function InvoicesModal({ data, toast, onClose, onSaved }: { data: InvoiceSetting
 
         <div>
           <p className="mb-2 text-sm font-medium text-zinc-700">Tipo de nota</p>
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {([
               ['service', 'NFS-e · Nota de serviço', 'Emitida pela prefeitura. Comum para infoprodutos e cursos.'],
               ['product', 'NF-e · Nota de produto', 'Emitida pela SEFAZ. Use se você vende como mercadoria.'],
@@ -165,7 +165,7 @@ function InvoicesModal({ data, toast, onClose, onSaved }: { data: InvoiceSetting
           </div>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="Descontar do valor da nota (R$)" hint="Ex.: 0,50 da taxa do Pix. Use 0 para o valor cheio."><Input value={deduct} onChange={(e) => setDeduct(e.target.value)} inputMode="decimal" placeholder="0,50" /></Field>
           <Field label="Texto complementar da descrição"><Input value={f.description} onChange={(e) => set({ description: e.target.value })} /></Field>
         </div>
@@ -174,7 +174,7 @@ function InvoicesModal({ data, toast, onClose, onSaved }: { data: InvoiceSetting
         {f.type === 'service' ? (
           <div className="space-y-4 rounded-xl border border-zinc-200 p-4">
             <p className="text-sm font-semibold text-zinc-800">Dados da NFS-e</p>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="Código do serviço (LC 116)"><Input value={f.service.federalServiceCode} onChange={(e) => setS({ federalServiceCode: e.target.value })} /></Field>
               <Field label="CNAE"><Input value={f.service.cnaeCode} onChange={(e) => setS({ cnaeCode: e.target.value })} /></Field>
               <Field label="Tributação no município" hint="nonIncidence = não incidência"><Input value={f.service.taxationInMunicipality} onChange={(e) => setS({ taxationInMunicipality: e.target.value })} /></Field>
@@ -186,7 +186,7 @@ function InvoicesModal({ data, toast, onClose, onSaved }: { data: InvoiceSetting
         ) : (
           <div className="space-y-4 rounded-xl border border-zinc-200 p-4">
             <p className="text-sm font-semibold text-zinc-800">Dados da NF-e</p>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <Field label="Natureza da operação"><Input value={f.product.operationNature} onChange={(e) => setP({ operationNature: e.target.value })} /></Field>
               <Field label="CFOP"><Input value={f.product.cfop} onChange={(e) => setP({ cfop: e.target.value })} /></Field>
               <Field label="NCM"><Input value={f.product.ncm} onChange={(e) => setP({ ncm: e.target.value })} /></Field>
@@ -196,7 +196,7 @@ function InvoicesModal({ data, toast, onClose, onSaved }: { data: InvoiceSetting
             </div>
             <Field label="Informações adicionais"><Input value={f.product.additionalInformation} onChange={(e) => setP({ additionalInformation: e.target.value })} /></Field>
             <p className="text-xs text-zinc-500">Endereço padrão do comprador (o checkout não pede endereço):</p>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
               <Field label="Rua"><Input value={f.product.street} onChange={(e) => setP({ street: e.target.value })} /></Field>
               <Field label="Número"><Input value={f.product.number} onChange={(e) => setP({ number: e.target.value })} /></Field>
               <Field label="Bairro"><Input value={f.product.district} onChange={(e) => setP({ district: e.target.value })} /></Field>
