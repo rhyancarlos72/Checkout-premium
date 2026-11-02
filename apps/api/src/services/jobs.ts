@@ -1,6 +1,6 @@
 import { env } from '../config/env.js';
 import { logger, supabase } from '../lib/core.js';
-import { sendRecoveryEmail } from './email.js';
+import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
 import { notifyPixExpired, syncOrderWithProvider } from './orders.js';
 import { getSettings } from './settings.js';
@@ -64,7 +64,7 @@ export async function sendRecoveries() {
   const notBefore = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   const { data } = await supabase
     .from('orders')
-    .select('id, public_token, total_cents, customer_id, customer:customers(name, email), checkout:checkouts(slug, theme), items:order_items(kind, name)')
+    .select(RECOVERY_ORDER_SELECT)
     .in('status', ['pending', 'expired'])
     .is('recovery_sent_at', null)
     .lt('created_at', olderThan)
@@ -90,16 +90,7 @@ export async function sendRecoveries() {
       .gt('created_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString());
     if ((count ?? 0) > 0) continue;
 
-    const main = o.items.find((i: any) => i.kind === 'main');
-    await sendRecoveryEmail({
-      orderId: o.id,
-      to: o.customer.email,
-      name: o.customer.name,
-      productName: main?.name ?? 'seu produto',
-      totalCents: o.total_cents,
-      url: `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout.slug}&recover=${o.public_token}&utm_source=recovery&utm_medium=email`,
-      accent: o.checkout.theme?.primaryColor,
-    });
+    await sendRecoveryForOrder(o);
   }
 }
 

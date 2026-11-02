@@ -1,9 +1,11 @@
+import crypto from 'node:crypto';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { HttpError, must, supabase } from '../lib/core.js';
 import { createOrder, createOrderSchema, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
+import { unsubscribe, unsubscribeSig } from '../services/email.js';
 
 export const publicRouter = Router();
 
@@ -13,6 +15,18 @@ const pollLimiter = rateLimit({ windowMs: 60 * 1000, limit: 40, standardHeaders:
 const eventLimiter = rateLimit({ windowMs: 60 * 1000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false });
 
 // Marca do sistema (logo + nome) para a tela de login e o painel — só dados públicos
+// Descadastro de e-mails de recuperação (link no rodapé + List-Unsubscribe de 1 clique)
+const unsubHandler = async (req: any, res: any) => {
+  const e = String(req.query.e ?? '').trim().toLowerCase();
+  const sig = String(req.query.s ?? '');
+  const valid = e.length > 3 && e.length < 200 && sig.length === 32 && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(unsubscribeSig(e)));
+  if (valid) await unsubscribe(e);
+  if (req.method === 'POST') return res.status(valid ? 200 : 400).end();
+  res.type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>E-mails</title><body style="font-family:system-ui,sans-serif;max-width:480px;margin:60px auto;padding:0 16px;color:#111;text-align:center"><h1 style="font-size:20px">${valid ? 'Pronto, você não receberá mais esses e-mails.' : 'Link inválido.'}</h1><p style="color:#555">${valid ? 'Os e-mails de acesso a compras pagas continuam chegando normalmente.' : 'Use o link do rodapé do e-mail.'}</p></body>`);
+};
+publicRouter.get('/unsubscribe', unsubHandler);
+publicRouter.post('/unsubscribe', unsubHandler);
+
 publicRouter.get('/brand', async (_req, res) => {
   const { brand } = await getSettings();
   res.set('Cache-Control', 'no-cache');

@@ -115,6 +115,17 @@ server {
 }
 ```
 
+## 5.2 E-mail de recuperação (entrega na caixa de entrada)
+
+O e-mail já sai com: versão em texto, assunto pessoal sem palavras de spam, Reply-To do suporte (Configurações → Loja → E-mail de suporte), descadastro de 1 clique (`List-Unsubscribe`, exigido por Gmail/Yahoo) e o nome da loja como remetente. Quem se descadastra deixa de receber a recuperação (o e-mail de acesso continua).
+
+Para não cair no spam, faça **uma vez** no domínio (hPanel → Domínios → DNS / E-mails):
+1. **E-mail no seu domínio:** crie `vendas@seudominio.com.br` no Hostinger Email e use em `SMTP_USER` e `MAIL_FROM` (nunca um @gmail).
+2. **SPF:** registro TXT `v=spf1 include:_spf.mail.hostinger.com ~all` (a Hostinger cria ao ativar o e-mail; confira).
+3. **DKIM:** hPanel → E-mails → Configurações de DNS → ativar DKIM.
+4. **DMARC:** registro TXT em `_dmarc` com `v=DMARC1; p=none; rua=mailto:vendas@seudominio.com.br`.
+5. Teste em https://www.mail-tester.com (envie o teste de Integrações → E-mail para o endereço que o site mostra); a meta é nota 9+.
+
 ## 6. Ambientes
 
 Use três conjuntos separados: **desenvolvimento** (local, `EFI_SANDBOX=true`), **homologação** (branch `develop`, outro projeto Supabase) e **produção** (branch `main`). O CI (`.github/workflows/ci.yml`) roda typecheck, testes e build em todo push.

@@ -6,7 +6,7 @@ import { HttpError, must, productCode, supabase } from '../lib/core.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
 import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
-import { sendRecoveryEmail, testEmail } from '../services/email.js';
+import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder, testEmail } from '../services/email.js';
 import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
@@ -389,23 +389,14 @@ adminRouter.post('/orders/:id/recovery-email', async (req, res) => {
   if (!features.email) return res.json({ ok: false, message: 'Configure o SMTP (variáveis SMTP_*) para enviar e-mails de recuperação' });
   const { data: o }: any = await supabase
     .from('orders')
-    .select('id, status, public_token, total_cents, customer:customers(name, email), checkout:checkouts(slug, theme), items:order_items(kind, name)')
+    .select(RECOVERY_ORDER_SELECT)
     .eq('id', id)
     .maybeSingle();
   if (!o) throw new HttpError(404, 'Pedido não encontrado');
   if (o.status !== 'pending' && o.status !== 'expired') throw new HttpError(400, 'Só pedidos pendentes recebem recuperação');
   if (!o.customer?.email || !o.checkout) throw new HttpError(400, 'Pedido sem e-mail do cliente');
-  const main = o.items.find((i: any) => i.kind === 'main');
-  const ok = await sendRecoveryEmail({
-    orderId: o.id,
-    to: o.customer.email,
-    name: o.customer.name ?? '',
-    productName: main?.name ?? 'seu produto',
-    totalCents: o.total_cents,
-    url: `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout.slug}&recover=${o.public_token}&utm_source=recovery&utm_medium=email`,
-    accent: o.checkout.theme?.primaryColor,
-  });
-  if (!ok) return res.json({ ok: false, message: 'Falha ao enviar o e-mail. Veja o motivo em Integrações → Últimos envios' });
+  const ok = await sendRecoveryForOrder(o);
+  if (!ok) return res.json({ ok: false, message: 'E-mail não enviado (falha no SMTP ou o cliente pediu para não receber). Veja o motivo em Integrações → Últimos envios' });
   const sentAt = new Date().toISOString();
   await supabase.from('orders').update({ recovery_sent_at: sentAt }).eq('id', id);
   res.json({ ok: true, message: `E-mail de recuperação enviado para ${o.customer.email}`, sent_at: sentAt });
