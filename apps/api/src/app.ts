@@ -8,7 +8,8 @@ import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import { ZodError } from 'zod';
 import { env } from './config/env.js';
-import { HttpError, logger } from './lib/core.js';
+import { escapeHtml, HttpError, logger } from './lib/core.js';
+import { loadCheckout } from './services/orders.js';
 import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
@@ -104,9 +105,53 @@ export function createApp() {
       html = { mtime, body };
       return body;
     };
-    app.get(/^\/(?!api\/).*/, (_req, res) => {
+    // robots.txt válido (antes caía no index.html): checkout pode ser indexado; painel, pedidos e API não
+    app.get('/robots.txt', (_req, res) => {
+      res.type('text/plain').set('Cache-Control', 'public, max-age=3600');
+      res.send(['User-agent: *', 'Allow: /', 'Disallow: /admin', 'Disallow: /pedido/', 'Disallow: /api/', ''].join('\n'));
+    });
+
+    // SEO por página: título/descrição/prévia de link (WhatsApp, Facebook) do produto no checkout;
+    // painel e páginas de Pix de cada cliente ficam fora do Google (dados pessoais)
+    const seoFor = async (req: Request) => {
+      const p = req.path;
+      if (/^\/(admin|pedido)(\/|$)/.test(p)) return { noindex: true } as const;
+      const slug = p === '/checkout' ? String(req.query.produto_id ?? '') : (p.match(/^\/c\/([a-z0-9-]{3,60})$/)?.[1] ?? '');
+      if (!/^[a-z0-9-]{3,60}$/.test(slug)) return null;
+      try {
+        const c: any = await Promise.race([loadCheckout(slug), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))]);
+        const name = c.theme?.headline || c.product?.name || c.name;
+        const desc = String(c.theme?.subheadline || c.product?.description || `Compre ${name} com pagamento via Pix e acesso imediato.`).replace(/\s+/g, ' ').slice(0, 155);
+        return { title: `${name} | Checkout seguro`, desc, image: c.product?.image_url || c.theme?.mockupUrl || null, url: `${env.PUBLIC_URL}/checkout?produto_id=${slug}` };
+      } catch {
+        return null;
+      }
+    };
+    const setMeta = (html: string, prop: string, attr: 'name' | 'property', value: string) => {
+      const re = new RegExp(`<meta ${attr}="${prop}" content="[^"]*" \\/>`);
+      const tag = `<meta ${attr}="${prop}" content="${escapeHtml(value)}" />`;
+      return re.test(html) ? html.replace(re, tag) : html.replace('</head>', `    ${tag}\n  </head>`);
+    };
+    app.get(/^\/(?!api\/).*/, async (req, res) => {
       res.setHeader('Cache-Control', 'no-cache');
-      res.type('html').send(indexHtml());
+      let body = indexHtml();
+      const seo = await seoFor(req);
+      if (seo && 'noindex' in seo) {
+        res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+        body = body.replace('</head>', '    <meta name="robots" content="noindex, nofollow" />\n  </head>');
+      } else if (seo) {
+        body = body.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(seo.title)}</title>`);
+        body = setMeta(body, 'description', 'name', seo.desc);
+        body = setMeta(body, 'og:title', 'property', seo.title);
+        body = setMeta(body, 'og:description', 'property', seo.desc);
+        body = setMeta(body, 'og:url', 'property', seo.url);
+        if (seo.image) {
+          body = setMeta(body, 'og:image', 'property', seo.image);
+          body = setMeta(body, 'twitter:card', 'name', 'summary_large_image');
+        }
+        body = body.replace('</head>', `    <link rel="canonical" href="${escapeHtml(seo.url)}" />\n  </head>`);
+      }
+      res.type('html').send(body);
     });
   }
 
