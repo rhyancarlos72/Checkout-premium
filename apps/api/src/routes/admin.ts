@@ -181,6 +181,40 @@ const productBumpsSchema = z.object({
     .max(10),
 });
 
+// ------------------------------------------------------------------ upsell pós-compra (1 por produto principal)
+const upsellSchema = z.object({
+  offer_product_id: z.string().uuid('Escolha o produto oferecido'),
+  headline: z.string().trim().max(120).optional().nullable(),
+  title: z.string().trim().max(120).optional().nullable(),
+  description: z.string().trim().max(600).optional().nullable(),
+  image_url: urlOrEmpty,
+  price_cents: z.number().int().min(100, 'Preço mínimo de R$ 1,00').max(100_000_00),
+  compare_at_cents: z.number().int().min(0).max(100_000_00).optional().nullable(),
+  cta_text: z.string().trim().max(80).optional().nullable(),
+  active: z.boolean().default(true),
+});
+adminRouter.get('/upsells', async (_req, res) => {
+  const { data, error } = await supabase.from('upsells').select('*, offer:products!upsells_offer_product_id_fkey(name, image_url, price_cents)').order('created_at');
+  if (error) throw new HttpError(500, /relation|does not exist|schema cache/i.test(error.message) ? 'Rode no Supabase o SQL 20261107000000_upsells.sql' : error.message);
+  res.json(data ?? []);
+});
+adminRouter.put('/products/:id/upsell', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const b = upsellSchema.parse(req.body);
+  if (b.offer_product_id === id) throw new HttpError(400, 'Ofereça um produto diferente do principal');
+  const { data, error } = await supabase
+    .from('upsells')
+    .upsert({ product_id: id, ...b, compare_at_cents: b.compare_at_cents || null, updated_at: new Date().toISOString() }, { onConflict: 'product_id' })
+    .select()
+    .single();
+  if (error) throw new HttpError(500, error.message);
+  res.json(data);
+});
+adminRouter.delete('/products/:id/upsell', async (req, res) => {
+  await supabase.from('upsells').delete().eq('product_id', uuid.parse(req.params.id));
+  res.status(204).end();
+});
+
 /** Produtos adicionais oferecidos junto com este produto (via checkouts dele). */
 adminRouter.get('/products/:id/bumps', async (req, res) => {
   const id = uuid.parse(req.params.id);

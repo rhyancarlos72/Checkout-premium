@@ -425,3 +425,104 @@ export async function renewOrder(token: string): Promise<{ token: string; renewe
     throw e instanceof HttpError ? e : new HttpError(502, 'Não foi possível gerar o novo Pix. Tente novamente.');
   }
 }
+
+/** Oferta de upsell para um pedido pago (null se não houver ou se já foi comprada). */
+export async function upsellOfferFor(order: { id: string; status: string; tracking?: any; items: { kind: string; product_id?: string | null }[] }) {
+  if (order.status !== 'paid' || order.tracking?.upsell_of) return null; // pedido de upsell não oferece outro upsell
+  const mainProduct = order.items.find((i) => i.kind === 'main')?.product_id;
+  if (!mainProduct) return null;
+  const { data: u } = await supabase
+    .from('upsells')
+    .select('id, headline, title, description, image_url, price_cents, compare_at_cents, cta_text, active, offer:products!upsells_offer_product_id_fkey(name, description, image_url)')
+    .eq('product_id', mainProduct)
+    .eq('active', true)
+    .maybeSingle();
+  const up: any = u;
+  if (!up) return null;
+  const { data: prev } = await supabase.from('orders').select('public_token, status').eq('tracking->>upsell_of', order.id).in('status', ['pending', 'paid']).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if ((prev as any)?.status === 'paid') return null;
+  return {
+    id: up.id,
+    headline: up.headline || 'Espere! Uma oferta exclusiva para você',
+    title: up.title || up.offer?.name || 'Oferta especial',
+    description: up.description ?? up.offer?.description ?? null,
+    image_url: up.image_url || up.offer?.image_url || null,
+    price_cents: up.price_cents,
+    compare_at_cents: up.compare_at_cents ?? null,
+    cta_text: up.cta_text || null,
+    pending_token: (prev as any)?.public_token ?? null,
+  };
+}
+
+/**
+ * Cliente aceitou o upsell: cria um pedido novo só com o produto oferecido (Pix próprio),
+ * com os dados do comprador do pedido original (nada para preencher). Idempotente.
+ */
+export async function createUpsellOrder(parentToken: string): Promise<{ token: string }> {
+  const { data } = await supabase
+    .from('orders')
+    .select('id, status, checkout_id, customer_id, tracking, ip, user_agent, customer:customers(name, email, phone, document), items:order_items(kind, product_id)')
+    .eq('public_token', parentToken)
+    .maybeSingle();
+  const parent: any = data;
+  if (!parent) throw new HttpError(404, 'Pedido não encontrado');
+  const offer = await upsellOfferFor(parent);
+  if (!offer) throw new HttpError(400, 'Esta oferta não está mais disponível');
+  if (offer.pending_token) return renewOrder(offer.pending_token); // já aceitou antes: reabre (ou renova) o mesmo Pix
+
+  const { data: up } = await supabase.from('upsells').select('offer_product_id').eq('id', offer.id).single();
+  const { data: ck } = await supabase.from('checkouts').select('id, name, provider, pix_expires_minutes').eq('id', parent.checkout_id).maybeSingle();
+  const checkout: any = ck;
+  if (!checkout || !up) throw new HttpError(404, 'Oferta indisponível');
+  const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
+  const { initiate_checkout_event_id: _ic, purchase_event_id: _pe, event_id: _e, renewed_from: _r, ...keep } = parent.tracking ?? {};
+  const tracking = { ...keep, upsell_of: parent.id, purchase_event_id: `purchase_${crypto.randomUUID()}` };
+
+  const order = must(
+    await supabase
+      .from('orders')
+      .insert({
+        checkout_id: parent.checkout_id,
+        customer_id: parent.customer_id,
+        provider: provider.name,
+        subtotal_cents: offer.price_cents,
+        discount_cents: 0,
+        total_cents: offer.price_cents,
+        tracking,
+        ip: parent.ip,
+        user_agent: parent.user_agent,
+        recovery_sent_at: new Date().toISOString(), // upsell não entra na recuperação por e-mail
+      })
+      .select('id, number, public_token')
+      .single(),
+  ) as { id: string; number: number; public_token: string };
+  const itemsSaved = supabase.from('order_items').insert({ order_id: order.id, kind: 'main', name: offer.title, price_cents: offer.price_cents, product_id: (up as any).offer_product_id });
+
+  try {
+    const charge = await provider.createCharge({
+      orderId: order.id,
+      amountCents: offer.price_cents,
+      description: `Pedido #${order.number} - ${offer.title}`,
+      expiresInSeconds: checkout.pix_expires_minutes * 60,
+      customer: { name: parent.customer?.name ?? '', email: parent.customer?.email ?? '', phone: parent.customer?.phone ?? null, document: parent.customer?.document ?? null },
+    });
+    const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
+    await Promise.all([
+      itemsSaved,
+      supabase.from('orders').update({ provider_charge_id: charge.chargeId, pix_code: charge.pixCode, pix_qr_image: qrImage, expires_at: charge.expiresAt.toISOString() }).eq('id', order.id),
+      supabase.from('events').insert([
+        { checkout_id: parent.checkout_id, order_id: order.id, type: 'upsell_accepted', data: { upsell_id: offer.id, parent: parent.id } },
+        { checkout_id: parent.checkout_id, order_id: order.id, type: 'pix_generated', data: { total_cents: offer.price_cents, upsell_of: parent.id } },
+        // sem lembretes de recuperação por WhatsApp para o upsell (não incomodar quem acabou de comprar)
+        { checkout_id: parent.checkout_id, order_id: order.id, type: 'wa_recovery', data: { attempt: 'upsell' } },
+        { checkout_id: parent.checkout_id, order_id: order.id, type: 'wa_recovery', data: { attempt: 'upsell' } },
+      ]),
+    ]);
+    void dispatchTracking(order.id, 'sale.pending');
+    return { token: order.public_token };
+  } catch (e: any) {
+    await supabase.from('orders').update({ status: 'failed', error: String(e?.message ?? e).slice(0, 500) }).eq('id', order.id);
+    logger.error({ orderId: order.id, err: e?.message }, 'Falha ao gerar Pix do upsell');
+    throw e instanceof HttpError ? e : new HttpError(502, 'Não foi possível gerar o Pix agora. Tente novamente.');
+  }
+}

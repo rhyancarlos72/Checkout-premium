@@ -3,7 +3,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { clientIp, HttpError, must, productCode, supabase } from '../lib/core.js';
-import { createOrder, createOrderSchema, renewOrder, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
+import { createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
 
@@ -92,7 +92,7 @@ async function publicOrder(token: string) {
   const o: any = must(
     await supabase
       .from('orders')
-      .select('id, number, status, customer_id, total_cents, subtotal_cents, discount_cents, pix_code, pix_qr_image, expires_at, paid_at, provider, created_at, customer:customers(name, email, phone), checkout:checkouts(slug, name, theme, tracking), items:order_items(kind, name, price_cents, product:products(number)), tracking')
+      .select('id, number, status, customer_id, total_cents, subtotal_cents, discount_cents, pix_code, pix_qr_image, expires_at, paid_at, provider, created_at, customer:customers(name, email, phone), checkout:checkouts(slug, name, theme, tracking), items:order_items(kind, name, price_cents, product_id, product:products(number)), tracking')
       .eq('public_token', token)
       .maybeSingle(),
     'Pedido não encontrado',
@@ -115,6 +115,8 @@ async function publicOrder(token: string) {
     checkout: o.checkout ? { slug: o.checkout.slug, name: o.checkout.name, theme: o.checkout.theme, metaPixelId: o.checkout.tracking?.metaPixelId ?? null } : null,
     purchase_event_id: o.tracking?.purchase_event_id ?? null,
     delivery: o.status === 'paid' ? await deliveryItems(o.id) : [],
+    upsell: o.status === 'paid' ? await upsellOfferFor(o).catch(() => null) : null,
+    is_upsell: Boolean(o.tracking?.upsell_of),
     _id: o.id,
   };
 }
@@ -126,6 +128,20 @@ publicRouter.get('/orders/:token', pollLimiter, async (req, res) => {
 });
 
 /** Botão "Já paguei": força consulta ao gateway. */
+/** Upsell aceito no popup: gera o Pix do produto oferecido, sem preencher nada. */
+publicRouter.post('/orders/:token/upsell', orderLimiter, async (req, res) => {
+  const token = tokenSchema.parse(String(req.params.token));
+  const r = await createUpsellOrder(token);
+  const { _id, ...o } = await publicOrder(r.token);
+  res.json({ token: r.token, order: o });
+});
+publicRouter.post('/orders/:token/upsell/decline', pollLimiter, async (req, res) => {
+  const token = tokenSchema.parse(String(req.params.token));
+  const { data } = await supabase.from('orders').select('id, checkout_id').eq('public_token', token).maybeSingle();
+  if (data) await supabase.from('events').insert({ order_id: (data as any).id, checkout_id: (data as any).checkout_id, type: 'upsell_declined', data: {} });
+  res.status(204).end();
+});
+
 /** Pix vencido: gera um novo Pix para a mesma compra, sem preencher nada. */
 publicRouter.post('/orders/:token/renew', orderLimiter, async (req, res) => {
   const token = tokenSchema.parse(String(req.params.token));

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, CheckCircle2, Clock, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
+import { Check, CheckCircle2, Clock, Gift, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { cn } from '@/components/ui';
@@ -23,6 +23,8 @@ interface PublicOrder {
   items: { kind: string; name: string; price_cents: number }[];
   customer: { name: string; email: string; phone?: string | null } | null;
   content_ids?: string[];
+  upsell?: UpsellOffer | null;
+  is_upsell?: boolean;
   external_id?: string | null;
   checkout: { slug: string; name: string; theme: Theme; metaPixelId: string | null } | null;
   purchase_event_id: string | null;
@@ -83,6 +85,69 @@ function Confetti() {
   );
 }
 
+interface UpsellOffer {
+  id: string;
+  headline: string;
+  title: string;
+  description: string | null;
+  image_url: string | null;
+  price_cents: number;
+  compare_at_cents: number | null;
+  cta_text: string | null;
+  pending_token: string | null;
+}
+
+/** Popup de upsell pós-compra: aparece quando o Pix é aprovado; aceitar gera um Pix só do adicional. */
+function UpsellPopup({ offer, busy, error, onAccept, onDecline }: { offer: UpsellOffer; busy: boolean; error: string | null; onAccept: () => void; onDecline: () => void }) {
+  const off = offer.compare_at_cents && offer.compare_at_cents > offer.price_cents ? Math.round((1 - offer.price_cents / offer.compare_at_cents) * 100) : 0;
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => void (document.body.style.overflow = prev);
+  }, []);
+  // fica dentro do Shell (sem portal) para herdar as cores do tema do checkout
+  return (
+    <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="Oferta especial">
+      <div className="animate-pop w-full max-w-md overflow-hidden rounded-t-[28px] bg-ck-surface text-ck-text shadow-2xl sm:rounded-[28px]">
+        <div className="relative bg-gradient-to-br from-brand to-brand/70 px-6 pb-14 pt-6 text-center text-brand-fg">
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-[11px] font-extrabold uppercase tracking-widest"><Gift className="h-3.5 w-3.5" /> Só agora, nesta tela</span>
+          <h2 className="mt-3 font-display text-[22px] font-extrabold leading-tight">{offer.headline}</h2>
+          <p className="mt-1 text-sm opacity-90">Seu pagamento foi aprovado. Antes de acessar, veja isto:</p>
+        </div>
+        <div className="-mt-10 px-5">
+          <div className="relative rounded-2xl border border-ck-border bg-ck-surface p-4 shadow-xl">
+            {off > 0 && <span className="absolute -top-3 right-4 rounded-full bg-red-500 px-2.5 py-1 text-xs font-extrabold text-white shadow">-{off}%</span>}
+            <div className="flex items-center gap-4">
+              {offer.image_url ? (
+                <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-ck-border bg-[#fff] p-1"><img src={offer.image_url} alt="" className="h-full w-full object-contain" /></div>
+              ) : (
+                <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand"><Gift className="h-10 w-10" /></div>
+              )}
+              <div className="min-w-0">
+                <p className="font-display text-[17px] font-bold leading-snug">{offer.title}</p>
+                {off > 0 && <p className="mt-1 text-sm text-ck-muted">De <span className="line-through">{brl(offer.compare_at_cents!)}</span> por</p>}
+                <p className="font-display text-[28px] font-extrabold leading-none tracking-tight text-brand tabular-nums">{brl(offer.price_cents)}</p>
+              </div>
+            </div>
+            {offer.description && <p className="mt-3 text-sm leading-relaxed text-ck-muted">{offer.description}</p>}
+          </div>
+        </div>
+        <div className="space-y-2 p-5 pt-4">
+          <button type="button" disabled={busy} onClick={onAccept} className="ck-cta flex h-14 w-full items-center justify-center gap-2 text-[16px] font-extrabold disabled:opacity-70">
+            {busy ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" strokeWidth={3} />}
+            {busy ? 'Gerando seu Pix…' : offer.pending_token ? 'Continuar para o Pix do adicional' : offer.cta_text || `Sim, quero por ${brl(offer.price_cents)}`}
+          </button>
+          <p className="text-center text-xs text-ck-muted">Pagamento único pelo Pix, sem preencher nada de novo.</p>
+          {error && <p className="text-center text-sm text-red-500">{error}</p>}
+          <button type="button" onClick={onDecline} disabled={busy} className="w-full py-2.5 text-sm font-medium text-ck-muted underline-offset-2 hover:underline">
+            Não, obrigado. Quero ir para o meu acesso
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Shell({ theme, children }: { theme: Theme; children: ReactNode }) {
   const t = { ...themeDefaults, ...theme };
   const prefersDark = usePrefersDark();
@@ -122,6 +187,33 @@ export default function PaymentPage() {
       if (r.token !== token) navigate(`/pedido/${r.token}`, { replace: true });
     },
   });
+  const [upsellClosed, setUpsellClosed] = useState(() => {
+    try {
+      return localStorage.getItem(`ck_upsell_${token}`) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const closeUpsell = () => {
+    setUpsellClosed(true);
+    try {
+      localStorage.setItem(`ck_upsell_${token}`, '1');
+    } catch {
+      /* ignore */
+    }
+  };
+  const upsell = useMutation({
+    mutationFn: () => publicApi.post<{ token: string; order: PublicOrder }>(`/orders/${token}/upsell`),
+    onSuccess: (r) => {
+      closeUpsell();
+      qc.setQueryData(['order', r.token], r.order);
+      navigate(`/pedido/${r.token}`);
+    },
+  });
+  const declineUpsell = () => {
+    closeUpsell();
+    publicApi.post(`/orders/${token}/upsell/decline`).catch(() => {});
+  };
   const [copied, setCopied] = useState(false);
   const firedRef = useRef(false);
 
@@ -202,6 +294,9 @@ export default function PaymentPage() {
     return (
       <Shell theme={theme}>
         <Confetti />
+        {order.upsell && !upsellClosed && (
+          <UpsellPopup offer={order.upsell} busy={upsell.isPending} error={upsell.isError ? (upsell.error as Error).message : null} onAccept={() => upsell.mutate()} onDecline={declineUpsell} />
+        )}
         <Steps current={3} />
         <section className="ck-card overflow-hidden text-center">
           <div className="relative bg-gradient-to-b from-emerald-500/10 to-transparent px-6 pb-6 pt-10">

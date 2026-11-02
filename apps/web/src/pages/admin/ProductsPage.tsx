@@ -1,6 +1,6 @@
 import { ImageUpload } from '@/components/ImageUpload';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Boxes, Check, Copy, CopyPlus, ExternalLink, Link2, Palette, Pencil, Plus, Search, Trash2, Zap } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
@@ -12,6 +12,7 @@ import { checkoutUrl } from '@/lib/links';
 import { brl, centsToInput, parseMoney, productCode } from '@/lib/format';
 import { PageHeader } from './AdminApp';
 import { ProductBumpsModal } from './ProductBumpsModal';
+import { UpsellModal, UpsellSection, type Upsell } from './ProductUpsell';
 import { useCrud } from './crud';
 
 export interface Product {
@@ -113,6 +114,9 @@ export default function ProductsPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [bumpsFor, setBumpsFor] = useState<Product | null>(null);
+  const [upsellFor, setUpsellFor] = useState<Product | null>(null);
+  const upsells = useQuery({ queryKey: ['upsells'], queryFn: () => adminApi.get<Upsell[]>('/upsells'), retry: false });
+  const upsellOf = (id: string) => upsells.data?.find((u) => u.product_id === id);
   const [search, setSearch] = useState('');
   const duplicate = useMutation({
     mutationFn: (id: string) => adminApi.post<any>(`/products/${id}/duplicate`),
@@ -160,6 +164,7 @@ export default function ProductsPage() {
                 <ProductLink product={p} onCreated={() => (qc.invalidateQueries({ queryKey: ['products'] }), qc.invalidateQueries({ queryKey: ['checkouts'] }), toast.ok('Link criado'))} />
               </div>
               <AdditionalProducts product={p} products={list.data ?? []} onEdit={() => setBumpsFor(p)} />
+              <UpsellSection product={p} products={list.data ?? []} upsell={upsellOf(p.id)} onEdit={() => (upsells.isError ? toast.err((upsells.error as Error).message) : setUpsellFor(p))} />
               <div className="mt-auto flex flex-wrap items-center gap-1 whitespace-nowrap border-t border-zinc-100 pt-3">
                 <Button size="sm" variant="secondary" onClick={() => setEditing(p)}><Pencil className="h-3.5 w-3.5" /> Editar</Button>
                 <Button size="sm" variant="ghost" onClick={() => navigate('/admin/checkouts')}><Palette className="h-3.5 w-3.5" /> Personalizar</Button>
@@ -174,6 +179,7 @@ export default function ProductsPage() {
         </div>
         </>
       )}
+      {upsellFor && <UpsellModal product={upsellFor} products={list.data ?? []} upsell={upsellOf(upsellFor.id)} onClose={() => setUpsellFor(null)} toast={toast} />}
       {bumpsFor && (
         <ProductBumpsModal
           product={bumpsFor}
