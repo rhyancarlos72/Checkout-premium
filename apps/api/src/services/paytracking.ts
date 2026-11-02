@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../config/env.js';
-import { fetchWithTimeout, logger, sleep, supabase } from '../lib/core.js';
+import { fetchWithTimeout, logger, productCode, sleep, supabase } from '../lib/core.js';
 import { allWebhooks, targetsFor } from './webhooks.js';
 
 /**
@@ -34,7 +34,9 @@ export interface OrderForTracking {
   items: { kind: string; name: string; price_cents: number; product_id: string | null; bump_id: string | null; product?: { number: number | null } | null }[];
 }
 
-function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
+const code = (i?: { product?: { number: number | null } | null }) => productCode(i?.product?.number ?? null);
+
+export function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
   const t = o.tracking ?? {};
   const status = STATUS[event];
   const eventId =
@@ -62,12 +64,20 @@ function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
     value,
     currency: 'BRL',
     event_source_url: t.page_url || (o.checkout_slug ? `${env.PUBLIC_URL}/checkout?produto_id=${o.checkout_slug}` : env.PUBLIC_URL),
-    product_id: main?.product_id ?? '',
+    // ID do produto = o mesmo ID de 7 dígitos do painel (ex.: 8939361). É ele que a PayTracking
+    // compara com "IDs de produto deste pixel" para saber em qual pixel registrar a venda.
+    product_id: code(main) || main?.product_id || '',
+    product_code: code(main) || null,
     product_name: main?.name ?? '',
-    product_number: main?.product?.number ?? null, // ID numérico do produto (#1001)
+    product_uuid: main?.product_id ?? null,
+    product_number: main?.product?.number ?? null, // número interno (#1001)
+    product_ids: o.items.map(code).filter(Boolean),
     products: o.items.map((i) => ({
-      id: i.product_id ?? i.bump_id ?? '',
+      id: code(i) || i.product_id || i.bump_id || '',
+      code: code(i) || null,
+      uuid: i.product_id ?? null,
       number: i.product?.number ?? null,
+      kind: i.kind,
       name: i.name,
       quantity: 1,
       price: Number((i.price_cents / 100).toFixed(2)),
