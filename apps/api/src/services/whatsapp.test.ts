@@ -109,6 +109,12 @@ describe('mensagens (porta do checkout antigo)', () => {
     expect(new Set(rc).size).toBe(12);
     expect(rc.every((m) => m.includes('https://l') && m.includes('PIX') && m.includes('SAIR'))).toBe(true);
   });
+  it('o último lembrete SEMPRE traz como parar de receber (SAIR), em qualquer combinação sorteada', () => {
+    for (let i = 0; i < 60; i++) {
+      const m = wa.buildRecoveryMessage({ phone: `55119000003${String(i).padStart(2, '0')}`, name: 'Cliente', link: 'https://l', attempt: 3, pixCode: 'PIX' });
+      expect(m).toContain('SAIR');
+    }
+  });
   it('não repete a mesma saudação seguida para o mesmo telefone', () => {
     const first = (n: number) => wa.buildApprovedMessage({ phone: '5511900000003', name: 'Ana', totalCents: 100, items: [{ name: 'P', url: null }] }).split('\n')[0] + n;
     const a = first(0).slice(0, -1);
