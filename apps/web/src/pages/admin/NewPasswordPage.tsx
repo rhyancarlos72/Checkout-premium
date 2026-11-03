@@ -63,13 +63,13 @@ export default function NewPasswordPage() {
     <AuthLayout>
       {done ? (
         <div className="space-y-4 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-400/15 ring-8 ring-emerald-400/5"><CheckCircle2 className="h-8 w-8 text-emerald-300" /></div>
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-sky-400/15 ring-8 ring-sky-400/5"><CheckCircle2 className="h-8 w-8 text-sky-300" /></div>
           <h2 className="text-2xl font-bold">Senha criada!</h2>
           <p className="text-sm text-zinc-400">Entrando no painel…</p>
         </div>
       ) : ready === 'checking' ? (
         <div className="flex flex-col items-center gap-3 py-8 text-zinc-400">
-          <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-emerald-300" /> Validando link…
+          <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-sky-300" /> Validando link…
         </div>
       ) : ready === 'invalid' ? (
         <div className="space-y-5 text-center">
@@ -83,7 +83,7 @@ export default function NewPasswordPage() {
       ) : (
         <form onSubmit={submit} className="space-y-5">
           <div>
-            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-400/15"><KeyRound className="h-5 w-5 text-emerald-300" /></div>
+            <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/15"><KeyRound className="h-5 w-5 text-sky-300" /></div>
             <h2 className="text-2xl font-bold tracking-tight">Defina sua nova senha</h2>
             <p className="mt-1 text-sm text-zinc-400">Use pelo menos 8 caracteres, misturando letras, números e símbolos.</p>
           </div>

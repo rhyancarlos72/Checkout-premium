@@ -53,9 +53,10 @@ adminRouter.get('/team', async (_req, res) => {
   );
   res.json(rows);
 });
-adminRouter.post('/team', async (req, res) => {
-  const { email } = z.object({ email: z.string().trim().toLowerCase().email('E-mail inválido') }).parse(req.body);
-  if (email === req.adminEmail?.toLowerCase() || email === env.ADMIN_EMAIL) throw new HttpError(400, 'Este e-mail já é o dono da conta');
+/** Convida alguém como equipe: e-mail com link para criar a senha + acesso sem integrações. */
+async function inviteStaff(emailRaw: string) {
+  const email = emailRaw.trim().toLowerCase();
+  if (email === env.ADMIN_EMAIL) throw new HttpError(400, 'Este e-mail já é o dono da conta');
   const redirectTo = `${env.PUBLIC_URL}/admin/nova-senha`;
   let userId: string | null = null;
   const invited = await supabase.auth.admin.inviteUserByEmail(email, { redirectTo });
@@ -70,12 +71,37 @@ adminRouter.post('/team', async (req, res) => {
     if (!userId) throw new HttpError(502, `Não foi possível convidar: ${invited.error?.message ?? 'erro'}`);
     await supabase.auth.resetPasswordForEmail(email, { redirectTo });
   }
-  let r = await supabase.from('admins').upsert({ user_id: userId, role: 'staff', email });
+  const r = await supabase.from('admins').upsert({ user_id: userId, role: 'staff', email });
   if (r.error && /role|email/.test(r.error.message)) throw new HttpError(400, 'Rode no Supabase o SQL "20261105000000_admin_roles.sql" antes de adicionar pessoas à equipe');
   if (r.error) throw new HttpError(500, r.error.message);
   clearAuthCache();
-  res.json({ ok: true, message: `Convite enviado para ${email}. A pessoa define a senha pelo link do e-mail.` });
+  return `Convite enviado para ${email}. A pessoa define a senha pelo link do e-mail.`;
+}
+adminRouter.post('/team', async (req, res) => {
+  const { email } = z.object({ email: z.string().trim().toLowerCase().email('E-mail inválido') }).parse(req.body);
+  if (email === req.adminEmail?.toLowerCase()) throw new HttpError(400, 'Este e-mail já é o dono da conta');
+  res.json({ ok: true, message: await inviteStaff(email) });
 });
+// pedidos de cadastro (tela de login → "Criar cadastro")
+adminRouter.get('/team/requests', async (_req, res) => {
+  const { data, error } = await supabase.from('access_requests').select('id, name, email, phone, company, message, status, created_at').eq('status', 'pending').order('created_at', { ascending: false }).limit(50);
+  if (error) return res.json([]);
+  res.json(data ?? []);
+});
+adminRouter.post('/team/requests/:id/:action', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const action = z.enum(['approve', 'reject']).parse(req.params.action);
+  const { data: r } = await supabase.from('access_requests').select('*').eq('id', id).eq('status', 'pending').maybeSingle();
+  if (!r) throw new HttpError(404, 'Pedido não encontrado ou já decidido');
+  if (action === 'reject') {
+    await supabase.from('access_requests').update({ status: 'rejected', decided_at: new Date().toISOString() }).eq('id', id);
+    return res.json({ ok: true, message: 'Pedido recusado' });
+  }
+  const msg = await inviteStaff((r as any).email);
+  await supabase.from('access_requests').update({ status: 'approved', decided_at: new Date().toISOString() }).eq('id', id);
+  res.json({ ok: true, message: msg });
+});
+
 adminRouter.delete('/team/:userId', async (req, res) => {
   const id = uuid.parse(req.params.userId);
   if (id === req.adminId) throw new HttpError(400, 'Você não pode remover a si mesmo');

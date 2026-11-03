@@ -18,6 +18,7 @@ const UNIQUE: Record<string, string[]> = {
   checkouts: ['slug'],
   coupons: ['code'],
   admins: ['user_id'],
+  access_requests: ['email'],
 };
 const NO_ID = new Set(['settings', 'admins', 'checkout_bumps']);
 

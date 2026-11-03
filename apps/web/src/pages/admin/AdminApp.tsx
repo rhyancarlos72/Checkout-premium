@@ -106,6 +106,7 @@ function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: stri
   const brand = useBrand();
   const isOwner = useMe().data?.role === 'owner';
   const priv = useHideEmail();
+  const pendingReq = useQuery({ queryKey: ['team-requests'], queryFn: () => adminApi.get<unknown[]>('/team/requests'), enabled: isOwner, refetchInterval: 120_000 }).data?.length ?? 0;
   return (
     <nav className="flex h-full flex-col border-r border-white/[.06] bg-[#0d1426] font-display text-slate-300">
       <div className="flex h-16 items-center gap-3 px-5">
@@ -130,6 +131,7 @@ function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: stri
             }
           >
             <n.icon className="h-[19px] w-[19px]" strokeWidth={1.8} /> {n.label}
+            {n.to === '/admin/configuracoes' && pendingReq > 0 && <span className="ml-auto rounded-full bg-sky-400 px-1.5 text-[10px] font-bold text-[#0d1426]" title="Pedidos de cadastro">{pendingReq}</span>}
           </NavLink>
         ))}
       </div>

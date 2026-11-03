@@ -327,11 +327,18 @@ function BrandTab({ toast }: { toast: ReturnType<typeof useToast> }) {
 }
 
 // ------------------------------------------------------------------ equipe (somente o dono)
+interface AccessRequest { id: string; name: string; email: string; phone: string | null; company: string | null; message: string | null; created_at: string }
 interface Member { user_id: string; email: string; name: string; role: 'owner' | 'staff'; created_at: string; last_sign_in_at: string | null }
 function TeamTab({ toast }: { toast: ReturnType<typeof useToast> }) {
   const qc = useQueryClient();
   const team = useQuery({ queryKey: ['team'], queryFn: () => adminApi.get<Member[]>('/team') });
   const priv = useHideEmail();
+  const requests = useQuery({ queryKey: ['team-requests'], queryFn: () => adminApi.get<AccessRequest[]>('/team/requests') });
+  const decide = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'approve' | 'reject' }) => adminApi.post<{ message: string }>(`/team/requests/${id}/${action}`),
+    onSuccess: (r) => (toast.ok(r.message), qc.invalidateQueries({ queryKey: ['team-requests'] }), qc.invalidateQueries({ queryKey: ['team'] })),
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
+  });
   const [email, setEmail] = useState('');
   const invite = useMutation({
     mutationFn: () => adminApi.post<{ message: string }>('/team', { email }),
@@ -344,6 +351,26 @@ function TeamTab({ toast }: { toast: ReturnType<typeof useToast> }) {
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao remover'),
   });
   return (
+    <div className="space-y-6">
+      {(requests.data?.length ?? 0) > 0 && (
+        <Panel title={`Pedidos de cadastro (${requests.data!.length})`} desc="Pessoas que pediram acesso pela tela de login. Aprovar envia o convite (acesso de equipe, sem integrações)." icon={<UserPlus className="h-5 w-5" />}>
+          <ul className="divide-y divide-zinc-100">
+            {requests.data!.map((r) => (
+              <li key={r.id} className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-zinc-900">{r.name}{r.company ? <span className="font-normal text-zinc-500"> · {r.company}</span> : null}</p>
+                  <p className="truncate text-xs text-zinc-500">{r.email}{r.phone ? ` · ${r.phone}` : ''} · {new Date(r.created_at).toLocaleString('pt-BR')}</p>
+                  {r.message && <p className="mt-1 rounded-lg bg-zinc-50 px-2.5 py-1.5 text-xs text-zinc-600">“{r.message}”</p>}
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button size="sm" loading={decide.isPending && decide.variables?.id === r.id && decide.variables.action === 'approve'} onClick={() => decide.mutate({ id: r.id, action: 'approve' })}>Aprovar</Button>
+                  <Button size="sm" variant="ghost" onClick={() => confirm(`Recusar o pedido de ${r.name}?`) && decide.mutate({ id: r.id, action: 'reject' })}>Recusar</Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <Panel title="Adicionar pessoa à equipe" desc="A pessoa recebe um e-mail para criar a senha." icon={<UserPlus className="h-5 w-5" />} footer={<Button loading={invite.isPending} disabled={!email.includes('@')} onClick={() => invite.mutate()}>Enviar convite</Button>}>
         <Field label="E-mail"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="pessoa@email.com" /></Field>
@@ -372,6 +399,7 @@ function TeamTab({ toast }: { toast: ReturnType<typeof useToast> }) {
           </ul>
         )}
       </Panel>
+    </div>
     </div>
   );
 }

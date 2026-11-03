@@ -317,3 +317,23 @@ describe('validações do checkout', () => {
     expect((await api('GET', '/api/admin/gateways')).status).toBe(401);
   });
 });
+
+describe('criar cadastro (tela de login)', () => {
+  it('registra o pedido para aprovação, sem criar acesso', async () => {
+    const r = await api('POST', '/api/auth/request-access', { name: 'Pedro Alves', email: 'Pedro@X.com', phone: '11999990000', company: 'Loja do Pedro', message: 'Sou afiliado' });
+    expect(r.status).toBe(200);
+    const row = (db.access_requests ?? []).find((x) => x.email === 'pedro@x.com')!;
+    expect(row).toMatchObject({ name: 'Pedro Alves', company: 'Loja do Pedro', ip: '187.10.20.30' });
+    expect(row.status ?? 'pending').toBe('pending');
+    expect((db.admins ?? []).length).toBe(0); // ninguém vira admin sozinho
+  });
+  it('pedido repetido não duplica e robô (campo invisível) é ignorado', async () => {
+    const again = await api('POST', '/api/auth/request-access', { name: 'Pedro Alves', email: 'pedro@x.com' });
+    expect(again.body.already).toBe(true);
+    await api('POST', '/api/auth/request-access', { name: 'Robo Spam', email: 'spam@x.com', website: 'http://spam' });
+    expect((db.access_requests ?? []).some((x) => x.email === 'spam@x.com')).toBe(false);
+  });
+  it('valida nome e e-mail', async () => {
+    expect((await api('POST', '/api/auth/request-access', { name: 'A', email: 'x' })).status).toBe(400);
+  });
+});

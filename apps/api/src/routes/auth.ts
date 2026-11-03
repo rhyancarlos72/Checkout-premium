@@ -2,7 +2,8 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { HttpError, logger, supabase } from '../lib/core.js';
+import { clientIp, HttpError, logger, supabase } from '../lib/core.js';
+import { sendAccessRequestNotice } from '../services/email.js';
 
 /**
  * Primeiro acesso: cria (ou recupera) a conta do dono e o torna admin.
@@ -69,5 +70,32 @@ authRouter.post('/setup', limiter, async (req, res) => {
   }
   const { error } = await supabase.from('admins').upsert({ user_id: user!.id });
   if (error) throw new HttpError(500, error.message);
+  res.json({ ok: true });
+});
+
+/**
+ * "Criar cadastro" na tela de login: registra um PEDIDO de acesso (não cria conta).
+ * O dono aprova em Configurações → Equipe; só então a pessoa recebe o link para criar a senha.
+ */
+const requestLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Muitos pedidos. Tente novamente mais tarde.' } });
+authRouter.post('/request-access', requestLimiter, async (req, res) => {
+  const b = z
+    .object({
+      name: z.string().trim().min(3, 'Informe seu nome completo').max(120),
+      email: z.string().trim().toLowerCase().email('E-mail inválido').max(160),
+      phone: z.string().trim().max(30).optional().nullable(),
+      company: z.string().trim().max(120).optional().nullable(),
+      message: z.string().trim().max(600).optional().nullable(),
+      website: z.string().optional(), // armadilha anti-robô (campo invisível)
+    })
+    .parse(req.body);
+  if (b.website) return res.json({ ok: true }); // robô: finge sucesso
+  const { error } = await supabase.from('access_requests').insert({ name: b.name, email: b.email, phone: b.phone || null, company: b.company || null, message: b.message || null, ip: clientIp(req as any) });
+  if (error) {
+    if (/duplicate|unique/i.test(error.message)) return res.json({ ok: true, already: true });
+    if (/relation|does not exist|schema cache/i.test(error.message)) throw new HttpError(503, 'Cadastro indisponível no momento. Fale com o administrador.');
+    throw new HttpError(500, error.message);
+  }
+  if (env.ADMIN_EMAIL) void sendAccessRequestNotice(env.ADMIN_EMAIL, b).catch(() => {});
   res.json({ ok: true });
 });

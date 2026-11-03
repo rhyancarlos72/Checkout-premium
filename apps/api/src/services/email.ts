@@ -366,3 +366,27 @@ export async function testEmail(to: string) {
     return { ok: false, message: String(e?.message ?? e) };
   }
 }
+
+/** Avisa o dono que chegou um pedido de cadastro (se o SMTP estiver configurado). */
+export async function sendAccessRequestNotice(to: string, r: { name: string; email: string; phone?: string | null; company?: string | null; message?: string | null }) {
+  const t = getTransporter();
+  if (!t) return false;
+  const rows = [
+    ['Nome', r.name],
+    ['E-mail', r.email],
+    ['WhatsApp', r.phone],
+    ['Empresa / projeto', r.company],
+    ['Mensagem', r.message],
+  ]
+    .filter(([, v]) => v)
+    .map(([k, v]) => `<tr><td style="padding:6px 0;color:#6b7280;width:150px">${k}</td><td style="padding:6px 0">${escapeHtml(String(v))}</td></tr>`)
+    .join('');
+  const html = layout('Novo pedido de cadastro', `<p style="font-size:15px;line-height:1.6">Alguém pediu acesso ao painel. Aprove ou recuse em <b>Configurações → Equipe</b>.</p><table role="presentation" style="font-size:14px;margin-top:12px">${rows}</table><p style="margin:24px 0">${button(`${env.PUBLIC_URL}/admin/configuracoes?tab=equipe`, 'Ver pedido', '#2563eb')}</p>`, '#2563eb');
+  try {
+    await t.sendMail({ from: { name: env.MAIL_FROM_NAME, address: env.MAIL_FROM ?? env.SMTP_USER! }, to, subject: `Pedido de cadastro: ${r.name}`, html, replyTo: r.email });
+    return true;
+  } catch (e: any) {
+    logger.warn({ err: e?.message }, 'Aviso de cadastro não enviado');
+    return false;
+  }
+}
