@@ -701,9 +701,9 @@ export function buildRecoveryMessage(p: { phone: string; name: string; link: str
           cta: ['Link do seu Pix:', 'Se quiser concluir, o link continua ativo:', 'O link para pagar é este:', 'Caso ainda faça sentido, é por aqui:', 'Deixo o link disponível:', 'Você pode pagar por este link:', 'Seu Pix (ou um novo, se tiver vencido) está aqui:'],
           fecho: [
             'Se preferir não receber mais mensagens sobre esta compra, é só responder SAIR.',
-            'Se não for o momento, sem problema algum. Obrigado pela consideração.',
+            'Se não for o momento, sem problema algum. Se preferir não receber mais mensagens, responda SAIR.',
             'Caso não queira mais receber mensagens sobre isso, responda SAIR que eu paro por aqui.',
-            'Se não tiver mais interesse, tudo certo. Obrigado pelo interesse.',
+            'Se não tiver mais interesse, tudo certo: responda SAIR e eu não envio mais nada.',
             'Não quer mais receber mensagens? Basta responder SAIR.',
             'Sem compromisso: se preferir, responda SAIR e não envio mais nada.',
             'Qualquer dúvida, é só responder. Se não quiser mais mensagens, responda SAIR.',
