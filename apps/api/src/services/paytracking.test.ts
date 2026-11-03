@@ -76,3 +76,17 @@ describe('deduplicação e localização', () => {
     expect(geoFromHeaders({})).toEqual({});
   });
 });
+
+describe('código curto do pedido', () => {
+  it('é curto, ida e volta funciona e assinatura falsa é recusada', async () => {
+    const { shortOrderCode, parseShortOrderCode } = await import('../lib/core.js');
+    for (const n of [1001, 1234, 99999, 5_000_000]) {
+      const c = shortOrderCode(n);
+      expect(c.length).toBeLessThanOrEqual(9);
+      expect(parseShortOrderCode(c)).toBe(n);
+    }
+    const c = shortOrderCode(1001);
+    expect(parseShortOrderCode('zzzzz' + c.slice(5))).toBeNull();
+    expect(parseShortOrderCode('abc')).toBeNull();
+  });
+});

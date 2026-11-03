@@ -1,3 +1,4 @@
+import cryptoMod from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 import pino from 'pino';
 import { env, isProd } from '../config/env.js';
@@ -161,4 +162,34 @@ export function geoFromHeaders(headers: Record<string, string | string[] | undef
   if (zip) out.geo_zip = zip.replace(/\D/g, '');
   if (country && /^[A-Za-z]{2}$/.test(country)) out.geo_country = country.toUpperCase();
   return out;
+}
+
+// ------------------------------------------------------------------ link curto do pedido
+const B62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const toB62 = (n: number) => {
+  let s = '';
+  do {
+    s = B62[n % 62] + s;
+    n = Math.floor(n / 62);
+  } while (n > 0);
+  return s;
+};
+const fromB62 = (s: string) => [...s].reduce((n, ch) => n * 62 + B62.indexOf(ch), 0);
+const shortSig = (n: number) => {
+  const h = cryptoMod.createHmac('sha256', env.SUPABASE_SERVICE_ROLE_KEY).update(`pedido:${n}`).digest();
+  return toB62(h.readUIntBE(0, 6)).padStart(5, '0').slice(-5); // 5 caracteres ≈ 916 milhões de combinações
+};
+/**
+ * Código curto e exclusivo do pedido (ex.: "aZ3kQg8"): assinatura de 5 caracteres + número do pedido.
+ * Não dá para adivinhar o de outra venda (a assinatura usa a chave secreta do servidor).
+ */
+export const shortOrderCode = (orderNumber: number) => `${shortSig(orderNumber)}${toB62(orderNumber)}`;
+/** Valida o código curto e devolve o número do pedido (ou null). */
+export function parseShortOrderCode(code: string): number | null {
+  if (!/^[0-9A-Za-z]{6,16}$/.test(code)) return null;
+  const n = fromB62(code.slice(5));
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  const a = Buffer.from(code.slice(0, 5));
+  const b = Buffer.from(shortSig(n));
+  return a.length === b.length && cryptoMod.timingSafeEqual(a, b) ? n : null;
 }

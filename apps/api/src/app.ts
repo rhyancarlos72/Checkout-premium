@@ -8,7 +8,7 @@ import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import { ZodError } from 'zod';
 import { env } from './config/env.js';
-import { escapeHtml, HttpError, logger } from './lib/core.js';
+import { escapeHtml, HttpError, logger, parseShortOrderCode, supabase } from './lib/core.js';
 import { publicCheckoutData } from './routes/public.js';
 import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
@@ -82,6 +82,20 @@ export function createApp() {
     const cfg = { supabaseUrl: env.SUPABASE_URL, supabaseAnonKey: env.SUPABASE_ANON_KEY ?? env.VITE_SUPABASE_ANON_KEY ?? '' };
     res.type('application/javascript').set('Cache-Control', 'public, max-age=300');
     res.send(`window.__APP_CONFIG__=${JSON.stringify(cfg)};`);
+  });
+
+  // Link curto do pedido: /r/aZ3kQg8 (lembrete de recuperação) e /p/aZ3kQg8 (acesso).
+  // Valida a assinatura e leva para a página do Pix/acesso do pedido; a origem fica nas UTMs.
+  app.get(/^\/(r|p)\/([0-9A-Za-z]{6,16})$/, async (req, res) => {
+    const [, kind, code] = req.path.match(/^\/(r|p)\/([0-9A-Za-z]{6,16})$/)!;
+    const n = parseShortOrderCode(code);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    if (!n) return res.redirect(302, '/');
+    const { data } = await supabase.from('orders').select('public_token').eq('number', n).maybeSingle();
+    if (!data) return res.redirect(302, '/');
+    const qs = kind === 'r' ? '?utm_source=whatsapp&utm_medium=recovery' : '';
+    res.redirect(302, `/pedido/${(data as any).public_token}${qs}`);
   });
 
   // Frontend (build do Vite) servido pelo mesmo app → um único deploy na Hostinger

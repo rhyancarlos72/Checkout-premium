@@ -255,7 +255,16 @@ describe('recuperação pelo WhatsApp', () => {
     const msgs = waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'));
     expect(msgs).toHaveLength(1);
     const text = msgs[0].body.text ?? msgs[0].body.textMessage?.text;
-    expect(text).toContain(`https://checkout.loja.com/pedido/${r.body.token}`);
+    // link curto e exclusivo (ex.: https://checkout.loja.com/r/aZ3kQg8) em vez do token de 48 caracteres
+    const short = text.match(/https:\/\/checkout\.loja\.com\/r\/([0-9A-Za-z]+)/);
+    expect(short).toBeTruthy();
+    expect(short![1].length).toBeLessThanOrEqual(9);
+    expect(text).not.toContain(r.body.token);
+    expect(text).not.toContain('utm_');
+    // ao abrir, leva para o Pix desta venda com a origem registrada
+    const go = await fetch(`${base}/r/${short![1]}`, { redirect: 'manual' });
+    expect(go.status).toBe(302);
+    expect(go.headers.get('location')).toBe(`/pedido/${r.body.token}?utm_source=whatsapp&utm_medium=recovery`);
     expect(text).toContain(o.pix_code);
     await sendWhatsAppRecoveries();
     expect(waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'))).toHaveLength(1);
@@ -335,5 +344,18 @@ describe('criar cadastro (tela de login)', () => {
   });
   it('valida nome e e-mail', async () => {
     expect((await api('POST', '/api/auth/request-access', { name: 'A', email: 'x' })).status).toBe(400);
+  });
+});
+
+describe('link curto do pedido', () => {
+  it('código adulterado ou inventado não abre pedido nenhum', async () => {
+    const { shortOrderCode } = await import('./lib/core.js');
+    const o = db.orders[0];
+    const code = shortOrderCode(o.number);
+    const ok = await fetch(`${base}/p/${code}`, { redirect: 'manual' });
+    expect(ok.headers.get('location')).toBe(`/pedido/${o.public_token}`);
+    const tampered = code.slice(0, 4) + (code[4] === 'A' ? 'B' : 'A') + code.slice(5);
+    expect((await fetch(`${base}/r/${tampered}`, { redirect: 'manual' })).headers.get('location')).toBe('/');
+    expect((await fetch(`${base}/r/00000${'1'}`, { redirect: 'manual' })).headers.get('location')).toBe('/');
   });
 });

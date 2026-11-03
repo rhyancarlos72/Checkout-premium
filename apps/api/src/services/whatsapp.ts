@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { fetchWithTimeout, logger, sleep, supabase } from '../lib/core.js';
+import { fetchWithTimeout, logger, shortOrderCode, sleep, supabase } from '../lib/core.js';
 
 /**
  * WhatsApp via Evolution API — porta em TypeScript do whatsapp_api.php /
@@ -584,7 +584,7 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
     'ep_fechamentos',
   );
   const optout = pick(
-    ['— Se preferir não receber mensagens sobre esta compra, responda SAIR.', '— Não quer mais receber mensagens sobre este pedido? É só responder SAIR.', '— Para não receber mais avisos sobre esta compra, responda SAIR.', '— Caso não queira mais mensagens por aqui, responda SAIR.', '— Prefere não receber mensagens? Basta que você responda SAIR.'],
+    ['— Se preferir não receber mensagens sobre esta compra, responda SAIR.', '— Para parar as mensagens sobre este pedido, responda SAIR.', '— Para não receber mais avisos sobre esta compra, responda SAIR.', '— Caso não queira mais mensagens por aqui, responda SAIR.', '— Prefere não receber mensagens? Basta que você responda SAIR.'],
     'ep_optout',
   );
   const titulo = pick(['Seus acessos:', 'Itens liberados:', 'Produtos disponíveis:', 'Tudo o que você adquiriu:', 'Seus produtos:', 'Acessos liberados:'], 'ep_titulos');
@@ -726,14 +726,14 @@ export async function sendWhatsAppApproved(orderId: string, items: { name: strin
   try {
     const cfg = await getWhatsAppConfig();
     if (!cfg.enabled || !cfg.approved.enabled) return;
-    const { data: o } = await supabase.from('orders').select('id, checkout_id, total_cents, public_token, customer:customers(name, phone)').eq('id', orderId).maybeSingle();
+    const { data: o } = await supabase.from('orders').select('id, number, checkout_id, total_cents, public_token, customer:customers(name, phone)').eq('id', orderId).maybeSingle();
     const order: any = o;
     if (!order?.customer?.phone) return;
     const { count } = await supabase.from('events').select('id', { count: 'exact', head: true }).eq('order_id', orderId).eq('type', 'wa_approved');
     if ((count ?? 0) > 0) return;
     await supabase.from('events').insert({ order_id: orderId, checkout_id: order.checkout_id, type: 'wa_approved', data: {} });
     const phone = normalizePhoneBR(order.customer.phone);
-    const r = await sendWhatsAppText(phone, buildApprovedMessage({ phone, name: order.customer.name ?? '', totalCents: order.total_cents, items, accessUrl: `${env.PUBLIC_URL}/pedido/${order.public_token}` }), cfg);
+    const r = await sendWhatsAppText(phone, buildApprovedMessage({ phone, name: order.customer.name ?? '', totalCents: order.total_cents, items, accessUrl: `${env.PUBLIC_URL}/p/${shortOrderCode(order.number)}` }), cfg);
     await logWa(orderId, 'approved', r);
   } catch (e) {
     logger.error({ err: e, orderId }, 'WhatsApp aprovado falhou');
@@ -747,7 +747,7 @@ export async function sendWhatsAppRecoveries(max = 10) {
   const since = new Date(Date.now() - 24 * 3600_000).toISOString();
   const { data } = await supabase
     .from('orders')
-    .select('id, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, customer:customers(name, phone), checkout:checkouts(slug)')
+    .select('id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, customer:customers(name, phone), checkout:checkouts(slug)')
     .in('status', ['pending', 'expired'])
     .gte('created_at', since)
     .order('created_at', { ascending: true })
@@ -777,7 +777,7 @@ export async function sendWhatsAppRecoveries(max = 10) {
     const phone = normalizePhoneBR(o.customer.phone);
     const pixValid = cfg.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
     // link direto para o Pix pendente (se vencer, a página gera outro com um toque, sem preencher nada)
-    const link = `${env.PUBLIC_URL}/pedido/${o.public_token}?utm_source=whatsapp&utm_medium=recovery`;
+    const link = `${env.PUBLIC_URL}/r/${shortOrderCode(o.number)}`; // link curto e exclusivo da venda
     const r = await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: next, pixCode: pixValid ? o.pix_code : null }), cfg);
     await logWa(o.id, `recovery_${next}`, r);
     sent++;
