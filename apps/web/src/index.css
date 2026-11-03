@@ -68,6 +68,47 @@ input, select, textarea { font-size: 16px; }
 .btn-shine:hover { background-position: 100% 0; box-shadow: 0 14px 40px -10px rgba(6,182,212,.7); }
 @media (prefers-reduced-motion: reduce) { .animate-float, .animate-fade-in { animation: none; } }
 
+/* ---------- Tela de acesso: visual tecnológico ---------- */
+.auth-bg { background: #03050a; }
+.auth-mesh {
+  background:
+    radial-gradient(42rem 30rem at 12% 8%, rgba(16,185,129,.22), transparent 60%),
+    radial-gradient(36rem 28rem at 88% 18%, rgba(56,189,248,.18), transparent 60%),
+    radial-gradient(40rem 30rem at 60% 110%, rgba(139,92,246,.20), transparent 60%);
+  animation: auth-mesh 18s ease-in-out infinite alternate;
+}
+@keyframes auth-mesh { from { transform: scale(1) translate3d(0,0,0); } to { transform: scale(1.12) translate3d(-2%,1.5%,0); } }
+.auth-grid {
+  background-image: linear-gradient(rgba(103,232,249,.10) 1px, transparent 1px), linear-gradient(90deg, rgba(103,232,249,.10) 1px, transparent 1px);
+  background-size: 56px 56px;
+  transform: perspective(600px) rotateX(62deg);
+  transform-origin: bottom;
+  mask-image: linear-gradient(to top, #000 10%, transparent 85%);
+  animation: auth-grid 6s linear infinite;
+}
+@keyframes auth-grid { from { background-position: 0 0; } to { background-position: 0 56px; } }
+.auth-particle { bottom: -10px; animation-name: auth-rise; animation-timing-function: linear; animation-iteration-count: infinite; opacity: 0; }
+@keyframes auth-rise { 0% { transform: translateY(0); opacity: 0; } 10% { opacity: .8; } 90% { opacity: .6; } 100% { transform: translateY(-105vh); opacity: 0; } }
+.auth-ring { animation: auth-spin 22s linear infinite; }
+.auth-ring-rev { animation-direction: reverse; animation-duration: 16s; }
+.auth-ring-slow { animation-duration: 34s; }
+.auth-orbit { animation: auth-spin 9s linear infinite; }
+.auth-orbit-rev { animation-direction: reverse; animation-duration: 13s; }
+@keyframes auth-spin { to { transform: rotate(360deg); } }
+.auth-scan { top: -40px; animation: auth-scan 3.2s ease-in-out infinite; }
+@keyframes auth-scan { 0% { top: -40px; } 60%, 100% { top: 110%; } }
+.auth-card-border {
+  background: conic-gradient(from var(--auth-a, 0deg), rgba(16,185,129,.55), rgba(6,182,212,.15) 25%, rgba(139,92,246,.55) 50%, rgba(6,182,212,.15) 75%, rgba(16,185,129,.55));
+  animation: auth-border 8s linear infinite;
+}
+@property --auth-a { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+@keyframes auth-border { to { --auth-a: 360deg; } }
+@media (prefers-reduced-motion: reduce) {
+  .auth-mesh, .auth-grid, .auth-particle, .auth-ring, .auth-orbit, .auth-scan, .auth-card-border { animation: none !important; }
+  .auth-particle { display: none; }
+}
+
+
 /* ---------- Checkout: tokens por tema (ver pages/checkout/theme.ts) ---------- */
 @theme inline {
   --color-ck-bg: var(--ck-bg, #f4f5f7);

@@ -78,9 +78,12 @@ export default function LoginPage() {
 
       {mode === 'login' && (
         <form onSubmit={login} className="space-y-5">
-          <div>
-            <h2 className="text-2xl font-bold tracking-tight">Bem-vindo de volta</h2>
-            <p className="mt-1 text-sm text-zinc-400">Entre para acompanhar suas vendas.</p>
+          <div className="flex items-start gap-4">
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-emerald-400/25 bg-gradient-to-br from-emerald-400/20 to-cyan-400/10 text-emerald-300 shadow-[0_0_30px_-8px_rgba(16,185,129,.7)]"><Lock className="h-5 w-5" /></span>
+            <div>
+              <h2 className="text-2xl font-bold tracking-tight">Bem-vindo de volta</h2>
+              <p className="mt-1 text-sm text-zinc-400">Entre com segurança para acompanhar suas vendas.</p>
+            </div>
           </div>
           {emailField}
           <label className="block">
