@@ -125,6 +125,45 @@ export function createApp() {
       res.send(['User-agent: *', 'Allow: /', 'Disallow: /admin', 'Disallow: /pedido/', 'Disallow: /api/', ''].join('\n'));
     });
 
+    // llms.txt (orientação para assistentes de IA): Markdown com H1 e links das páginas públicas
+    app.get('/llms.txt', async (_req, res) => {
+      let name = 'Checkout';
+      try {
+        const { getSettings } = await import('./services/settings.js');
+        const st = await getSettings();
+        name = (st.store?.name && st.store.name !== 'Minha Loja' ? st.store.name : st.brand?.name) || name;
+      } catch {
+        /* sem banco: nome padrão */
+      }
+      const base = env.PUBLIC_URL.replace(/\/+$/, '');
+      res.type('text/markdown; charset=utf-8').set('Cache-Control', 'public, max-age=3600');
+      res.send(
+        [
+          `# ${name}`,
+          '',
+          '> Checkout seguro com pagamento via Pix e entrega automática do produto digital por e-mail e WhatsApp.',
+          '',
+          'As páginas de checkout são públicas. O painel administrativo e as páginas de pedidos (com dados de clientes) não devem ser acessados nem indexados.',
+          '',
+          '## Páginas',
+          '',
+          `- [Checkout](${base}/checkout): página de compra de cada produto (\`/checkout?produto_id=ID\`), pagamento via Pix`,
+          `- [Política de robôs](${base}/robots.txt): o que pode ser rastreado`,
+          '',
+          '## Não acessar',
+          '',
+          `- [Painel administrativo](${base}/admin): acesso restrito`,
+          '',
+        ].join('\n'),
+      );
+    });
+
+    // Arquivos que não existem (ex.: /.well-known/ai-catalog.json, /favicon.png) respondem 404 de verdade,
+    // em vez de devolver o HTML do site (que validadores leem como "arquivo inválido")
+    app.get(/^\/(\.well-known\/.*|.+\.(json|txt|xml|webmanifest|ico|png|jpe?g|gif|svg|webp|js|css|map|woff2?))$/i, (_req, res) => {
+      res.status(404).type('text/plain').send('Não encontrado');
+    });
+
     // SEO por página: título/descrição/prévia de link (WhatsApp, Facebook) do produto no checkout;
     // painel e páginas de Pix de cada cliente ficam fora do Google (dados pessoais)
     const seoFor = async (req: Request) => {

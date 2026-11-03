@@ -47,6 +47,26 @@ export function PixLogo({ className }: { className?: string }) {
   );
 }
 
+/** Roda `fn` depois do evento load, com o navegador ocioso (e `delay` ms). Devolve um cancelador. */
+function afterLoadIdle(fn: () => void, delay: number) {
+  let cancelled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const run = () => {
+    timer = setTimeout(() => {
+      if (cancelled) return;
+      const ric = (window as any).requestIdleCallback as ((cb: () => void, o?: { timeout: number }) => number) | undefined;
+      ric ? ric(() => !cancelled && fn(), { timeout: 3000 }) : fn();
+    }, delay);
+  };
+  if (document.readyState === 'complete') run();
+  else window.addEventListener('load', run, { once: true });
+  return () => {
+    cancelled = true;
+    if (timer) clearTimeout(timer);
+    window.removeEventListener('load', run);
+  };
+}
+
 const validHex = (v?: string | null) => !!v && /^#[0-9a-f]{6}$/i.test(v);
 
 function Countdown({ minutes, text, preview }: { minutes: number; text?: string; preview?: boolean }) {
@@ -135,11 +155,21 @@ function CkField({
 export function CheckoutView({ checkout, preview = false }: { checkout: PublicCheckout; preview?: boolean }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  // baixa a tela do Pix em segundo plano: ao finalizar, ela abre na hora
+  // baixa a tela do Pix só DEPOIS que a página terminou de carregar (fora do caminho crítico):
+  // quando a pessoa começa a preencher, ou com o navegador ocioso alguns segundos após o load
   useEffect(() => {
     if (preview) return;
-    const id = setTimeout(() => void import('./PaymentPage'), 1500);
-    return () => clearTimeout(id);
+    let done = false;
+    const prefetch = () => {
+      if (done) return;
+      done = true;
+      void import('./PaymentPage');
+    };
+    const onIntent = () => prefetch();
+    document.addEventListener('focusin', onIntent, { once: true });
+    document.addEventListener('pointerdown', onIntent, { once: true });
+    const t = afterLoadIdle(prefetch, 5000);
+    return () => (document.removeEventListener('focusin', onIntent), document.removeEventListener('pointerdown', onIntent), t());
   }, [preview]);
   const [params] = useSearchParams();
   const t = { ...themeDefaults, ...checkout.theme };
@@ -170,7 +200,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     document.title = `${checkout.product.name} · Pagamento seguro`;
     ensureMetaCookies(); // registra fbclid/fbp já na chegada (horário do clique)
     initMetaPixel(checkout.tracking.metaPixelId, { externalId: visitorExternalId() });
-    track(checkout.slug, 'page_view');
+    afterLoadIdle(() => track(checkout.slug, 'page_view'), 0); // estatística fora do caminho crítico
     const recover = params.get('recover');
     if (recover && /^[a-f0-9]{48}$/.test(recover)) {
       publicApi
