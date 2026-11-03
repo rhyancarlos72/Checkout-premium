@@ -74,7 +74,7 @@ beforeAll(async () => {
   db.settings = [
     { key: 'gateways', value: { woovi: { appId: 'APP-ID-TESTE' } } },
     { key: 'invoices', value: { enabled: true, type: 'service', apiKey: 'spedy-key', apiUrl: `${ext}/spedy`, deductCents: 50 } },
-    { key: 'whatsapp', value: { enabled: true, apiUrl: `${ext}/evo`, instances: [{ name: 'checkout1', token: 't1', active: true }, { name: 'checkout2', token: 't2', active: true }], approved: { enabled: true }, recovery: { enabled: true, firstMinutes: 20, secondMinutes: 180, includePix: true } } },
+    { key: 'whatsapp', value: { enabled: true, apiUrl: `${ext}/evo`, instances: [{ name: 'checkout1', token: 't1', active: true }, { name: 'checkout2', token: 't2', active: true }], approved: { enabled: true }, recovery: { enabled: true, firstMinutes: 20, secondMinutes: 180, thirdMinutes: 720, includePix: true } } },
     { key: 'webhooks', value: { items: [{ id: 'w1', name: 'PayTracking', preset: 'paytracking', url: `${ext}/paytracking`, token: 'tok', secret: 'seg', events: ['sale.pending', 'sale.approved', 'sale.canceled'], active: true, created_at: now }] } },
   ];
   db.products = [
@@ -245,7 +245,7 @@ describe('venda completa', () => {
 });
 
 describe('recuperação pelo WhatsApp', () => {
-  it('pendente há mais de 20 min recebe 1 lembrete com link direto do Pix e o copia e cola; não repete', async () => {
+  it('3 lembretes (20 min, 3 h, 12 h — o 3º é o último), link curto do Pix e copia e cola; nunca um 4º', async () => {
     const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Carla Dias', email: 'carla@x.com', phone: '11933332222' }, bump_ids: [], tracking: {} });
     const o = db.orders.find((x) => x.public_token === r.body.token)!;
     o.created_at = new Date(Date.now() - 25 * 60_000).toISOString();
@@ -267,7 +267,21 @@ describe('recuperação pelo WhatsApp', () => {
     expect(go.headers.get('location')).toBe(`/pedido/${r.body.token}?utm_source=whatsapp&utm_medium=recovery`);
     expect(text).toContain(o.pix_code);
     await sendWhatsAppRecoveries();
-    expect(waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'))).toHaveLength(1);
+    const mine = () => waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'));
+    expect(mine()).toHaveLength(1); // ainda não deu o tempo do 2º
+    o.created_at = new Date(Date.now() - 200 * 60_000).toISOString(); // 3h20
+    await sendWhatsAppRecoveries();
+    expect(mine()).toHaveLength(2);
+    const second = mine()[1].body.text ?? mine()[1].body.textMessage?.text;
+    expect(second).not.toMatch(/último/i);
+    o.created_at = new Date(Date.now() - 13 * 60 * 60_000).toISOString(); // 13h
+    await sendWhatsAppRecoveries();
+    expect(mine()).toHaveLength(3);
+    const third = mine()[2].body.text ?? mine()[2].body.textMessage?.text;
+    expect(third).toMatch(/SAIR/);
+    o.created_at = new Date(Date.now() - 40 * 60 * 60_000).toISOString();
+    await sendWhatsAppRecoveries();
+    expect(mine()).toHaveLength(3); // nunca um 4º
   }, 15_000);
 });
 

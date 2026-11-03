@@ -985,8 +985,9 @@ adminRouter.get('/whatsapp/preview', async (_req, res) => {
   const phone = '5500000000000';
   res.json({
     approved: buildApprovedMessage({ phone, name: 'Maria Silva', totalCents: 11690, items: [{ name: 'Método Completo', url: 'https://link-de-acesso', kind: 'main' }, { name: 'Pack de Planilhas', url: 'https://link-do-bump', kind: 'bump' }] }),
-    recovery1: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/checkout?produto_id=…`, attempt: 1, pixCode: '00020126580014br.gov.bcb.pix…' }),
-    recovery2: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/checkout?produto_id=…`, attempt: 2, pixCode: null }),
+    recovery1: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 1, pixCode: '00020126580014br.gov.bcb.pix…' }),
+    recovery2: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 2, pixCode: '00020126580014br.gov.bcb.pix…' }),
+    recovery3: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 3, pixCode: null }),
   });
 });
 

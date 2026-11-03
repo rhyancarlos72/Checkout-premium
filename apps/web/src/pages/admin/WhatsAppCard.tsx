@@ -14,7 +14,7 @@ interface Config {
   has_globalApiKey?: boolean;
   instances: Instance[];
   approved: { enabled: boolean };
-  recovery: { enabled: boolean; firstMinutes: number; secondMinutes: number; includePix: boolean };
+  recovery: { enabled: boolean; firstMinutes: number; secondMinutes: number; thirdMinutes?: number; includePix: boolean };
 }
 type Toast = { ok: (m: string) => void; err: (m: string) => void };
 
@@ -32,7 +32,7 @@ function TokenInput({ value, onChange, placeholder }: { value: string; onChange:
 export function WhatsAppCard({ toast }: { toast: Toast }) {
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ['whatsapp'], queryFn: () => adminApi.get<Config>('/whatsapp') });
-  const preview = useQuery({ queryKey: ['whatsapp-preview'], queryFn: () => adminApi.get<{ approved: string; recovery1: string; recovery2: string }>('/whatsapp/preview') });
+  const preview = useQuery({ queryKey: ['whatsapp-preview'], queryFn: () => adminApi.get<{ approved: string; recovery1: string; recovery2: string; recovery3?: string }>('/whatsapp/preview') });
   const [c, setC] = useState<Config | null>(null);
   const [status, setStatus] = useState<Record<string, { ok: boolean; message: string; hint?: string }>>({});
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; hint?: string } | null>(null);
@@ -40,7 +40,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
   const logs = useQuery({ queryKey: ['whatsapp-logs'], queryFn: () => adminApi.get<{ event: string; ok: boolean; message: string; created_at: string }[]>('/whatsapp/logs'), refetchInterval: 30_000 });
   const [phone, setPhone] = useState('');
   const [kind, setKind] = useState<'approved' | 'recovery' | 'text'>('approved');
-  const [tab, setTab] = useState<'approved' | 'recovery1' | 'recovery2'>('approved');
+  const [tab, setTab] = useState<'approved' | 'recovery1' | 'recovery2' | 'recovery3'>('approved');
   const [found, setFound] = useState<{ name: string; status: string | null; connected: boolean; number: string | null; profileName: string | null; hasToken: boolean }[] | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [discoverErr, setDiscoverErr] = useState<{ error: string; hint?: string } | null>(null);
@@ -234,12 +234,14 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
 
           <div className="space-y-3 rounded-xl border border-zinc-200 p-4">
             <Switch checked={c.approved.enabled} onChange={(v) => set({ approved: { enabled: v } })} label="Enviar acesso quando o pagamento for aprovado" />
-            <Switch checked={c.recovery.enabled} onChange={(v) => set({ recovery: { ...c.recovery, enabled: v } })} label="Recuperar Pix pendente (2 lembretes)" />
+            <Switch checked={c.recovery.enabled} onChange={(v) => set({ recovery: { ...c.recovery, enabled: v } })} label="Recuperar Pix pendente (3 lembretes)" />
             {c.recovery.enabled && (
-              <div className="grid gap-3 pl-1 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 pl-1 sm:grid-cols-3">
                 <Field label="1º lembrete após (min)"><Input type="number" min={5} value={c.recovery.firstMinutes} onChange={(e) => set({ recovery: { ...c.recovery, firstMinutes: Number(e.target.value) } })} className="h-11" /></Field>
                 <Field label="2º lembrete após (min)"><Input type="number" min={10} value={c.recovery.secondMinutes} onChange={(e) => set({ recovery: { ...c.recovery, secondMinutes: Number(e.target.value) } })} className="h-11" /></Field>
-                <div className="sm:col-span-2"><Switch checked={c.recovery.includePix} onChange={(v) => set({ recovery: { ...c.recovery, includePix: v } })} label="Incluir o Pix copia e cola na mensagem" /></div>
+                <Field label="3º e último (min)" hint="Padrão: 720 min = 12 h"><Input type="number" min={30} max={2880} value={c.recovery.thirdMinutes ?? 720} onChange={(e) => set({ recovery: { ...c.recovery, thirdMinutes: Number(e.target.value) } })} className="h-11" /></Field>
+                {(c.recovery.secondMinutes <= c.recovery.firstMinutes || (c.recovery.thirdMinutes ?? 720) <= c.recovery.secondMinutes) && <p className="text-xs text-amber-600 sm:col-span-3">Use tempos crescentes: 1º &lt; 2º &lt; 3º (contados a partir da geração do Pix).</p>}
+                <div className="sm:col-span-3"><Switch checked={c.recovery.includePix} onChange={(v) => set({ recovery: { ...c.recovery, includePix: v } })} label="Incluir o Pix copia e cola na mensagem" /></div>
               </div>
             )}
           </div>
@@ -257,6 +259,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
                 ['approved', 'Pagamento aprovado'],
                 ['recovery1', '1º lembrete'],
                 ['recovery2', '2º lembrete'],
+                ['recovery3', '3º (último)'],
               ].map(([k, l]) => (
                 <button key={k} onClick={() => setTab(k as any)} className={cn('flex-1 rounded-lg px-2 py-1.5 transition', tab === k ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500')}>{l}</button>
               ))}

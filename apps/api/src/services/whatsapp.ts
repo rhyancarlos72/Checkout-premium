@@ -50,9 +50,10 @@ export const whatsappSchema = z.object({
       enabled: z.boolean().default(true),
       firstMinutes: z.number().int().min(5).max(1440).default(20),
       secondMinutes: z.number().int().min(10).max(2880).default(180),
+      thirdMinutes: z.number().int().min(30).max(2880).default(720), // 3º e último lembrete
       includePix: z.boolean().default(true),
     })
-    .default({ enabled: true, firstMinutes: 20, secondMinutes: 180, includePix: true }),
+    .default({ enabled: true, firstMinutes: 20, secondMinutes: 180, thirdMinutes: 720, includePix: true }),
 });
 export type WhatsAppConfig = z.infer<typeof whatsappSchema>;
 
@@ -498,7 +499,7 @@ export async function diagnoseWhatsApp(extra: { jobsEnabled: boolean; lastJobRun
   );
   steps.push(
     cfg.approved.enabled || cfg.recovery.enabled
-      ? { label: 'Mensagens automáticas', ok: true, detail: [cfg.approved.enabled && 'pagamento aprovado', cfg.recovery.enabled && `recuperação (${cfg.recovery.firstMinutes} min / ${cfg.recovery.secondMinutes} min)`].filter(Boolean).join(' + ') }
+      ? { label: 'Mensagens automáticas', ok: true, detail: [cfg.approved.enabled && 'pagamento aprovado', cfg.recovery.enabled && `recuperação (${cfg.recovery.firstMinutes} min / ${cfg.recovery.secondMinutes} min / ${cfg.recovery.thirdMinutes} min)`].filter(Boolean).join(' + ') }
       : { label: 'Mensagens automáticas', ok: false, detail: 'Nenhuma ligada', hint: 'Ligue “Enviar acesso quando o pagamento for aprovado” e/ou “Recuperar Pix pendente”.' },
   );
   const mins = extra.lastJobRunAt ? Math.round((Date.now() - extra.lastJobRunAt) / 60000) : null;
@@ -622,10 +623,32 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
 
 export function buildRecoveryMessage(p: { phone: string; name: string; link: string; attempt: number; pixCode?: string | null }) {
   const n = firstName(p.name, 'tudo bem');
-  const t = p.attempt >= 2 ? 2 : 1;
+  const t = p.attempt >= 3 ? 3 : p.attempt === 2 ? 2 : 1; // 3 = último lembrete
   const pick = (pool: string[], key: string) => pickFresh(pool, p.phone, `t${t}_${key}`);
   const blocks =
-    t === 1
+    t === 2
+      ? {
+          abertura: [
+            `Oi, ${n}! Tudo bem?`, `Olá, ${n}! 🙂`, `Oi, ${n}, tudo certo?`, `Olá, ${n}! Passando de novo rapidinho.`, `${n}, tudo bem por aí?`,
+            `Oi, ${n}! Lembrei de você.`, `Olá, ${n}! Só um toque.`, `Oi, ${n}! Voltei aqui rapidinho.`, `Olá, ${n}, como você está?`,
+          ],
+          corpo: [
+            'Seu pedido continua guardado, com o mesmo valor, só esperando o Pix.',
+            'Ainda dá tempo: seu pedido segue reservado para você.',
+            'Vi que o pagamento ainda não caiu. Está tudo salvo do jeitinho que você deixou.',
+            'Seu acesso fica liberado assim que o Pix for confirmado. Leva menos de 1 minuto.',
+            'Se o Pix venceu, sem problema: no link você gera outro com um toque, sem preencher nada.',
+            'Muita gente esquece de finalizar no app do banco. Seu pedido ainda está aqui.',
+            'Só reforçando: seu pedido está separado e o valor continua o mesmo.',
+            'Passei para lembrar que falta só o Pix para você receber o acesso.',
+          ],
+          cta: ['Seu Pix está aqui:', 'É só abrir e pagar:', 'Toque para pagar:', 'Link do seu pedido:', 'Para concluir agora:', 'Pague por aqui em segundos:', 'Abra seu Pix:'],
+          fecho: [
+            'Qualquer dúvida, é só responder esta mensagem.', 'Se precisar de ajuda com o pagamento, me chame.', 'O acesso chega na hora, assim que o Pix cair.',
+            'Estou por aqui se precisar.', 'Teve algum problema no pagamento? Me conta que eu ajudo.', 'Sem pressa, fico à disposição.',
+          ],
+        }
+      : t === 1
       ? {
           abertura: [
             `Olá, ${n}! Tudo bem?`, `Oi, ${n}! Tudo certo?`, `Olá, ${n}! 🙂`, `Oi, ${n}!`, `Olá, ${n}! Espero que esteja bem.`, `Oi, ${n}! Como vai?`,
@@ -699,7 +722,7 @@ export function buildRecoveryMessage(p: { phone: string; name: string; link: str
   const cta = `${pick(blocks.cta, 'cta')}\n${p.link}`;
   const fecho = pick(blocks.fecho, 'fecho');
   const pix = p.pixCode ? `${pixTitulo}\n\n${p.pixCode}` : '';
-  const sair = t === 1 ? pick(['— Se não quiser receber mensagens sobre este pedido, responda SAIR.', '— Prefere não receber lembretes? Responda SAIR.', '— Para não receber mais avisos, é só responder SAIR.', '— Não quer mais lembretes deste pedido? Responda SAIR.'], 'sair') : '';
+  const sair = t < 3 ? pick(['— Se não quiser receber mensagens sobre este pedido, responda SAIR.', '— Prefere não receber lembretes? Responda SAIR.', '— Para não receber mais avisos, é só responder SAIR.', '— Não quer mais lembretes deste pedido? Responda SAIR.'], 'sair') : '';
   const layout = pick(['a', 'b', 'c'], 'layout');
   const partes =
     layout === 'a'
@@ -744,10 +767,10 @@ export async function sendWhatsAppApproved(orderId: string, items: { name: strin
 export async function sendWhatsAppRecoveries(max = 10) {
   const cfg = await getWhatsAppConfig();
   if (!cfg.enabled || !cfg.recovery.enabled) return;
-  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const since = new Date(Date.now() - 48 * 3600_000).toISOString();
   const { data } = await supabase
     .from('orders')
-    .select('id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, customer:customers(name, phone), checkout:checkouts(slug)')
+    .select('id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, tracking, customer:customers(name, phone), checkout:checkouts(slug)')
     .in('status', ['pending', 'expired'])
     .gte('created_at', since)
     .order('created_at', { ascending: true })
@@ -768,8 +791,10 @@ export async function sendWhatsAppRecoveries(max = 10) {
     if (sent >= max) break;
     const minutes = (Date.now() - new Date(o.created_at).getTime()) / 60000;
     const next = (attempts.get(o.id) ?? 0) + 1;
-    if (next > 2) continue;
-    if ((next === 1 && minutes < cfg.recovery.firstMinutes) || (next === 2 && minutes < cfg.recovery.secondMinutes)) continue;
+    if (next > 3) continue;
+    const wait = next === 1 ? cfg.recovery.firstMinutes : next === 2 ? cfg.recovery.secondMinutes : cfg.recovery.thirdMinutes;
+    if (minutes < wait) continue;
+    if (o.tracking?.upsell_of || o.tracking?.renewed_from) continue; // upsell e Pix renovado não entram nos lembretes
     if (buyers.has(o.customer_id)) continue; // já comprou depois? não incomoda
     // reserva a tentativa ANTES de enviar (nunca reenviar em duplicidade)
     const { error } = await supabase.from('events').insert({ order_id: o.id, checkout_id: o.checkout_id, type: 'wa_recovery', data: { attempt: next } });
