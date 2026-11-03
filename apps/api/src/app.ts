@@ -125,6 +125,38 @@ export function createApp() {
       res.send(['User-agent: *', 'Allow: /', 'Disallow: /admin', 'Disallow: /pedido/', 'Disallow: /api/', ''].join('\n'));
     });
 
+    // llms.txt (padrão llmstxt.org: Markdown com título H1, resumo e links) — antes caía no index.html
+    app.get('/llms.txt', (_req, res) => {
+      const base = env.PUBLIC_URL.replace(/\/+$/, '');
+      res.type('text/markdown; charset=utf-8').set('Cache-Control', 'public, max-age=86400');
+      res.send([
+        '# Checkout seguro com PIX',
+        '',
+        '> Páginas de pagamento de produtos digitais: o comprador preenche os dados, recebe o PIX (QR code e copia e cola) e o acesso é liberado assim que o pagamento é confirmado.',
+        '',
+        '## Páginas públicas',
+        '',
+        `- [Checkout](${base}/checkout): página de compra de cada produto (\`/checkout?produto_id=<produto>\` ou \`/c/<produto>\`).`,
+        `- [Regras para robôs](${base}/robots.txt): o que pode e o que não pode ser indexado.`,
+        '',
+        '## Privado (não indexar nem usar)',
+        '',
+        '- `/pedido/...`: página do PIX de cada comprador (dados pessoais).',
+        '- `/admin`: painel do vendedor.',
+        '- `/api/...`: API interna.',
+        '',
+      ].join('\n'));
+    });
+    // arquivo inexistente (ex.: /.well-known/ai-catalog.json, /sitemap.xml) responde 404 de verdade —
+    // devolver o HTML do site com 200 faz ferramentas (Lighthouse, buscadores, agentes de IA) lerem HTML como JSON/XML
+    app.use((req, res, next) => {
+      if ((req.method === 'GET' || req.method === 'HEAD') && (req.path.startsWith('/.well-known/') || /\.[a-z0-9]{1,8}$/i.test(req.path))) {
+        res.status(404).type('text/plain').set('Cache-Control', 'public, max-age=300').send('Not found');
+        return;
+      }
+      next();
+    });
+
     // SEO por página: título/descrição/prévia de link (WhatsApp, Facebook) do produto no checkout;
     // painel e páginas de Pix de cada cliente ficam fora do Google (dados pessoais)
     const seoFor = async (req: Request) => {

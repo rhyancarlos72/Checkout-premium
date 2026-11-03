@@ -135,11 +135,15 @@ function CkField({
 export function CheckoutView({ checkout, preview = false }: { checkout: PublicCheckout; preview?: boolean }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  // baixa a tela do Pix em segundo plano: ao finalizar, ela abre na hora
+  // baixa a tela do Pix quando a pessoa começa a interagir (tocar/digitar): ao finalizar ela abre na hora,
+  // sem entrar no carregamento inicial da página (caminho crítico do LCP)
   useEffect(() => {
     if (preview) return;
-    const id = setTimeout(() => void import('./PaymentPage'), 1500);
-    return () => clearTimeout(id);
+    const evs = ['pointerdown', 'touchstart', 'keydown', 'focusin'] as const;
+    const off = () => evs.forEach((e) => window.removeEventListener(e, go, true));
+    function go() { off(); void import('./PaymentPage'); }
+    evs.forEach((e) => window.addEventListener(e, go, { capture: true, passive: true }));
+    return off;
   }, [preview]);
   const [params] = useSearchParams();
   const t = { ...themeDefaults, ...checkout.theme };

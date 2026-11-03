@@ -1,5 +1,3 @@
-import { publicApi } from './api';
-
 const KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck', 'xcod', 'fbclid', 'gclid', 'ttclid', 'external_id', 'pt_xid'];
 
 function safeStorage() {
@@ -90,8 +88,29 @@ export function collectTracking(): Record<string, string> {
   };
 }
 
+/**
+ * Métrica interna (funil do painel). Sai com prioridade BAIXA e, no caso do page_view, só depois que a
+ * página terminou de carregar: não disputa a rede com o que aparece na tela (fora do caminho crítico/LCP).
+ */
 export function track(checkout_slug: string, type: string, data: Record<string, unknown> = {}) {
-  publicApi.post('/events', { checkout_slug, type, session_id: sessionId(), data }).catch(() => {});
+  const body = JSON.stringify({ checkout_slug, type, session_id: sessionId(), data });
+  const send = () => {
+    const init: RequestInit & { priority?: 'low' | 'high' | 'auto' } = {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true, credentials: 'same-origin', priority: 'low',
+    };
+    fetch('/api/public/events', init).catch(() => {});
+  };
+  if (type === 'page_view' && document.readyState !== 'complete') {
+    window.addEventListener('load', () => whenIdle(send), { once: true });
+    return;
+  }
+  send();
+}
+
+/** Executa quando o navegador estiver ocioso (ou em até 3 s). */
+function whenIdle(fn: () => void) {
+  const ric = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (ric) ric(fn, { timeout: 3000 }); else setTimeout(fn, 1);
 }
 
 // ------------------------------------------------------------------ Meta Pixel
