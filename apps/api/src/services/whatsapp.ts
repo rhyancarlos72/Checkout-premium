@@ -293,6 +293,10 @@ function explainSendError(http: number, body: any, raw: string): { error: string
       hint: 'O nome cadastrado não corresponde a uma instância da Evolution (ou o token é de outra instância). Clique em “Buscar instâncias da Evolution” e importe com o nome exato — informe a API Key global para listar todas.',
     };
   }
+  if (/connection closed|not connected|connectionstate|is not open|closed/i.test(flat))
+    return { error: 'O WhatsApp desta instância está desconectado', hint: 'Abra a Evolution (ou use “Conectar número” em Integrações) e leia o QR Code com o celular do número.' };
+  if (/jid|invalid.*number|number.*invalid|bad.*number/i.test(flat)) return { error: 'Número de telefone inválido para o WhatsApp', hint: 'Confira o DDD e o número do cliente.' };
+  if (/rate|too many|limit/i.test(flat) && http === 429) return { error: 'Muitas mensagens em pouco tempo (limite da Evolution/WhatsApp)', hint: 'Aguarde alguns minutos; o rodízio tenta outro número.' };
   const msg = body?.response?.message ?? body?.message ?? body?.error ?? raw;
   return { error: `HTTP ${http}${msg ? ` - ${typeof msg === 'string' ? msg.slice(0, 200) : JSON.stringify(msg).slice(0, 200)}` : ''}` };
 }
@@ -320,6 +324,10 @@ async function post(cfg: WhatsAppConfig, name: string, token: string, payload: R
     return { ok: false, http: 0, error: d.message, hint: d.hint };
   }
 }
+
+/** Instâncias que já mostraram ser Evolution v2 (não adianta tentar o formato v1 nelas). */
+const evolutionV2 = new Set<string>();
+const isExistsFalse = (r: { http: number; error: string }) => r.http === 400 && /não tem WhatsApp/i.test(r.error);
 
 export type SendResult = { ok: boolean; error?: string; hint?: string; instance?: string };
 
@@ -364,12 +372,19 @@ export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?
     let r: { ok: boolean; http: number; error: string; hint?: string } = { ok: false, http: 0, error: 'não enviado' };
     outer: for (const num of phoneVariants(phone)) {
       for (const n of [num, `${num}@s.whatsapp.net`]) {
-        for (const payload of [
-          { number: n, text, delay: 3500, linkPreview: false }, // Evolution v2
-          { number: n, options: { delay: 3500, presence: 'composing' }, textMessage: { text } }, // v1
-        ]) {
-          r = await post(cfg, chosen.name, chosen.token, payload);
-          if (r.ok || r.http === 401 || r.http === 403 || r.http === 0) break outer;
+        // Evolution v2: { number, text } — o formato v1 só é tentado se a instância não for v2
+        const v2 = await post(cfg, chosen.name, chosen.token, { number: n, text, delay: 3500, linkPreview: false });
+        r = v2;
+        if (v2.ok || v2.http === 401 || v2.http === 403 || v2.http === 0) break outer;
+        if (!evolutionV2.has(chosen.name) && !isExistsFalse(v2)) {
+          const v1 = await post(cfg, chosen.name, chosen.token, { number: n, options: { delay: 3500, presence: 'composing' }, textMessage: { text } });
+          if (v1.ok) {
+            r = v1;
+            break outer;
+          }
+          // a v1 reclamando de "text" prova que a instância é v2: guarda e mostra o erro REAL (o da v2)
+          if (/requires property\W+text/i.test(v1.error)) evolutionV2.add(chosen.name);
+          else if (v1.http === 401 || v1.http === 403) (r = v1);
         }
         if (r.http !== 404) break; // formato @s.whatsapp.net só é tentado se a Evolution respondeu 404
       }
@@ -722,7 +737,8 @@ export function buildRecoveryMessage(p: { phone: string; name: string; link: str
   const cta = `${pick(blocks.cta, 'cta')}\n${p.link}`;
   const fecho = pick(blocks.fecho, 'fecho');
   const pix = p.pixCode ? `${pixTitulo}\n\n${p.pixCode}` : '';
-  const sair = t < 3 ? pick(['— Se não quiser receber mensagens sobre este pedido, responda SAIR.', '— Prefere não receber lembretes? Responda SAIR.', '— Para não receber mais avisos, é só responder SAIR.', '— Não quer mais lembretes deste pedido? Responda SAIR.'], 'sair') : '';
+  const sairTxt = pick(['— Se não quiser receber mensagens sobre este pedido, responda SAIR.', '— Prefere não receber lembretes? Responda SAIR.', '— Para não receber mais avisos, é só responder SAIR.', '— Não quer mais lembretes deste pedido? Responda SAIR.'], 'sair');
+  const sair = /SAIR/.test(fecho) ? '' : sairTxt; // todo lembrete oferece a saída (exigência anti-spam)
   const layout = pick(['a', 'b', 'c'], 'layout');
   const partes =
     layout === 'a'

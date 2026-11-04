@@ -33,6 +33,13 @@ const server = http.createServer((req, res) => {
             ]),
       );
     }
+    // Evolution v2 com o WhatsApp desconectado: v2 recusa por desconexão, v1 recusa por "falta text"
+    if (req.url!.startsWith('/message/sendText/v2off')) {
+      const body = b ? JSON.parse(b) : {};
+      return body.text
+        ? res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"status":400,"error":"Bad Request","response":{"message":["Error: Connection Closed"]}}')
+        : res.writeHead(400, { 'Content-Type': 'application/json' }).end('{"status":400,"error":"Bad Request","response":{"message":[["instance requires property \\"text\\""]]}}');
+    }
     if (req.url!.startsWith('/message/sendText/fantasma')) return res.writeHead(404, { 'Content-Type': 'application/json' }).end('{"status":404,"error":"Not Found","response":{"message":["The \\"fantasma\\" instance does not exist"]}}');
     if (req.headers.apikey === 'bad') return res.writeHead(401, { 'Content-Type': 'application/json' }).end('{"message":"Unauthorized"}');
     if (req.url!.endsWith('/naoexiste')) return res.writeHead(404, { 'Content-Type': 'application/json' }).end('{"message":"not found"}');
@@ -261,5 +268,15 @@ describe('criar instância pelo painel (QR Code)', () => {
     const r = await wa.evolutionConnectStatus(c, 'Checkout-A');
     expect(r.ok && r.connected).toBe(true);
     if (r.ok) expect(r.number).toBe('5521988887777');
+  });
+});
+
+describe('Evolution v2: mostra o erro real', () => {
+  it('não esconde o motivo atrás de "instance requires property text"', async () => {
+    const c = wa.whatsappSchema.parse({ enabled: true, apiUrl: url, instances: [{ name: 'v2off', token: 'x', active: true }] });
+    const r = await wa.sendWhatsAppText('11988887777', 'Mensagem de teste', c);
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/desconectado/);
+    expect(r.error).not.toMatch(/requires property/);
   });
 });
