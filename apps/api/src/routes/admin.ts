@@ -8,6 +8,7 @@ import { emitInvoice, getInvoiceSettings, invoiceFile, refreshInvoice, saveInvoi
 import { efi, providerStatus, woovi } from '../providers/index.js';
 import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder, testEmail } from '../services/email.js';
+import { emailDeliverability } from '../services/deliverability.js';
 import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
@@ -1069,6 +1070,7 @@ adminRouter.post('/webhooks/:id/test', async (req, res) => {
   await supabase.from('integration_logs').insert({ integration: `webhook:${w.id}`, event: 'connection_test', ok: r.ok, http_status: r.status, message: `${w.name}: ${r.message}`.slice(0, 500) });
   res.json(r);
 });
+adminRouter.get('/integrations/email/deliverability', async (_req, res) => res.json(await emailDeliverability()));
 adminRouter.post('/integrations/email/test', async (req, res) => {
   const to = z.object({ to: z.string().email() }).parse(req.body).to;
   res.json(await testEmail(to));

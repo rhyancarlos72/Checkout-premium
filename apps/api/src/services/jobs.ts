@@ -1,5 +1,5 @@
 import { env } from '../config/env.js';
-import { logger, supabase } from '../lib/core.js';
+import { logger, sleep, supabase } from '../lib/core.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
 import { notifyPixExpired, syncOrderWithProvider } from './orders.js';
@@ -92,6 +92,7 @@ export async function sendRecoveries() {
     if ((count ?? 0) > 0) continue;
 
     await sendRecoveryForOrder(o);
+    await sleep(1500); // envio espaçado: rajadas de e-mails idênticos pesam contra a reputação
   }
 }
 

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Copy, Mail, PlugZap, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, Mail, PlugZap, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, cn, Field, Input, PageLoader, Switch, useToast } from '@/components/ui';
@@ -32,6 +32,47 @@ function CopyLine({ value }: { value: string }) {
     <div className="flex items-center gap-2 rounded-xl bg-gray-50 px-3 py-2">
       <code className="min-w-0 flex-1 truncate text-xs">{value}</code>
       <button aria-label="Copiar" onClick={() => navigator.clipboard.writeText(value).then(() => (setOk(true), setTimeout(() => setOk(false), 1500)))} className="text-gray-500 hover:text-gray-900">{ok ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}</button>
+    </div>
+  );
+}
+
+interface DeliverCheck { id: string; label: string; status: 'ok' | 'warn' | 'error'; detail: string; fix?: string; record?: { type: string; name: string; value: string } }
+
+/** Verificador anti-spam: SPF, DKIM, DMARC, MX e configurações do remetente, com o registro exato para corrigir. */
+function DeliverabilityCheck() {
+  const q = useMutation({ mutationFn: () => adminApi.get<{ domain: string | null; from: string | null; score: number; checks: DeliverCheck[] }>('/integrations/email/deliverability') });
+  const icon = (st: DeliverCheck['status']) => (st === 'ok' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" /> : st === 'warn' ? <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" /> : <XCircle className="h-4 w-4 shrink-0 text-red-500" />);
+  return (
+    <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm text-zinc-700"><b>Anti-spam</b><br /><span className="text-xs text-zinc-500">Confere SPF, DKIM e DMARC exigidos por Gmail, Outlook/Hotmail e Yahoo.</span></p>
+        <Button size="sm" variant="secondary" className="shrink-0" loading={q.isPending} onClick={() => q.mutate()}><ShieldCheck className="h-3.5 w-3.5" /> Verificar entrega</Button>
+      </div>
+      {q.data && (
+        <div className="mt-3 space-y-2">
+          <p className={cn('text-sm font-semibold', q.data.score >= 9 ? 'text-emerald-700' : q.data.score >= 6 ? 'text-amber-700' : 'text-red-600')}>
+            Nota {q.data.score}/10 {q.data.domain ? `· ${q.data.domain}` : ''} {q.data.score >= 9 ? '· pronto para a caixa de entrada' : '· corrija os itens abaixo'}
+          </p>
+          <ul className="space-y-2">
+            {q.data.checks.map((c) => (
+              <li key={c.id} className="rounded-lg bg-white px-3 py-2 text-xs ring-1 ring-zinc-200">
+                <p className="flex items-center gap-2 font-semibold text-zinc-800">{icon(c.status)} {c.label}</p>
+                <p className="mt-0.5 break-words pl-6 text-zinc-500">{c.detail}</p>
+                {c.fix && <p className="mt-1 pl-6 text-zinc-700">💡 {c.fix}</p>}
+                {c.record && (
+                  <div className="ml-6 mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 rounded-md bg-zinc-50 p-2 font-mono text-[11px] text-zinc-700">
+                    <span className="text-zinc-400">Tipo</span><span>{c.record.type}</span>
+                    <span className="text-zinc-400">Nome</span><span>{c.record.name}</span>
+                    <span className="text-zinc-400">Valor</span><span className="break-all">{c.record.value}</span>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-zinc-500">Depois de alterar o DNS, espere de 15 min a algumas horas e verifique de novo. Para a nota final, envie o teste para o endereço do <a href="https://www.mail-tester.com" target="_blank" rel="noreferrer" className="font-medium text-blue-600 hover:underline">mail-tester.com</a>.</p>
+        </div>
+      )}
+      {q.isError && <p className="mt-2 text-xs text-red-600">{(q.error as Error).message}</p>}
     </div>
   );
 }
@@ -70,6 +111,7 @@ export default function IntegrationsPage() {
               <Input type="email" placeholder="enviar teste para…" value={testTo} onChange={(e) => setTestTo(e.target.value)} className="h-10" />
               <Button size="sm" className="h-10 shrink-0" disabled={!data.email.configured || !testTo} loading={run.isPending && run.variables?.path.includes('email')} onClick={() => run.mutate({ path: '/integrations/email/test', body: { to: testTo } })}><Mail className="h-3.5 w-3.5" /> Testar</Button>
             </div>
+            <DeliverabilityCheck />
           </div>
         </Card>
 

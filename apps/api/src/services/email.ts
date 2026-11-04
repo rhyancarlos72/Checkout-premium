@@ -41,11 +41,14 @@ async function send(to: string, subject: string, html: string, orderId: string, 
     return false;
   }
   try {
+    const fromAddr = env.MAIL_FROM ?? env.SMTP_USER!;
     await t.sendMail({
-      from: { name: extras.fromName || env.MAIL_FROM_NAME, address: env.MAIL_FROM ?? env.SMTP_USER! },
+      from: { name: extras.fromName || env.MAIL_FROM_NAME, address: fromAddr },
       to,
       subject,
       html,
+      // Message-ID no domínio do remetente (alinhado ao SPF/DKIM) — ids de outro domínio pesam no filtro de spam
+      messageId: `<${crypto.randomUUID()}@${fromAddr.split('@')[1] ?? 'localhost'}>`,
       // versão em texto puro: e-mail só com HTML pontua mal nos filtros de spam
       text: extras.text ?? htmlToText(html),
       ...(extras.replyTo ? { replyTo: extras.replyTo } : {}),

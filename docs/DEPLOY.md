@@ -128,7 +128,8 @@ Para não cair no spam, faça **uma vez** no domínio (hPanel → Domínios → 
 2. **SPF:** registro TXT `v=spf1 include:_spf.mail.hostinger.com ~all` (a Hostinger cria ao ativar o e-mail; confira).
 3. **DKIM:** hPanel → E-mails → Configurações de DNS → ativar DKIM.
 4. **DMARC:** registro TXT em `_dmarc` com `v=DMARC1; p=none; rua=mailto:vendas@seudominio.com.br`.
-5. Teste em https://www.mail-tester.com (envie o teste de Integrações → E-mail para o endereço que o site mostra); a meta é nota 9+.
+5. No painel: **Integrações → E-mail → Verificar entrega** confere SPF, DKIM, DMARC, MX e o remetente, e mostra o registro exato que falta.
+6. Teste em https://www.mail-tester.com (envie o teste de Integrações → E-mail para o endereço que o site mostra); a meta é nota 9+.
 
 ## 6. Ambientes
 
