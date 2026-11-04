@@ -87,15 +87,15 @@ function ProgressCard() {
         </button>
       </div>
       <div className="mt-2 flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold text-white">{short(data.month_cents)} / {short(goal)}</p>
+        <p className="pv text-sm font-semibold text-white">{short(data.month_cents)} / {short(goal)}</p>
         <Link to="/admin/configuracoes?tab=loja" className="rounded-md bg-white/10 px-2 py-0.5 text-[11px] font-bold text-white hover:bg-white/15">META</Link>
       </div>
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
         <div className="h-full rounded-full bg-gradient-to-r from-blue-500 to-cyan-400 transition-all duration-700" style={{ width: `${pct}%` }} />
       </div>
       <div className="mt-2 flex justify-between text-[11px]">
-        <span className="font-semibold text-blue-400">{pct.toFixed(0)}% concluído</span>
-        <span className="text-slate-400">{data.month_cents >= goal ? 'Meta batida! 🎉' : `Faltam ${brl(goal - data.month_cents)}`}</span>
+        <span className="pv font-semibold text-blue-400">{pct.toFixed(0)}% concluído</span>
+        <span className="pv text-slate-400">{data.month_cents >= goal ? 'Meta batida! 🎉' : `Faltam ${brl(goal - data.month_cents)}`}</span>
       </div>
     </div>
   );
@@ -143,7 +143,7 @@ function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: stri
             <p className="truncate text-sm font-medium text-white">{name || 'Administrador'}</p>
             <p className="truncate text-xs text-slate-400">{priv.show(email)}</p>
           </Link>
-          <button onClick={priv.toggle} className="flex shrink-0 items-center rounded-md p-1 text-xs text-slate-400 transition hover:text-white" aria-label={priv.hidden ? 'Mostrar e-mail' : 'Esconder e-mail'} title={priv.hidden ? 'Mostrar e-mail' : 'Esconder e-mail'}>
+          <button onClick={priv.toggle} className="flex shrink-0 items-center rounded-md p-1 text-xs text-slate-400 transition hover:text-white" aria-label={priv.hidden ? 'Mostrar dados (sair do modo privado)' : 'Esconder dados (modo privado)'} title={priv.hidden ? 'Mostrar faturamento, vendas e nomes' : 'Esconder faturamento, vendas e nomes'} aria-pressed={priv.hidden}>
             {priv.hidden ? <EyeOff className="h-3.5 w-3.5 shrink-0" /> : <Eye className="h-3.5 w-3.5 shrink-0" />}
           </button>
           <ThemeToggle theme={theme} onToggle={onToggleTheme} />
@@ -206,6 +206,7 @@ function AuthedShell({ email, name }: { email: string; name: string }) {
           </button>
           <BrandMark brand={brand} className="h-7 w-7 rounded-lg" iconClassName="h-4 w-4" />
           <span className="flex-1 truncate font-semibold">{brand.name === defaultBrand.name ? 'Checkout' : brand.name}</span>
+          <PrivacyToggle />
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </header>
         <main key={location.pathname} className="animate-fade-in mx-auto max-w-[1440px] p-4 sm:p-6 lg:px-10 lg:py-9">
@@ -224,6 +225,16 @@ function AuthedShell({ email, name }: { email: string; name: string }) {
         </main>
       </div>
     </div>
+  );
+}
+
+/** Olhinho do topo (celular): liga/desliga o modo privado. */
+function PrivacyToggle() {
+  const priv = useHideEmail();
+  return (
+    <button onClick={priv.toggle} aria-pressed={priv.hidden} className="rounded-lg p-1.5 text-slate-300 hover:bg-white/10" aria-label={priv.hidden ? 'Mostrar dados' : 'Esconder dados'} title={priv.hidden ? 'Mostrar dados' : 'Esconder dados'}>
+      {priv.hidden ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+    </button>
   );
 }
 

@@ -79,7 +79,7 @@ export function InvoicesCard({ toast }: { toast: Toast }) {
       <div className="mt-5 grid gap-3 text-sm sm:grid-cols-4">
         <div className="rounded-xl border border-zinc-200 p-3"><p className="text-zinc-500">Tipo</p><p className="mt-0.5 font-semibold text-zinc-900">{data.type === 'product' ? 'NF-e · produto' : 'NFS-e · serviço'}</p></div>
         <div className="rounded-xl border border-zinc-200 p-3"><p className="text-zinc-500">Chave da API</p><p className="mt-0.5 font-mono font-semibold text-zinc-900">{data.apiKey_hint || '—'}</p></div>
-        <div className="rounded-xl border border-zinc-200 p-3"><p className="text-zinc-500">Desconto na nota</p><p className="mt-0.5 font-semibold text-zinc-900">{brl(data.deductCents)}</p></div>
+        <div className="rounded-xl border border-zinc-200 p-3"><p className="text-zinc-500">Desconto na nota</p><p className="pv mt-0.5 font-semibold text-zinc-900">{brl(data.deductCents)}</p></div>
         <div className="rounded-xl border border-zinc-200 p-3"><p className="text-zinc-500">Últimas 30</p><p className="mt-0.5 font-semibold text-zinc-900">{issued} emitidas{errors ? <span className="text-red-600"> · {errors} com erro</span> : ''}</p></div>
       </div>
 
@@ -104,10 +104,10 @@ export function InvoicesCard({ toast }: { toast: Toast }) {
                 <FileText className="h-4 w-4 shrink-0 text-zinc-400" />
                 <span className="min-w-0 flex-1 truncate">
                   <span className="font-medium text-zinc-900">Pedido ID: {i.order ? productCode(i.order.number) : '—'}</span>
-                  <span className="text-zinc-500"> · {i.order?.customer?.name ?? ''}{i.number ? ` · nº ${i.number}` : ''}</span>
+                  <span className="pv text-zinc-500"> · {i.order?.customer?.name ?? ''}{i.number ? ` · nº ${i.number}` : ''}</span>
                   {i.status === 'error' && i.message && <span className="block truncate text-xs text-red-600">{i.message}</span>}
                 </span>
-                <span className="tabular-nums text-zinc-700">{brl(i.amount_cents)}</span>
+                <span className="pv tabular-nums text-zinc-700">{brl(i.amount_cents)}</span>
                 <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', invoiceStatus[i.status]?.cls)}>{invoiceStatus[i.status]?.label ?? i.status}</span>
                 <span className="hidden text-xs text-zinc-400 sm:block">{dateTime(i.updated_at)}</span>
               </li>

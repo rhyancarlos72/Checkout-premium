@@ -52,8 +52,8 @@ function AdditionalProducts({ product, products, onEdit }: { product: Product; p
             <li key={b!.id} className={cn('rounded-lg px-2.5 py-1.5 text-xs', b!.product_id === product.id ? 'bg-red-50' : 'bg-amber-50')}>
               <div className="flex items-center gap-2">
                 <Zap className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-                <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{products.find((p) => p.id === b!.product_id)?.name ?? b!.title}</span>
-                <span className="shrink-0 font-semibold tabular-nums text-zinc-700">+ {brl(b!.price_cents)}</span>
+                <span className="pv min-w-0 flex-1 truncate font-medium text-zinc-800">{products.find((p) => p.id === b!.product_id)?.name ?? b!.title}</span>
+                <span className="pv shrink-0 font-semibold tabular-nums text-zinc-700">+ {brl(b!.price_cents)}</span>
               </div>
               {b!.product_id === product.id && <p className="mt-1 text-[11px] font-medium text-red-700">Este bump entrega o próprio produto. Clique em Editar e escolha outro produto.</p>}
             </li>
@@ -151,11 +151,11 @@ export default function ProductsPage() {
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       {p.number && <button type="button" title="Copiar ID" onClick={() => navigator.clipboard.writeText(productCode(p.number)).then(() => toast.ok(`ID ${productCode(p.number)} copiado`))} className="mb-1 inline-block rounded-md bg-zinc-100 px-2 py-0.5 text-[13px] font-medium text-zinc-500 transition hover:text-zinc-800">ID: {productCode(p.number)}</button>}
-                      <p className="font-semibold leading-snug">{p.name}</p>
+                      <p className="pv font-semibold leading-snug">{p.name}</p>
                     </div>
                     <Badge tone={p.active ? 'on' : 'off'}>{p.active ? 'Ativo' : 'Inativo'}</Badge>
                   </div>
-                  <p className="mt-1 text-lg font-bold tabular-nums">{brl(p.price_cents)}</p>
+                  <p className="pv mt-1 text-lg font-bold tabular-nums">{brl(p.price_cents)}</p>
                   <p className="text-xs text-zinc-500">Entrega: {{ link: 'link de acesso', file: 'arquivo', none: 'manual' }[p.delivery_type]}</p>
                 </div>
               </div>

@@ -37,8 +37,8 @@ export default function CheckoutsPage() {
                   {c.theme?.mode === 'dark' && <span className="rounded-full bg-white/20 px-2 py-0.5 text-[11px] font-semibold text-white backdrop-blur">Escuro</span>}
                 </div>
                 <div className="absolute bottom-3 left-4 right-4">
-                  <p className="truncate font-semibold text-white">{c.name}</p>
-                  <p className="truncate text-xs text-white/75">{c.product?.number ? `ID: ${productCode(c.product.number)} · ` : ''}{c.product?.name} · {brl(c.price_cents ?? c.product?.price_cents ?? 0)}</p>
+                  <p className="pv truncate font-semibold text-white">{c.name}</p>
+                  <p className="pv truncate text-xs text-white/75">{c.product?.number ? `ID: ${productCode(c.product.number)} · ` : ''}{c.product?.name} · {brl(c.price_cents ?? c.product?.price_cents ?? 0)}</p>
                 </div>
               </button>
               <div className="space-y-3 p-4">

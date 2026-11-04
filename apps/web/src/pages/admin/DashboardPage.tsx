@@ -97,8 +97,8 @@ function Tile({ label, value, sub, icon, tone, bar }: { label: string; value: st
         <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-xl', tones[0])}>{icon}</div>
         <p className="text-sm font-medium text-zinc-600">{label}</p>
       </div>
-      <p className="mt-4 text-[26px] font-bold leading-none tracking-tight text-zinc-900 tabular-nums">{value}</p>
-      {sub && <p className="mt-2 text-[13px] text-zinc-500">{sub}</p>}
+      <p className="pv mt-4 text-[26px] font-bold leading-none tracking-tight text-zinc-900 tabular-nums">{value}</p>
+      {sub && <p className="pv mt-2 text-[13px] text-zinc-500">{sub}</p>}
       {bar !== undefined && (
         <div className="mt-auto pt-4">
           <div className="h-1.5 overflow-hidden rounded-full bg-zinc-100">
@@ -216,14 +216,14 @@ export default function DashboardPage({ name }: { name?: string }) {
           <div className="relative flex flex-col gap-6 sm:flex-row sm:items-end sm:justify-between">
             <div className="min-w-0">
               <p className="flex items-center gap-2 text-sm font-medium text-blue-100/80"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/10"><BadgeCheck className="h-4 w-4" /></span> Faturamento aprovado · {range.label.toLowerCase()}</p>
-              <p className="mt-3 font-display text-[40px] font-bold leading-none tracking-tight tabular-nums sm:text-[46px]">{brl(k?.paid_cents ?? 0)}</p>
+              <p className="pv mt-3 font-display text-[40px] font-bold leading-none tracking-tight tabular-nums sm:text-[46px]">{brl(k?.paid_cents ?? 0)}</p>
               <div className="mt-4 flex flex-wrap gap-2 text-[13px]">
-                <span className="rounded-full bg-white/10 px-3 py-1 font-medium">{k?.paid_count ?? 0} {k?.paid_count === 1 ? 'venda' : 'vendas'}</span>
-                <span className="rounded-full bg-white/10 px-3 py-1 font-medium">Ticket médio {brl(k?.avg_ticket_cents ?? 0)}</span>
-                {k?.orders_count ? <span className="rounded-full bg-[#34d399]/20 px-3 py-1 font-medium text-[#a7f3d0]">Pix pago em {pct(k.pix_conversion)}</span> : null}
+                <span className="pv rounded-full bg-white/10 px-3 py-1 font-medium">{k?.paid_count ?? 0} {k?.paid_count === 1 ? 'venda' : 'vendas'}</span>
+                <span className="pv rounded-full bg-white/10 px-3 py-1 font-medium">Ticket médio {brl(k?.avg_ticket_cents ?? 0)}</span>
+                {k?.orders_count ? <span className="pv rounded-full bg-[#34d399]/20 px-3 py-1 font-medium text-[#a7f3d0]">Pix pago em {pct(k.pix_conversion)}</span> : null}
               </div>
             </div>
-            <div className="h-20 w-full sm:w-56">
+            <div className="pv-chart h-20 w-full sm:w-56">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={hourly} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
                   <defs>
@@ -246,9 +246,9 @@ export default function DashboardPage({ name }: { name?: string }) {
           <div className="relative">
           <div className="flex items-center justify-between">
             <p className="flex items-center gap-2 text-sm font-medium text-amber-800"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-400/25"><Timer className="h-4 w-4 text-amber-700" /></span> Vendas pendentes</p>
-            <span className="rounded-full bg-amber-400/25 px-2.5 py-0.5 text-xs font-semibold text-amber-800">{k?.pending_count ?? 0}</span>
+            <span className="pv rounded-full bg-amber-400/25 px-2.5 py-0.5 text-xs font-semibold text-amber-800">{k?.pending_count ?? 0}</span>
           </div>
-          <p className="mt-3 font-display text-[34px] font-bold leading-none tracking-tight text-zinc-900 tabular-nums">{brl(k?.pending_cents ?? 0)}</p>
+          <p className="pv mt-3 font-display text-[34px] font-bold leading-none tracking-tight text-zinc-900 tabular-nums">{brl(k?.pending_cents ?? 0)}</p>
           <p className="mt-2 text-[13px] text-zinc-600">Pix gerados e ainda não pagos (inclui os vencidos), alvo da recuperação.</p>
           <Link to="/admin/pedidos?status=pending" className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-amber-700 hover:underline">Ver pendentes <ArrowRight className="h-4 w-4" /></Link>
           </div>
@@ -269,7 +269,7 @@ export default function DashboardPage({ name }: { name?: string }) {
             <h2 className="font-display text-lg font-semibold text-zinc-900">Vendas por Hora</h2>
             <span className="text-xs text-zinc-500">faturamento pago · horário de Brasília</span>
           </div>
-          <div className="h-72">
+          <div className="pv-chart h-72">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={hourly} margin={{ top: 4, right: 0, left: 0, bottom: 0 }} barCategoryGap={3}>
                 <CartesianGrid vertical={false} stroke="currentColor" className="text-zinc-200" />
@@ -296,7 +296,7 @@ export default function DashboardPage({ name }: { name?: string }) {
             </div>
           ) : (
             <>
-              <div className="relative h-52">
+              <div className="pv-chart relative h-52">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
                     <Pie data={methods} dataKey="revenue_cents" nameKey="label" innerRadius="68%" outerRadius="92%" animationDuration={500} paddingAngle={methods.length > 1 ? 3 : 0} stroke="none">
@@ -307,7 +307,7 @@ export default function DashboardPage({ name }: { name?: string }) {
                 </ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                   <PixIcon className="h-6 w-6" />
-                  <p className="mt-1 text-lg font-bold text-zinc-900">{brl(totalMethods)}</p>
+                  <p className="pv mt-1 text-lg font-bold text-zinc-900">{brl(totalMethods)}</p>
                 </div>
               </div>
               <ul className="mt-4 space-y-2.5">
@@ -315,8 +315,8 @@ export default function DashboardPage({ name }: { name?: string }) {
                   <li key={m.method} className="flex items-center gap-3 text-sm">
                     <span className="h-3 w-3 rounded-full" style={{ background: methodColors[m.method] }} />
                     <span className="flex-1 text-zinc-700">{m.label}</span>
-                    <span className="text-zinc-500">{m.count} · {totalMethods ? pct(m.revenue_cents / totalMethods) : '0%'}</span>
-                    <span className="font-semibold tabular-nums text-zinc-900">{brl(m.revenue_cents)}</span>
+                    <span className="pv text-zinc-500">{m.count} · {totalMethods ? pct(m.revenue_cents / totalMethods) : '0%'}</span>
+                    <span className="pv font-semibold tabular-nums text-zinc-900">{brl(m.revenue_cents)}</span>
                   </li>
                 ))}
               </ul>
@@ -344,7 +344,7 @@ export default function DashboardPage({ name }: { name?: string }) {
                     <span className="truncate font-medium text-zinc-700">{f.label}</span>
                     <span className="flex shrink-0 items-baseline gap-2">
                       {rate !== null && <span className="text-xs text-zinc-400">{pct(rate)}</span>}
-                      <span className="font-semibold tabular-nums text-zinc-900">{f.value.toLocaleString('pt-BR')}</span>
+                      <span className="pv font-semibold tabular-nums text-zinc-900">{f.value.toLocaleString('pt-BR')}</span>
                     </span>
                   </div>
                   <div className="h-2.5 overflow-hidden rounded-full bg-zinc-100">
@@ -365,10 +365,10 @@ export default function DashboardPage({ name }: { name?: string }) {
                 <li key={p.kind + p.name} className="flex items-center gap-3 rounded-xl px-2 py-2 transition hover:bg-zinc-50">
                   <span className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-xs font-bold', i === 0 ? 'bg-amber-100 text-amber-700' : 'bg-zinc-100 text-zinc-500')}>{i + 1}</span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-zinc-900">{p.name}</p>
-                    <p className="text-xs text-zinc-500">{p.number ? `ID: ${productCode(p.number)} · ` : ''}{p.count} vendas{p.kind === 'bump' && ' · order bump'}</p>
+                    <p className="pv truncate text-sm font-medium text-zinc-900">{p.name}</p>
+                    <p className="pv text-xs text-zinc-500">{p.number ? `ID: ${productCode(p.number)} · ` : ''}{p.count} vendas{p.kind === 'bump' && ' · order bump'}</p>
                   </div>
-                  <span className="text-sm font-semibold tabular-nums text-zinc-900">{brl(p.revenue_cents)}</span>
+                  <span className="pv text-sm font-semibold tabular-nums text-zinc-900">{brl(p.revenue_cents)}</span>
                 </li>
               ))}
             </ol>

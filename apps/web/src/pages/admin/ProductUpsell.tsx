@@ -37,9 +37,9 @@ export function UpsellSection({ product, products, upsell, onEdit }: { product: 
       ) : (
         <div className={cn('flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs', upsell.active ? 'bg-violet-50' : 'bg-zinc-100')}>
           <Rocket className="h-3.5 w-3.5 shrink-0 text-violet-600" />
-          <span className="min-w-0 flex-1 truncate font-medium text-zinc-800">{upsell.title || offer?.name || 'Oferta'}</span>
+          <span className="pv min-w-0 flex-1 truncate font-medium text-zinc-800">{upsell.title || offer?.name || 'Oferta'}</span>
           {!upsell.active && <span className="shrink-0 text-[11px] text-zinc-500">pausado</span>}
-          <span className="shrink-0 font-semibold tabular-nums text-zinc-700">{brl(upsell.price_cents)}</span>
+          <span className="pv shrink-0 font-semibold tabular-nums text-zinc-700">{brl(upsell.price_cents)}</span>
         </div>
       )}
       {upsell && upsell.offer_product_id === product.id && <p className="mt-1 text-[11px] text-red-600">O upsell precisa ser outro produto.</p>}

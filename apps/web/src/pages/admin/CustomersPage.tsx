@@ -35,10 +35,10 @@ export default function CustomersPage() {
               <tbody className="divide-y divide-gray-100">
                 {data.data.map((c) => (
                   <tr key={c.id}>
-                    <td className="px-5 py-3"><p className="font-medium">{c.name}</p><p className="text-xs text-gray-500">{c.email}</p></td>
+                    <td className="px-5 py-3"><p className="pv font-medium">{c.name}</p><p className="pv text-xs text-gray-500">{c.email}</p></td>
                     <td className="px-5 py-3 text-gray-600">{c.phone ?? '—'}</td>
                     <td className="px-5 py-3 text-right tabular-nums">{c.paid_count} <span className="text-gray-400">/ {c.orders_count}</span></td>
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums">{brl(c.total_spent_cents)}</td>
+                    <td className="pv px-5 py-3 text-right font-semibold tabular-nums">{brl(c.total_spent_cents)}</td>
                     <td className="px-5 py-3 text-gray-600">{dateTime(c.last_order_at)}</td>
                   </tr>
                 ))}

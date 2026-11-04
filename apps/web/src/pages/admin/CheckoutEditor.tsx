@@ -408,7 +408,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                           <div key={id} className="flex items-center gap-2 rounded-xl border border-zinc-900 bg-zinc-50 px-3 py-2.5 text-sm">
                             <span className="w-5 text-center text-xs font-bold text-zinc-400">{i + 1}</span>
                             <span className="min-w-0 flex-1 truncate font-medium">{b.title}</span>
-                            <span className="tabular-nums text-zinc-600">{brl(b.price_cents)}</span>
+                            <span className="pv tabular-nums text-zinc-600">{brl(b.price_cents)}</span>
                             <button disabled={i === 0} onClick={() => move(i, -1)} className="p-1 text-zinc-500 disabled:opacity-30" aria-label="Subir"><ArrowUp className="h-4 w-4" /></button>
                             <button disabled={i === bumpIds.length - 1} onClick={() => move(i, 1)} className="p-1 text-zinc-500 disabled:opacity-30" aria-label="Descer"><ArrowDown className="h-4 w-4" /></button>
                             <button onClick={() => setBumpIds(bumpIds.filter((x) => x !== id))} className="p-1 text-zinc-500 hover:text-red-600" aria-label="Remover"><Trash2 className="h-4 w-4" /></button>
@@ -421,7 +421,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                       <button key={b.id} onClick={() => setBumpIds([...bumpIds, b.id])} className="flex w-full items-center gap-3 rounded-xl border border-dashed border-zinc-300 px-3 py-2.5 text-left text-sm transition hover:border-zinc-500 hover:bg-zinc-50">
                         <Plus className="h-4 w-4 text-zinc-400" />
                         <span className="min-w-0 flex-1 truncate">{b.title}{!b.active && <span className="ml-2 text-xs text-zinc-400">(inativo)</span>}</span>
-                        <span className="tabular-nums text-zinc-600">{brl(b.price_cents)}</span>
+                        <span className="pv tabular-nums text-zinc-600">{brl(b.price_cents)}</span>
                       </button>
                     ))}
                   </>

@@ -10,17 +10,23 @@ export function maskEmail(email: string) {
   return d ? `${u}@${d}` : u;
 }
 
-const KEY = 'ck_hide_email';
+const KEY = 'ck_privacy';
 const listeners = new Set<(v: boolean) => void>();
 function read() {
   try {
-    return localStorage.getItem(KEY) !== '0'; // padrão: escondido
+    return localStorage.getItem(KEY) === '1'; // padrão: tudo visível
   } catch {
-    return true;
+    return false;
   }
 }
+/** Liga/desliga o borrão de dados sensíveis (classe no <html> + elementos marcados com .pv). */
+const applyClass = (on: boolean) => document.documentElement.classList.toggle('privacy-on', on);
+applyClass(read());
 
-/** Esconder/mostrar o e-mail do admin no painel (lembrado neste navegador e sincronizado entre as telas). */
+/**
+ * Modo privado do painel (olhinho): esconde faturamento, vendas, nomes de produtos/clientes e o e-mail
+ * de uma vez. Lembrado neste navegador e sincronizado entre as telas.
+ */
 export function useHideEmail() {
   const [hidden, setHidden] = useState(read);
   useEffect(() => {
@@ -33,7 +39,10 @@ export function useHideEmail() {
     } catch {
       /* ignore */
     }
+    applyClass(v);
     listeners.forEach((l) => l(v));
   };
   return { hidden, toggle: () => set(!hidden), show: (email: string) => (hidden ? maskEmail(email) : email) };
 }
+
+export const usePrivacy = useHideEmail;

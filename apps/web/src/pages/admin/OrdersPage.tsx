@@ -73,10 +73,10 @@ export default function OrdersPage() {
                 {data.data.map((o) => (
                   <tr key={o.id} className="cursor-pointer hover:bg-gray-50" onClick={() => setOpen(o.id)}>
                     <td className="px-5 py-3"><p className="font-semibold">ID: {productCode(o.number)}</p><p className="text-xs text-gray-500">{dateTime(o.created_at)}</p></td>
-                    <td className="px-5 py-3"><p className="font-medium">{o.customer?.name ?? '—'}</p><p className="text-xs text-gray-500">{o.customer?.email}</p></td>
-                    <td className="px-5 py-3 text-gray-600">{(() => { const m = o.items.find((i) => i.kind === 'main'); return m ? <>{m.product?.number && <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID: {productCode(m.product.number)}</span>}{m.name}</> : null; })()}{o.items.some((i) => i.kind === 'bump') && <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-teal-700"><Zap className="h-3 w-3" />+{o.items.filter((i) => i.kind === 'bump').length}</span>}</td>
+                    <td className="px-5 py-3"><p className="pv font-medium">{o.customer?.name ?? '—'}</p><p className="pv text-xs text-gray-500">{o.customer?.email}</p></td>
+                    <td className="px-5 py-3 text-gray-600">{(() => { const m = o.items.find((i) => i.kind === 'main'); return m ? <span className="pv">{m.product?.number && <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID: {productCode(m.product.number)}</span>}{m.name}</span> : null; })()}{o.items.some((i) => i.kind === 'bump') && <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-teal-700"><Zap className="h-3 w-3" />+{o.items.filter((i) => i.kind === 'bump').length}</span>}</td>
                     <td className="px-5 py-3 text-xs text-gray-500">{o.tracking?.utm_source ?? 'direto'}{o.tracking?.utm_campaign ? ` / ${o.tracking.utm_campaign}` : ''}</td>
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums">{brl(o.total_cents)}</td>
+                    <td className="pv px-5 py-3 text-right font-semibold tabular-nums">{brl(o.total_cents)}</td>
                     <td className="px-5 py-3"><div className="flex items-center gap-2"><StatusBadge status={o.status} />{(o.status === 'pending' || o.status === 'expired') && <RecoveryEmailButton order={o} />}</div></td>
                   </tr>
                 ))}
@@ -170,14 +170,14 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-gray-200 p-4 text-sm">
               <p className="mb-2 font-semibold">Cliente</p>
-              <p>{o.customer?.name}</p><p className="text-gray-600">{o.customer?.email}</p><p className="text-gray-600">{o.customer?.phone}</p>
+              <p className="pv">{o.customer?.name}</p><p className="pv text-gray-600">{o.customer?.email}</p><p className="pv text-gray-600">{o.customer?.phone}</p>
               {o.customer?.document && <p className="text-gray-600">Doc: ***{String(o.customer.document).slice(-4)}</p>}
             </div>
             <div className="rounded-xl border border-gray-200 p-4 text-sm">
               <p className="mb-2 font-semibold">Itens</p>
-              {o.items.map((i: any) => <div key={i.id} className="flex justify-between gap-2"><span>{i.kind === 'bump' && '⚡ '}{i.product?.number && <span className="mr-1 font-mono text-xs text-zinc-500">ID: {productCode(i.product.number)}</span>}{i.name}</span><span className="tabular-nums">{brl(i.price_cents)}</span></div>)}
-              {o.discount_cents > 0 && <div className="flex justify-between text-emerald-700"><span>Desconto {o.coupon?.code && `(${o.coupon.code})`}</span><span>−{brl(o.discount_cents)}</span></div>}
-              <div className="mt-1 flex justify-between border-t border-gray-100 pt-1 font-semibold"><span>Total</span><span>{brl(o.total_cents)}</span></div>
+              {o.items.map((i: any) => <div key={i.id} className="flex justify-between gap-2"><span className="pv">{i.kind === 'bump' && '⚡ '}{i.product?.number && <span className="mr-1 font-mono text-xs text-zinc-500">ID: {productCode(i.product.number)}</span>}{i.name}</span><span className="pv tabular-nums">{brl(i.price_cents)}</span></div>)}
+              {o.discount_cents > 0 && <div className="flex justify-between text-emerald-700"><span>Desconto {o.coupon?.code && `(${o.coupon.code})`}</span><span className="pv">−{brl(o.discount_cents)}</span></div>}
+              <div className="mt-1 flex justify-between border-t border-gray-100 pt-1 font-semibold"><span>Total</span><span className="pv">{brl(o.total_cents)}</span></div>
             </div>
           </div>
           <div className="rounded-xl border border-gray-200 p-4 text-sm">
@@ -195,7 +195,7 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
               </div>
               {o.invoice ? (
                 <div className="space-y-2">
-                  <p className="text-gray-600">{o.invoice.type === 'product' ? 'NF-e (produto)' : 'NFS-e (serviço)'} · {brl(o.invoice.amount_cents)}{o.invoice.number && ` · nº ${o.invoice.number}`} · {dateTime(o.invoice.updated_at)}</p>
+                  <p className="pv text-gray-600">{o.invoice.type === 'product' ? 'NF-e (produto)' : 'NFS-e (serviço)'} · {brl(o.invoice.amount_cents)}{o.invoice.number && ` · nº ${o.invoice.number}`} · {dateTime(o.invoice.updated_at)}</p>
                   {o.invoice.message && <p className={cn('rounded-lg p-2 text-xs', o.invoice.status === 'error' ? 'bg-red-50 text-red-700' : 'bg-zinc-50 text-zinc-600')}>{o.invoice.message}</p>}
                   <div className="flex flex-wrap gap-2">
                     {o.invoice.status === 'error' && <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'invoice'} onClick={() => action.mutate('invoice')}><RefreshCw className="h-3.5 w-3.5" /> Tentar emitir de novo</Button>}

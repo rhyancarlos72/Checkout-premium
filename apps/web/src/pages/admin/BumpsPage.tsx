@@ -57,8 +57,8 @@ export default function BumpsPage() {
                   <p className="truncate text-xs text-gray-500">Produto adicional: {b.product?.number ? `ID: ${productCode(b.product.number)} · ` : ''}{b.product?.name ?? '—'}</p>
                 </div>
                 <div className="text-right">
-                  {b.compare_at_cents ? <p className="text-xs text-gray-400 line-through">{brl(b.compare_at_cents)}</p> : null}
-                  <p className="font-semibold tabular-nums">{brl(b.price_cents)}</p>
+                  {b.compare_at_cents ? <p className="pv text-xs text-gray-400 line-through">{brl(b.compare_at_cents)}</p> : null}
+                  <p className="pv font-semibold tabular-nums">{brl(b.price_cents)}</p>
                 </div>
                 <Badge tone={b.active ? 'on' : 'off'}>{b.active ? 'Ativo' : 'Inativo'}</Badge>
                 <div className="flex">
