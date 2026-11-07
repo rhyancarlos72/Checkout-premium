@@ -377,3 +377,27 @@ describe('link curto do pedido', () => {
     expect((await fetch(`${base}/r/00000${'1'}`, { redirect: 'manual' })).headers.get('location')).toBe('/');
   });
 });
+
+describe('Pix sem duplicar para a mesma pessoa', () => {
+  const buyer = { name: 'Bruna Costa', email: 'bruna@x.com', phone: '11922221111' };
+  it('mesma compra devolve o MESMO Pix; com order bump gera outro e encerra o anterior', async () => {
+    const a = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer, bump_ids: [], tracking: {} });
+    const b = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { ...buyer, email: 'BRUNA@x.com' }, bump_ids: [], tracking: {} });
+    expect(b.body.token).toBe(a.body.token);
+    expect(b.body.order.pix_code).toBe(a.body.order.pix_code);
+    expect(db.orders.filter((o) => o.customer_id === db.orders.find((x) => x.public_token === a.body.token)!.customer_id && o.status === 'pending')).toHaveLength(1);
+
+    const withBump = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer, bump_ids: ['00000000-0000-4000-8000-0000000000b1'], tracking: {} });
+    expect(withBump.body.token).not.toBe(a.body.token);
+    await settle();
+    expect(db.orders.find((x) => x.public_token === a.body.token)!.status).toBe('canceled');
+    expect(db.orders.find((x) => x.public_token === withBump.body.token)!.status).toBe('pending');
+  });
+  it('Pix vencido não é reaproveitado', async () => {
+    const buyer2 = { name: 'Caio Reis', email: 'caio@x.com', phone: '11911110000' };
+    const a = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer2, bump_ids: [], tracking: {} });
+    db.orders.find((x) => x.public_token === a.body.token)!.expires_at = new Date(Date.now() - 1000).toISOString();
+    const b = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer2, bump_ids: [], tracking: {} });
+    expect(b.body.token).not.toBe(a.body.token);
+  });
+});

@@ -982,7 +982,7 @@ adminRouter.post('/whatsapp/test', async (req, res) => {
   if (!p) throw new HttpError(400, 'Telefone inválido (use DDD + número)');
   const msg =
     kind === 'recovery'
-      ? buildRecoveryMessage({ phone: p, name: 'Cliente Teste', link: `${env.PUBLIC_URL}/checkout?produto_id=exemplo`, attempt: 1, pixCode: '00020126...exemplo' })
+      ? buildRecoveryMessage({ phone: p, name: 'Cliente Teste', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 1, pixCode: '00020126...exemplo', product: 'Produto de exemplo', totalCents: 9700 })
       : kind === 'approved'
         ? buildApprovedMessage({ phone: p, name: 'Cliente Teste', totalCents: 9700, items: [{ name: 'Produto de exemplo', url: `${env.PUBLIC_URL}`, kind: 'main' }] })
         : 'Teste de envio do checkout: a integração com o WhatsApp está funcionando. 🙂';
@@ -995,9 +995,9 @@ adminRouter.get('/whatsapp/preview', async (_req, res) => {
   const phone = '5500000000000';
   res.json({
     approved: buildApprovedMessage({ phone, name: 'Maria Silva', totalCents: 11690, items: [{ name: 'Método Completo', url: 'https://link-de-acesso', kind: 'main' }, { name: 'Pack de Planilhas', url: 'https://link-do-bump', kind: 'bump' }] }),
-    recovery1: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 1, pixCode: '00020126580014br.gov.bcb.pix…' }),
-    recovery2: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 2, pixCode: '00020126580014br.gov.bcb.pix…' }),
-    recovery3: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 3, pixCode: null }),
+    recovery1: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 1, pixCode: '00020126580014br.gov.bcb.pix…', product: 'Método Completo', totalCents: 9700 }),
+    recovery2: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 2, pixCode: '00020126580014br.gov.bcb.pix…', product: 'Método Completo', totalCents: 9700 }),
+    recovery3: buildRecoveryMessage({ phone, name: 'Maria Silva', link: `${env.PUBLIC_URL}/r/aZ3kQg8`, attempt: 3, pixCode: null, product: 'Método Completo', totalCents: 9700 }),
   });
 });
 

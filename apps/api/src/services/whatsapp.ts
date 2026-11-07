@@ -636,118 +636,72 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
   return `${partes.filter(Boolean).join('\n\n')}\n\n${optout}`;
 }
 
-export function buildRecoveryMessage(p: { phone: string; name: string; link: string; attempt: number; pixCode?: string | null }) {
+export function buildRecoveryMessage(p: { phone: string; name: string; link: string; attempt: number; pixCode?: string | null; product?: string | null; totalCents?: number | null }) {
   const n = firstName(p.name, 'tudo bem');
+  const prod = (p.product || 'seu produto').trim();
+  const P = `*${prod}*`;
+  const valor = p.totalCents ? `R$ ${brl(p.totalCents)}` : '';
   const t = p.attempt >= 3 ? 3 : p.attempt === 2 ? 2 : 1; // 3 = último lembrete
   const pick = (pool: string[], key: string) => pickFresh(pool, p.phone, `t${t}_${key}`);
-  const blocks =
-    t === 2
-      ? {
-          abertura: [
-            `Oi, ${n}! Tudo bem?`, `Olá, ${n}! 🙂`, `Oi, ${n}, tudo certo?`, `Olá, ${n}! Passando de novo rapidinho.`, `${n}, tudo bem por aí?`,
-            `Oi, ${n}! Lembrei de você.`, `Olá, ${n}! Só um toque.`, `Oi, ${n}! Voltei aqui rapidinho.`, `Olá, ${n}, como você está?`,
+
+  // mensagens curtas: saudação + 1 frase forte + link (+ Pix) + saída
+  const corpo =
+    t === 1
+      ? pick(
+          [
+            `${n}, seu ${P} ficou a um passo de ser seu. Falta só o Pix.`,
+            `Oi, ${n}! Vi que você gerou o Pix do ${P} e não finalizou. Ele continua reservado pra você.`,
+            `${n}, seu acesso ao ${P} já está separado. É só pagar o Pix que ele chega na hora.`,
+            `Oi, ${n}! O ${P} está te esperando. Leva menos de 1 minuto para concluir.`,
+            `${n}, deixei seu pedido do ${P} guardado${valor ? ` com o mesmo valor de ${valor}` : ''}. Bora finalizar?`,
+            `Oi, ${n}! Faltou só um toque: pague o Pix e receba o ${P} agora mesmo.`,
+            `${n}, seu ${P} está pronto pra ser liberado. Só falta confirmar o Pix.`,
+            `Oi, ${n}! Não perca o ${P}${valor ? ` por ${valor}` : ''}. Seu Pix ainda está ativo.`,
+            `${n}, tá quase! Seu ${P} só espera a confirmação do Pix.`,
+            `Oi, ${n}! Separei o ${P} pra você. Finaliza em segundos pelo Pix.`,
+            `${n}, seu pedido do ${P} está aberto. Paga agora e já recebe o acesso.`,
+            `Oi, ${n}! Seu Pix do ${P} ainda vale. Que tal concluir agora?`,
           ],
-          corpo: [
-            'Seu pedido continua guardado, com o mesmo valor, só esperando o Pix.',
-            'Ainda dá tempo: seu pedido segue reservado para você.',
-            'Vi que o pagamento ainda não caiu. Está tudo salvo do jeitinho que você deixou.',
-            'Seu acesso fica liberado assim que o Pix for confirmado. Leva menos de 1 minuto.',
-            'Se o Pix venceu, sem problema: no link você gera outro com um toque, sem preencher nada.',
-            'Muita gente esquece de finalizar no app do banco. Seu pedido ainda está aqui.',
-            'Só reforçando: seu pedido está separado e o valor continua o mesmo.',
-            'Passei para lembrar que falta só o Pix para você receber o acesso.',
-          ],
-          cta: ['Seu Pix está aqui:', 'É só abrir e pagar:', 'Toque para pagar:', 'Link do seu pedido:', 'Para concluir agora:', 'Pague por aqui em segundos:', 'Abra seu Pix:'],
-          fecho: [
-            'Qualquer dúvida, é só responder esta mensagem.', 'Se precisar de ajuda com o pagamento, me chame.', 'O acesso chega na hora, assim que o Pix cair.',
-            'Estou por aqui se precisar.', 'Teve algum problema no pagamento? Me conta que eu ajudo.', 'Sem pressa, fico à disposição.',
-          ],
-        }
-      : t === 1
-      ? {
-          abertura: [
-            `Olá, ${n}! Tudo bem?`, `Oi, ${n}! Tudo certo?`, `Olá, ${n}! 🙂`, `Oi, ${n}!`, `Olá, ${n}! Espero que esteja bem.`, `Oi, ${n}! Como vai?`,
-            `Olá, ${n}! Aqui é da equipe de atendimento.`, `Oi, ${n}! Passando rapidinho por aqui.`, `Olá, ${n}! Tudo tranquilo?`, `Oi, ${n}! Espero não incomodar.`,
-            `${n}, tudo bem por aí?`, `Olá, ${n}! Só um recadinho rápido.`, `Oi, ${n}! Vi seu pedido aqui.`, `Olá, ${n}, como você está?`, `Oi, ${n}! Tudo joia?`,
-          ],
-          corpo: [
-            'Seu Pix foi gerado, mas o pagamento ainda não caiu. Seu pedido ficou guardado.',
-            'Vi que você gerou o Pix e não chegou a pagar. Deixei tudo guardado para você.',
-            'Notei que seu pedido ficou em aberto. Ele continua disponível, sem pressa.',
-            'Seu pedido continua reservado, caso queira concluir.',
-            'Percebi que o pagamento não foi concluído. Seu pedido segue salvo, com o mesmo valor.',
-            'O Pix do seu pedido ainda está esperando o pagamento.',
-            'Seu pedido ficou pendente, mas segue disponível do jeitinho que você deixou.',
-            'Pode ter acontecido algum imprevisto na hora de pagar, então guardei seu pedido.',
-            'Às vezes o app do banco trava ou a gente se distrai, acontece! Seu pedido continua salvo.',
-            'Seu pedido está separado aqui, só falta o pagamento do Pix.',
-            'Ficou faltando só o Pix para liberar o seu acesso.',
-            'Seu acesso está a um Pix de distância. 😉',
-          ],
-          cta: [
-            'Para pagar, é só abrir o seu Pix:', 'Seu Pix está aqui, pronto para pagar:', 'O link do seu Pix é este:', 'Toque para abrir o seu Pix:',
-            'Você pode pagar por aqui, sem preencher nada de novo:', 'Deixo o seu Pix à disposição:', 'Se fizer sentido, é só pagar por aqui:', 'Seu pedido com o Pix está neste link:',
-            'Abra e pague em poucos segundos:', 'É só tocar e pagar:',
-          ],
-          fecho: [
-            'Qualquer dúvida, é só responder esta mensagem.', 'Se precisar de ajuda, estou por aqui.', 'Qualquer dúvida sobre o produto ou o pagamento, me chame.',
-            'Estou à disposição para o que precisar.', 'Se preferir não seguir, tudo bem também, é só me avisar.', 'Fico à disposição, sem compromisso.',
-            'Se tiver qualquer pergunta, pode responder por aqui.', 'Assim que o Pix cair, seu acesso chega na hora.', 'O acesso é liberado automaticamente após o pagamento.',
-            'Teve alguma dificuldade com o Pix? Me conta que eu ajudo.',
-          ],
-        }
-      : {
-          abertura: [
-            `Oi, ${n}! 🙂`, `Olá, ${n}! Tudo bem?`, `Oi, ${n}!`, `Olá, ${n}!`, `Oi, ${n}! Tudo certo por aí?`, `Olá, ${n}! Só passando rapidamente.`,
-            `Oi, ${n}! Espero que esteja tudo bem.`, `Olá, ${n}! Último contato sobre seu pedido.`, `${n}, tudo bem?`, `Oi, ${n}, desculpa a insistência!`, `Olá, ${n}! Prometo que é a última mensagem. 😊`,
-          ],
-          corpo: [
-            'Este é o segundo (e último) lembrete sobre o pedido que ficou em aberto.',
-            'Só um segundo lembrete: seu pedido ainda está salvo, caso queira finalizar.',
-            'Passando uma última vez para deixar seu pedido à disposição.',
-            'Para não deixar em aberto: seu pedido ainda pode ser concluído.',
-            'Este é o último aviso sobre o pedido pendente, depois disso não envio mais.',
-            'Antes de encerrar o assunto, deixo seu pedido disponível mais uma vez.',
-            'Seu pedido segue salvo, mas este é o último lembrete que envio.',
-            'Só finalizando o assunto: o pedido continua disponível para conclusão.',
-            'Seu pedido ainda está guardado com o mesmo valor. Se o Pix venceu, dá para gerar outro com um toque.',
-            'Não queria que você perdesse: seu pedido continua disponível.',
-          ],
-          cta: ['Link do seu Pix:', 'Se quiser concluir, o link continua ativo:', 'O link para pagar é este:', 'Caso ainda faça sentido, é por aqui:', 'Deixo o link disponível:', 'Você pode pagar por este link:', 'Seu Pix (ou um novo, se tiver vencido) está aqui:'],
-          fecho: [
-            'Se preferir não receber mais mensagens sobre esta compra, é só responder SAIR.',
-            'Se não for o momento, sem problema algum. Obrigado pela consideração.',
-            'Caso não queira mais receber mensagens sobre isso, responda SAIR que eu paro por aqui.',
-            'Se não tiver mais interesse, tudo certo. Obrigado pelo interesse.',
-            'Não quer mais receber mensagens? Basta responder SAIR.',
-            'Sem compromisso: se preferir, responda SAIR e não envio mais nada.',
-            'Qualquer dúvida, é só responder. Se não quiser mais mensagens, responda SAIR.',
-          ],
-        };
-  const pixTitulo = pick(
-    [
-      'Pix copia e cola (toque e segure para copiar):', 'Se preferir, aqui está o Pix copia e cola:', 'Código Pix para pagar direto no app do banco:',
-      'Pix disponível abaixo, é só copiar e colar:', 'Se for mais prático, use o Pix copia e cola:', 'Deixo também o código Pix, caso prefira:',
-      'Pix copia e cola, se preferir pagar pelo banco:', 'Código Pix abaixo, caso seja mais fácil pra você:', 'Ou copie o código abaixo e cole no app do banco:', 'Pix copia e cola 👇',
-    ],
-    'pix',
-  );
-  const abertura = pick(blocks.abertura, 'abertura');
-  const corpo = pick(blocks.corpo, 'corpo');
-  const cta = `${pick(blocks.cta, 'cta')}\n${p.link}`;
-  const fecho = pick(blocks.fecho, 'fecho');
-  const pix = p.pixCode ? `${pixTitulo}\n\n${p.pixCode}` : '';
-  const sairTxt = pick(['— Se não quiser receber mensagens sobre este pedido, responda SAIR.', '— Prefere não receber lembretes? Responda SAIR.', '— Para não receber mais avisos, é só responder SAIR.', '— Não quer mais lembretes deste pedido? Responda SAIR.'], 'sair');
-  const sair = /SAIR/.test(fecho) ? '' : sairTxt; // todo lembrete oferece a saída (exigência anti-spam)
-  const layout = pick(['a', 'b', 'c'], 'layout');
-  const partes =
-    layout === 'a'
-      ? [abertura, corpo, cta, pix, fecho]
-      : layout === 'b'
-        ? [`${abertura} ${corpo}`, cta, fecho, pix]
-        : [abertura, corpo, pix, cta, fecho];
-  return [...partes, sair].filter(Boolean).join('\n\n');
+          'corpo',
+        )
+      : t === 2
+        ? pick(
+            [
+              `${n}, quem pagou o ${P} já está usando. Só falta o seu Pix.`,
+              `Oi, ${n}! Seu ${P} ainda está reservado, mas não por muito tempo.`,
+              `${n}, passando pra lembrar: o ${P}${valor ? ` por ${valor}` : ''} continua disponível pra você.`,
+              `Oi, ${n}! Muita gente esquece de finalizar no app do banco. Seu ${P} ainda está aqui.`,
+              `${n}, o acesso ao ${P} é liberado na hora em que o Pix cai. Bora?`,
+              `Oi, ${n}! Seu pedido do ${P} segue guardado. Se o Pix venceu, gere outro em 1 toque.`,
+              `${n}, não deixe o ${P} pra depois: o pagamento leva segundos.`,
+              `Oi, ${n}! Seu ${P} continua te esperando, com acesso imediato após o Pix.`,
+              `${n}, falta pouco: conclua o Pix e o ${P} chega no seu e-mail na hora.`,
+            ],
+            'corpo',
+          )
+        : pick(
+            [
+              `${n}, último aviso: seu pedido do ${P} vai ser encerrado.`,
+              `Oi, ${n}! É a última vez que te aviso: o ${P} ainda pode ser seu hoje.`,
+              `${n}, depois desta mensagem seu pedido do ${P} sai da reserva.`,
+              `Oi, ${n}! Última chance de garantir o ${P}${valor ? ` por ${valor}` : ''}.`,
+              `${n}, vou liberar a reserva do ${P}. Se ainda quiser, é agora.`,
+            ],
+            'corpo',
+          );
+  const cta = pick(t === 3 ? ['👉 Garanta agora:', '👉 Finalize aqui:', '👉 Último link:'] : ['👉 Pague aqui:', '👉 Finalize agora:', '👉 Seu Pix:', '👉 Toque para pagar:', '👉 Concluir agora:'], 'cta');
+  const pixTitulo = pick(['Ou copie o Pix:', 'Pix copia e cola:', 'Se preferir, cole no app do banco:', 'Código Pix:'], 'pix');
+  const sair = pick(['Não quer mais lembretes? Responda SAIR.', 'Para não receber mais, responda SAIR.', 'Se não quiser mais mensagens, responda SAIR.'], 'sair');
+  const partes = [corpo, `${cta}\n${p.link}`, p.pixCode ? `${pixTitulo}\n${p.pixCode}` : '', sair];
+  const msg = partes.filter(Boolean).join('\n\n');
+  // nunca a mesma mensagem (fora nome/link/Pix) em sequência para clientes diferentes
+  const skel = hashText(`${t}|${corpo.replace(n, '').replace(P, '')}|${cta}|${pixTitulo}|${sair}`);
+  if (recentRecovery.includes(skel) && (p as any)._try !== 4) return buildRecoveryMessage({ ...p, _try: ((p as any)._try ?? 0) + 1 } as any);
+  recentRecovery.push(skel);
+  if (recentRecovery.length > 40) recentRecovery.shift();
+  return msg;
 }
+const recentRecovery: string[] = [];
 
 // ------------------------------------------------------------------ disparos
 async function logWa(orderId: string | null, event: string, r: SendResult) {
@@ -786,7 +740,7 @@ export async function sendWhatsAppRecoveries(max = 10) {
   const since = new Date(Date.now() - 48 * 3600_000).toISOString();
   const { data } = await supabase
     .from('orders')
-    .select('id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, tracking, customer:customers(name, phone), checkout:checkouts(slug)')
+    .select('id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, total_cents, tracking, customer:customers(name, phone), checkout:checkouts(slug), items:order_items(kind, name)')
     .in('status', ['pending', 'expired'])
     .gte('created_at', since)
     .order('created_at', { ascending: true })
@@ -819,7 +773,7 @@ export async function sendWhatsAppRecoveries(max = 10) {
     const pixValid = cfg.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
     // link direto para o Pix pendente (se vencer, a página gera outro com um toque, sem preencher nada)
     const link = `${env.PUBLIC_URL}/r/${shortOrderCode(o.number)}`; // link curto e exclusivo da venda
-    const r = await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: next, pixCode: pixValid ? o.pix_code : null }), cfg);
+    const r = await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: next, pixCode: pixValid ? o.pix_code : null, product: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? null, totalCents: o.total_cents }), cfg);
     await logWa(o.id, `recovery_${next}`, r);
     sent++;
     await sleep(3500); // pausa natural entre envios

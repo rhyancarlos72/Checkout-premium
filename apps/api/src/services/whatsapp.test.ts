@@ -101,6 +101,16 @@ describe('mensagens (porta do checkout antigo)', () => {
     const sem = wa.buildApprovedMessage({ phone: '5511900000010', name: 'Ana', totalCents: 100, items: [{ name: 'P', url: null, kind: 'main' }], accessUrl: 'https://loja.com/pedido/t' });
     expect(sem).toContain('https://loja.com/pedido/t');
   });
+  it('recuperação: nome do produto em todas as etapas e mensagens curtas', () => {
+    for (const attempt of [1, 2, 3]) {
+      const m = wa.buildRecoveryMessage({ phone: `55119000077${attempt}`, name: 'joão silva', link: 'https://l/r/abc', attempt, pixCode: attempt < 3 ? 'PIXCODE' : null, product: 'Pack Etiquetas', totalCents: 1999 });
+      expect(m).toContain('*Pack Etiquetas*');
+      expect(m).toContain('João');
+      expect(m).toContain('https://l/r/abc');
+      expect(m).toContain('SAIR');
+      expect(m.replace('PIXCODE', '').length).toBeLessThan(330);
+    }
+  });
   it('recuperação: link e Pix copia e cola na mesma mensagem', () => {
     const m = wa.buildRecoveryMessage({ phone: '5511900000002', name: 'João', link: 'https://link', attempt: 1, pixCode: '000201PIX' });
     expect(m).toContain('João');

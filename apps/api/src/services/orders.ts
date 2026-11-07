@@ -146,6 +146,13 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
   // gateway global (Integrações) vale para todos os produtos; senão, o do checkout
   const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
   const customer = await upsertCustomer(input.customer);
+
+  // Sem Pix duplicado: a mesma pessoa, no mesmo checkout, com a MESMA compra (itens e valor)
+  // e um Pix ainda válido recebe de volta esse Pix. Se a compra mudou (order bump, cupom),
+  // gera um novo e encerra os pendentes anteriores (sem lembretes duplicados).
+  const reuse = await findReusablePix(checkout.id, customer.id, q);
+  if (reuse) return reuse;
+
   // geo vem só do servidor (cabeçalhos da CDN), nunca do navegador
   const tracking = { ...sanitizeTracking(input.tracking), ...(meta.geo ?? {}) };
 
@@ -187,6 +194,15 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
       supabase.from('orders').update({ provider_charge_id: charge.chargeId, pix_code: charge.pixCode, pix_qr_image: qrImage, expires_at: expiresAt }).eq('id', order.id),
     ]);
 
+    // pedidos pendentes anteriores desta pessoa neste checkout foram substituídos por este
+    void supabase
+      .from('orders')
+      .update({ status: 'canceled', error: `Substituído pelo pedido ${productCode(order.number)}` })
+      .eq('checkout_id', checkout.id)
+      .eq('customer_id', customer.id)
+      .eq('status', 'pending')
+      .neq('id', order.id)
+      .then(() => {});
     void supabase.from('events').insert({ checkout_id: checkout.id, order_id: order.id, type: 'pix_generated', session_id: tracking.session_id ?? null, data: { total_cents: q.totalCents } }).then(() => {});
     // Rastreamento sem bloquear a resposta ao comprador
     void dispatchTracking(order.id, 'sale.pending');
@@ -526,4 +542,49 @@ export async function createUpsellOrder(parentToken: string): Promise<{ token: s
     logger.error({ orderId: order.id, err: e?.message }, 'Falha ao gerar Pix do upsell');
     throw e instanceof HttpError ? e : new HttpError(502, 'Não foi possível gerar o Pix agora. Tente novamente.');
   }
+}
+
+/** Pix pendente e ainda válido da mesma pessoa para a mesma compra (itens + valor), pronto para reaproveitar. */
+async function findReusablePix(checkoutId: string, customerId: string, q: Awaited<ReturnType<typeof quote>>) {
+  const since = new Date(Date.now() - 48 * 3600_000).toISOString();
+  const { data } = await supabase
+    .from('orders')
+    .select('id, number, public_token, status, total_cents, subtotal_cents, discount_cents, pix_code, pix_qr_image, expires_at, created_at, tracking, customer:customers(name, email, phone), items:order_items(kind, name, price_cents, product_id, bump_id)')
+    .eq('checkout_id', checkoutId)
+    .eq('customer_id', customerId)
+    .eq('status', 'pending')
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  const key = (items: { kind: string; product_id?: string | null; bump_id?: string | null }[]) =>
+    items.map((i) => `${i.kind}:${i.bump_id ?? i.product_id ?? ''}`).sort().join('|');
+  const wanted = key(q.lines);
+  const o: any = ((data ?? []) as any[]).find(
+    (x) => x.pix_code && x.total_cents === q.totalCents && x.expires_at && new Date(x.expires_at).getTime() > Date.now() + 60_000 && key(x.items ?? []) === wanted,
+  );
+  if (!o) return null;
+  const { checkout } = q;
+  return {
+    token: o.public_token as string,
+    reused: true,
+    order: {
+      number: o.number,
+      status: 'pending',
+      total_cents: o.total_cents,
+      subtotal_cents: o.subtotal_cents,
+      discount_cents: o.discount_cents,
+      pix_code: o.pix_code,
+      pix_qr_image: o.pix_qr_image,
+      expires_at: o.expires_at,
+      paid_at: null,
+      created_at: o.created_at,
+      items: (o.items ?? []).map((l: any) => ({ kind: l.kind, name: l.name, price_cents: l.price_cents })),
+      customer: o.customer ? { name: o.customer.name, email: o.customer.email, phone: o.customer.phone } : null,
+      checkout: { slug: checkout.slug, name: checkout.name, theme: checkout.theme, metaPixelId: checkout.tracking?.metaPixelId ?? null },
+      content_ids: [productCode(checkout.product.number)].filter(Boolean),
+      external_id: o.tracking?.external_id || o.tracking?.pt_xid || customerId,
+      purchase_event_id: o.tracking?.purchase_event_id ?? null,
+      delivery: [],
+    },
+  };
 }
