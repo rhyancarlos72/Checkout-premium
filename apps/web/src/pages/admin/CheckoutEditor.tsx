@@ -108,7 +108,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
     product_id: checkout?.product_id ?? products[0]?.id ?? '',
     provider: checkout?.provider ?? (globalGw || 'woovi'),
     price: centsToInput(checkout?.price_cents),
-    pix_expires_minutes: checkout?.pix_expires_minutes ?? 30,
+    pix_expires_minutes: checkout?.pix_expires_minutes ?? 120,
     active: checkout?.active ?? true,
     fields: { phone: checkout?.fields?.phone ?? true, document: false },
     metaPixelId: checkout?.tracking?.metaPixelId ?? '',
@@ -261,7 +261,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                       <Segmented value={f.provider} onChange={(v) => set({ provider: v })} options={[{ value: 'woovi', label: 'Woovi' }, { value: 'efi', label: 'Efí Bank' }]} />
                     </Field>
                   )}
-                  <Field label="Validade do PIX (minutos)"><Input type="number" min={5} max={1440} value={f.pix_expires_minutes} onChange={(e) => set({ pix_expires_minutes: Number(e.target.value) })} /></Field>
+                  <Field label="Validade do PIX (minutos)" hint="Padrão: 120 min (2 horas)"><Input type="number" min={5} max={1440} value={f.pix_expires_minutes} onChange={(e) => set({ pix_expires_minutes: Number(e.target.value) })} /></Field>
                 </Group>
                 <Group title="Campos do comprador" desc="Menos campos = mais conversão. Nome e e-mail são sempre pedidos; CPF não é pedido.">
                   <div className="flex flex-col gap-3">

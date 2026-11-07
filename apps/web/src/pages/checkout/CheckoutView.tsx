@@ -568,7 +568,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                   >
                     {/* faixa superior */}
                     <div className={cn('flex items-center justify-between gap-2 px-3.5 py-1.5 text-[11px] font-extrabold uppercase tracking-wider', on ? 'bg-brand text-brand-fg' : 'bg-[#fff4c2] text-[#7a5200]')}>
-                      <span className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 fill-current" /> Oferta única · só nesta página</span>
+                      <span className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 fill-current" /> Oferta relâmpago · some ao sair desta página</span>
                       {off > 0 && <span className={cn('rounded-full px-2 py-0.5', on ? 'bg-black/15' : 'bg-[#ffe27a] text-[#6b4700]')}>-{off}%</span>}
                     </div>
 
@@ -603,7 +603,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                         <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-[#c9a227] bg-[#fff]')}>
                           {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
                         </span>
-                        <span className="flex-1 leading-snug">{on ? 'Adicionado ao seu pedido!' : `Sim! Quero adicionar por ${brl(b.price_cents)}`}</span>
+                        <span className="flex-1 leading-snug">{on ? 'Adicionado! Você garantiu esta oferta' : `Sim! Quero levar junto por só ${brl(b.price_cents)}`}</span>
                       </div>
                     </button>
                   </div>

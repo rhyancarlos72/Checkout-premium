@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, CheckCircle2, Clock, Gift, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
+import { Check, CheckCircle2, Clock, Gift, Zap, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { cn } from '@/components/ui';
@@ -29,6 +29,7 @@ interface PublicOrder {
   checkout: { slug: string; name: string; theme: Theme; metaPixelId: string | null } | null;
   purchase_event_id: string | null;
   delivery: { name: string; url: string | null; note: string | null }[];
+  store?: { name: string | null; document: string | null; supportEmail: string | null } | null;
 }
 
 function useNow() {
@@ -110,9 +111,9 @@ function UpsellPopup({ offer, busy, error, onAccept, onDecline }: { offer: Upsel
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/60 p-0 backdrop-blur-sm sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="Oferta especial">
       <div className="animate-pop w-full max-w-md overflow-hidden rounded-t-[28px] bg-ck-surface text-ck-text shadow-2xl sm:rounded-[28px]">
         <div className="relative bg-gradient-to-br from-brand to-brand/70 px-6 pb-14 pt-6 text-center text-brand-fg">
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-[11px] font-extrabold uppercase tracking-widest"><Gift className="h-3.5 w-3.5" /> Só agora, nesta tela</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1 text-[11px] font-extrabold uppercase tracking-widest"><Gift className="h-3.5 w-3.5" /> Liberado só para quem acabou de comprar</span>
           <h2 className="mt-3 font-display text-[22px] font-extrabold leading-tight">{offer.headline}</h2>
-          <p className="mt-1 text-sm opacity-90">Seu pagamento foi aprovado. Antes de acessar, veja isto:</p>
+          <p className="mt-1 text-sm opacity-90">Seu pagamento foi aprovado. Esta condição aparece uma única vez e some quando você fechar esta tela.</p>
         </div>
         <div className="-mt-10 px-5">
           <div className="relative rounded-2xl border border-ck-border bg-ck-surface p-4 shadow-xl">
@@ -135,12 +136,12 @@ function UpsellPopup({ offer, busy, error, onAccept, onDecline }: { offer: Upsel
         <div className="space-y-2 p-5 pt-4">
           <button type="button" disabled={busy} onClick={onAccept} className="ck-cta flex h-14 w-full items-center justify-center gap-2 text-[16px] font-extrabold disabled:opacity-70">
             {busy ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Check className="h-5 w-5" strokeWidth={3} />}
-            {busy ? 'Gerando seu Pix…' : offer.pending_token ? 'Continuar para o Pix do adicional' : offer.cta_text || `Sim, quero por ${brl(offer.price_cents)}`}
+            {busy ? 'Gerando seu Pix…' : offer.pending_token ? 'Continuar para o Pix do adicional' : offer.cta_text || `Sim, quero aproveitar por ${brl(offer.price_cents)}`}
           </button>
-          <p className="text-center text-xs text-ck-muted">Pagamento único pelo Pix, sem preencher nada de novo.</p>
+          <p className="text-center text-xs text-ck-muted">Um toque gera o Pix: sem formulário, sem cadastro, pagamento único.</p>
           {error && <p className="text-center text-sm text-red-500">{error}</p>}
           <button type="button" onClick={onDecline} disabled={busy} className="w-full py-2.5 text-sm font-medium text-ck-muted underline-offset-2 hover:underline">
-            Não, obrigado. Quero ir para o meu acesso
+            Não, obrigado. Prefiro perder esta oferta e ir para o meu acesso
           </button>
         </div>
       </div>
@@ -362,8 +363,12 @@ export default function PaymentPage() {
       </Shell>
     );
 
-  const mm = left !== null ? String(Math.floor(left / 60)).padStart(2, '0') : '--';
+  const hh = left !== null ? Math.floor(left / 3600) : 0;
+  const mm = left !== null ? String(Math.floor((left % 3600) / 60)).padStart(2, '0') : '--';
   const ss = left !== null ? String(left % 60).padStart(2, '0') : '--';
+  const clock = hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+  const guarantee = (theme as any)?.guaranteeDays ?? 7;
+  const storeName = order.store?.name;
   const pctLeft = left !== null ? Math.min(100, (left / totalWindow) * 100) : 100;
 
   return (
@@ -377,11 +382,16 @@ export default function PaymentPage() {
           </span>
           <p className="mt-3 text-sm text-ck-muted">Valor a pagar</p>
           <p className="text-[34px] font-bold leading-tight tracking-tight tabular-nums">{brl(order.total_cents)}</p>
+          {storeName && (
+            <p className="mt-1 text-xs text-ck-muted">
+              Pagamento para <b className="text-ck-text">{storeName}</b>{order.store?.document ? ` · ${order.store.document}` : ''}
+            </p>
+          )}
           {left !== null && (
             <div className="mx-auto mt-4 max-w-xs">
               <div className="flex items-center justify-between text-xs text-ck-muted">
                 <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> Expira em</span>
-                <span className={cn('font-mono text-sm font-bold tabular-nums', left < 120 ? 'text-red-500' : 'text-ck-text')}>{mm}:{ss}</span>
+                <span className={cn('font-mono text-sm font-bold tabular-nums', left < 120 ? 'text-red-500' : 'text-ck-text')}>{clock}</span>
               </div>
               <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-ck-surface-2">
                 <div className={cn('h-full rounded-full transition-[width] duration-1000 ease-linear', left < 120 ? 'bg-red-500' : 'bg-brand')} style={{ width: `${pctLeft}%` }} />
@@ -428,11 +438,53 @@ export default function PaymentPage() {
         </div>
 
         <div className="flex flex-col items-center gap-3 border-t border-ck-border bg-ck-surface-2 px-5 py-4 sm:flex-row sm:justify-between sm:px-7">
-          <p className="flex items-center gap-2 text-xs text-ck-muted"><ShieldCheck className="h-4 w-4 text-emerald-500" /> A confirmação aparece aqui automaticamente.</p>
+          <p className="flex items-center gap-2 text-xs text-ck-muted">
+            <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" /></span>
+            Verificando o pagamento automaticamente. Pode deixar esta página aberta.
+          </p>
           <button onClick={() => refresh.mutate()} disabled={refresh.isPending} className="flex items-center gap-2 rounded-full border border-ck-border bg-ck-surface px-4 py-2 text-sm font-semibold transition hover:border-brand hover:text-brand disabled:opacity-60">
             <RefreshCw className={cn('h-4 w-4', refresh.isPending && 'animate-spin')} /> Já paguei
           </button>
         </div>
+      </section>
+
+      {/* Segurança + dúvidas: para pagar sem medo */}
+      <section className="ck-card grid grid-cols-1 gap-3 p-5 text-sm sm:grid-cols-3 sm:p-6">
+        {[
+          [ShieldCheck, 'Pix oficial do Banco Central', 'O pagamento cai direto pelo app do seu banco, com a segurança do Pix.'],
+          [Lock, 'Seus dados protegidos', 'Conexão criptografada. Não pedimos senha nem dados do seu cartão.'],
+          [Zap, 'Liberação automática', 'Assim que o Pix é confirmado, o acesso chega no seu e-mail em instantes.'],
+        ].map(([Icon, t, d]: any) => (
+          <div key={t} className="flex gap-3">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500/10 text-emerald-600"><Icon className="h-4 w-4" /></span>
+            <div>
+              <p className="font-semibold">{t}</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-ck-muted">{d}</p>
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <section className="ck-card divide-y divide-ck-border text-sm">
+        <p className="px-5 py-4 font-semibold sm:px-6">Dúvidas frequentes</p>
+        {[
+          ['É seguro pagar por Pix?', `Sim. O Pix é o sistema de pagamentos do Banco Central e o valor sai direto do app do seu banco. Antes de confirmar, o app mostra o nome de quem recebe${storeName ? ` (${storeName} ou a instituição de pagamento dela)` : ''} e o valor de ${brl(order.total_cents)}.`],
+          ['Quanto tempo leva para liberar?', 'Normalmente segundos. Esta página atualiza sozinha e você também recebe o acesso no e-mail (confira o spam e a aba Promoções).'],
+          ['Paguei e ainda não liberou. E agora?', 'Toque em “Já paguei” acima para conferir na hora. Se ainda assim não aparecer em alguns minutos, fale com a gente com o comprovante, que resolvemos.'],
+          ['Posso pagar pelo computador?', 'Sim: abra o app do banco no celular e escaneie o QR Code desta página.'],
+          ['E se eu não gostar?', guarantee > 0 ? `Você tem ${guarantee} dias de garantia: se não gostar, devolvemos 100% do valor.` : 'Fale com a gente pelo e-mail de suporte.'],
+        ].map(([q, a]) => (
+          <details key={q} className="group px-5 py-3 sm:px-6">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 font-medium">
+              {q}
+              <span className="text-lg leading-none text-ck-muted transition group-open:rotate-45">+</span>
+            </summary>
+            <p className="mt-2 text-[13px] leading-relaxed text-ck-muted">{a}</p>
+          </details>
+        ))}
+        {order.store?.supportEmail && (
+          <p className="flex flex-wrap items-center gap-1.5 px-5 py-3 text-xs text-ck-muted sm:px-6"><Mail className="h-3.5 w-3.5" /> Suporte: <a href={`mailto:${order.store.supportEmail}`} className="font-medium text-brand hover:underline">{order.store.supportEmail}</a></p>
+        )}
       </section>
       {summary}
     </Shell>

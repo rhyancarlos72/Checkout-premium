@@ -130,3 +130,8 @@ create unique index if not exists access_requests_pending_email_uq on public.acc
 alter table public.access_requests enable row level security;
 drop policy if exists owner_all on public.access_requests;
 create policy owner_all on public.access_requests for all to authenticated using (public.is_owner()) with check (public.is_owner());
+
+-- ===== 20261109000000_pix_2h.sql =====
+-- Pix com validade de 2 horas: novos checkouts já nascem com 120 min e os atuais passam para 120 min.
+alter table public.checkouts alter column pix_expires_minutes set default 120;
+update public.checkouts set pix_expires_minutes = 120 where pix_expires_minutes < 120;

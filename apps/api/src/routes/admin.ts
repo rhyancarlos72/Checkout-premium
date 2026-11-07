@@ -167,7 +167,7 @@ async function createDefaultCheckout(product: { id: string; name: string; number
         product_id: product.id,
         provider,
         price_cents: template.price_cents ?? null,
-        pix_expires_minutes: template.pix_expires_minutes ?? 30,
+        pix_expires_minutes: template.pix_expires_minutes ?? 120,
         fields: template.fields ?? { phone: true, document: false },
         theme: template.theme ?? {},
         tracking: template.tracking ?? {},
@@ -385,7 +385,7 @@ const checkoutSchema = z.object({
   theme: themeSchema.default({} as any),
   fields: z.object({ phone: z.boolean().default(true), document: z.boolean().default(false) }).default({ phone: true, document: false }),
   tracking: z.object({ metaPixelId: z.string().regex(/^\d{5,20}$/).or(z.literal('')).optional() }).default({}),
-  pix_expires_minutes: z.number().int().min(5).max(1440).default(30),
+  pix_expires_minutes: z.number().int().min(5).max(1440).default(120),
   active: z.boolean().default(true),
   bump_ids: z.array(uuid).max(10).default([]),
 });

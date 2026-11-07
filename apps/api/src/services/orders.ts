@@ -444,7 +444,7 @@ export async function upsellOfferFor(order: { id: string; status: string; tracki
   if ((prev as any)?.status === 'paid') return null;
   return {
     id: up.id,
-    headline: up.headline || 'Espere! Uma oferta exclusiva para você',
+    headline: up.headline || 'Espere! Seu pedido pode ficar ainda melhor',
     title: up.title || up.offer?.name || 'Oferta especial',
     description: up.description ?? up.offer?.description ?? null,
     image_url: up.image_url || up.offer?.image_url || null,

@@ -123,6 +123,8 @@ async function publicOrder(token: string) {
     checkout: o.checkout ? { slug: o.checkout.slug, name: o.checkout.name, theme: o.checkout.theme, metaPixelId: o.checkout.tracking?.metaPixelId ?? null } : null,
     purchase_event_id: o.tracking?.purchase_event_id ?? null,
     delivery: o.status === 'paid' ? await deliveryItems(o.id) : [],
+    // quem recebe o pagamento (dá segurança a quem vai pagar)
+    store: await getSettings().then((st) => ({ name: st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null, document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),
     upsell: o.status === 'paid' ? await upsellOfferFor(o).catch(() => null) : null,
     is_upsell: Boolean(o.tracking?.upsell_of),
     _id: o.id,
