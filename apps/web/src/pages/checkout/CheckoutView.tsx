@@ -7,7 +7,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
-import { brl, contrastText, digits, maskPhone, productCode } from '@/lib/format';
+import { brl, contrastText, digits, maskPhone, nationalPhone, productCode } from '@/lib/format';
 import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track, visitorExternalId } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
 
@@ -283,7 +283,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     mutationFn: (v: FormValues) =>
       publicApi.post<{ token: string; order?: unknown }>('/orders', {
         checkout_slug: checkout.slug,
-        customer: { name: v.name, email: v.email, phone: v.phone ? digits(v.phone) : null, document: null },
+        customer: { name: v.name, email: v.email, phone: v.phone ? nationalPhone(v.phone) : null, document: null },
         bump_ids: bumps,
         coupon_code: coupon?.code ?? null,
         tracking: { ...collectTracking(), initiate_checkout_event_id: eventIds.ic, add_payment_info_event_id: eventIds.api, purchase_event_id: eventIds.purchase },

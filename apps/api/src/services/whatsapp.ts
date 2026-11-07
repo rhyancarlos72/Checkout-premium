@@ -87,8 +87,9 @@ export function sanitizeText(input: string) {
 export function normalizePhoneBR(raw: string | null | undefined) {
   let tel = String(raw ?? '').replace(/\D/g, '');
   if (!tel) return '';
+  tel = tel.replace(/^0+/, ''); // 0055…, 011…
+  while (tel.length > 13 && tel.startsWith('55')) tel = tel.slice(2); // 55 repetido
   while (tel.length > 12 && tel.startsWith('5555')) tel = tel.slice(2);
-  tel = tel.replace(/^0+/, '');
   if ((tel.length === 12 || tel.length === 13) && tel.startsWith('55') && Number(tel.slice(2, 4)) >= 11) return tel;
   if ((tel.length === 10 || tel.length === 11) && Number(tel.slice(0, 2)) >= 11) return `55${tel}`;
   return '';

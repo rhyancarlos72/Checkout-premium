@@ -8,8 +8,19 @@ export const productCode = (n?: number | null) => (n ? String(((n * 7919 + 4523)
 export const brl = (cents: number) => (cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 export const digits = (v: string) => v.replace(/\D/g, '');
 
+/**
+ * Telefone BR só com DDD + número (até 11 dígitos). Aceita digitado/colado com o código do país:
+ * "+55 (11) 98888-7777", "55 11 98888-7777" ou "0055…" viram "(11) 98888-7777".
+ * (Antes o 55 entrava como DDD e o número ficava errado no WhatsApp.)
+ */
+export function nationalPhone(v: string) {
+  let d = digits(v).replace(/^00/, '');
+  if (d.length >= 12 && d.startsWith('55')) d = d.slice(2);
+  return d.replace(/^0+/, '').slice(0, 11);
+}
+
 export function maskPhone(v: string) {
-  const d = digits(v).slice(0, 11);
+  const d = nationalPhone(v);
   if (d.length <= 2) return d.length ? `(${d}` : '';
   if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
