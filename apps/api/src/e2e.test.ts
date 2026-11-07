@@ -270,6 +270,8 @@ describe('recuperação pelo WhatsApp', () => {
     expect(go.status).toBe(302);
     expect(go.headers.get('location')).toBe(`/pedido/${r.body.token}?utm_source=whatsapp&utm_medium=recovery`);
     expect(text).toContain(o.pix_code);
+    expect(text).toContain('*Pack Etiquetas*'); // nome do produto no lembrete
+    expect(text).toMatch(/Carla/);
     await sendWhatsAppRecoveries();
     const mine = () => waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'));
     expect(mine()).toHaveLength(1); // ainda não deu o tempo do 2º
