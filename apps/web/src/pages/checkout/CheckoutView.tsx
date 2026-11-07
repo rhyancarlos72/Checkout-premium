@@ -562,6 +562,15 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           {/* Order bumps */}
           {checkout.bumps.length > 0 && (
             <div className="space-y-4">
+              {/* faixa que apresenta os adicionais */}
+              <div className="flex items-center gap-3 pt-1">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand"><Gift className="h-5 w-5" /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-display text-[16px] font-extrabold leading-tight tracking-tight @lg:text-[18px]">Aproveite e leve junto com desconto</p>
+                  <p className="text-[12.5px] leading-snug text-ck-muted">{checkout.bumps.length > 1 ? 'Ofertas adicionais' : 'Oferta adicional'} exclusiva{checkout.bumps.length > 1 ? 's' : ''} para este pedido. Marque {checkout.bumps.length > 1 ? 'as que quiser' : 'se quiser'}: vai tudo no mesmo Pix.</p>
+                </div>
+                <span className="hidden shrink-0 rounded-full bg-red-500 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-white @md:inline-block">Só agora</span>
+              </div>
               {checkout.bumps.map((b) => {
                 const on = bumps.includes(b.id);
                 const off = b.compare_at_cents && b.compare_at_cents > b.price_cents ? Math.round((1 - b.price_cents / b.compare_at_cents) * 100) : 0;
