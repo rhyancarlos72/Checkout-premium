@@ -16,7 +16,7 @@ import { PageHeader } from './AdminApp';
 interface Settings {
   recovery: { enabled: boolean; delayMinutes: number };
   goal: { monthlyCents: number };
-  store: { name: string; supportEmail: string; document: string };
+  store: { name: string; supportEmail: string; document: string; pixReceiver?: string };
   brand: Brand;
 }
 
@@ -253,6 +253,7 @@ function StoreTab({ toast }: { toast: ReturnType<typeof useToast> }) {
     <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
       <Panel title="Dados da loja" desc="Usados nos e-mails e no rodapé do checkout (quando preenchidos)." icon={<Store className="h-5 w-5" />} footer={<Button loading={save.isPending} onClick={submit}>Salvar</Button>}>
         <Field label="Nome da loja (e-mails)"><Input value={s.store.name} onChange={(e) => setS({ ...s, store: { ...s.store, name: e.target.value } })} /></Field>
+        <Field label="Recebedor do Pix" hint="Aparece na página de pagamento (“Pagamento para …”). Use o mesmo nome que o app do banco mostra ao pagar."><Input value={s.store.pixReceiver ?? 'Prime Tecnologia'} onChange={(e) => setS({ ...s, store: { ...s.store, pixReceiver: e.target.value } })} placeholder="Prime Tecnologia" /></Field>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field label="E-mail de suporte"><Input type="email" value={s.store.supportEmail} onChange={(e) => setS({ ...s, store: { ...s.store, supportEmail: e.target.value } })} /></Field>
           <Field label="CNPJ/CPF"><Input value={s.store.document} onChange={(e) => setS({ ...s, store: { ...s.store, document: e.target.value } })} /></Field>

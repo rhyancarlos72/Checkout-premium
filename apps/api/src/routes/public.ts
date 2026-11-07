@@ -124,7 +124,7 @@ async function publicOrder(token: string) {
     purchase_event_id: o.tracking?.purchase_event_id ?? null,
     delivery: o.status === 'paid' ? await deliveryItems(o.id) : [],
     // quem recebe o pagamento (dá segurança a quem vai pagar)
-    store: await getSettings().then((st) => ({ name: st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null, document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),
+    store: await getSettings().then((st) => ({ name: st.store.pixReceiver || (st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null), document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),
     upsell: o.status === 'paid' ? await upsellOfferFor(o).catch(() => null) : null,
     is_upsell: Boolean(o.tracking?.upsell_of),
     _id: o.id,

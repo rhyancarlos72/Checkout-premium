@@ -471,7 +471,7 @@ export default function PaymentPage() {
       <section className="ck-card divide-y divide-ck-border text-sm">
         <p className="px-5 py-4 font-semibold sm:px-6">Dúvidas frequentes</p>
         {[
-          ['É seguro pagar por Pix?', `Sim. O Pix é o sistema de pagamentos do Banco Central e o valor sai direto do app do seu banco. Antes de confirmar, o app mostra o nome de quem recebe${storeName ? ` (${storeName} ou a instituição de pagamento dela)` : ''} e o valor de ${brl(order.total_cents)}.`],
+          ['É seguro pagar por Pix?', `Sim. O Pix é o sistema de pagamentos do Banco Central e o valor sai direto do app do seu banco. Antes de confirmar, o app mostra o nome de quem recebe${storeName ? ` (${storeName})` : ''} e o valor de ${brl(order.total_cents)}.`],
           ['Quanto tempo leva para liberar?', 'Normalmente segundos. Esta página atualiza sozinha e você também recebe o acesso no e-mail (confira o spam e a aba Promoções).'],
           ['Paguei e ainda não liberou. E agora?', 'Toque em “Já paguei” acima para conferir na hora. Se ainda assim não aparecer em alguns minutos, fale com a gente com o comprovante, que resolvemos.'],
           ['Posso pagar pelo computador?', 'Sim: abra o app do banco no celular e escaneie o QR Code desta página.'],

@@ -16,8 +16,10 @@ export const settingsSchema = z.object({
       name: z.string().max(80).default('Minha Loja'),
       supportEmail: z.string().email().or(z.literal('')).default(''),
       document: z.string().max(30).default(''),
+      /** quem recebe o Pix (nome da conta no gateway, o mesmo que aparece no app do banco) */
+      pixReceiver: z.string().trim().max(80).default('Prime Tecnologia'),
     })
-    .default({ name: 'Minha Loja', supportEmail: '', document: '' }),
+    .default({ name: 'Minha Loja', supportEmail: '', document: '', pixReceiver: 'Prime Tecnologia' }),
   // identidade visual do sistema (painel, login, ícone da aba)
   brand: z
     .object({
