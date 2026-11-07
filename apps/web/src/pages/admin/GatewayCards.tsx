@@ -8,6 +8,7 @@ import { PixIcon } from '../checkout/CheckoutView';
 
 interface Gateways {
   defaultProvider: 'woovi' | 'efi' | null;
+  pixExpiresMinutes?: number;
   woovi: { configured: boolean; source: 'painel' | 'env' | null; appId_hint: string; hasWebhookSecret: boolean; webhookUrl: string };
   efi: {
     configured: boolean;
@@ -81,7 +82,7 @@ function GatewayCard({ logo, title, desc, status, detail, onConfigure, onTest, t
 }
 
 /** Um gateway para todos os produtos de uma vez (sem precisar escolher em cada checkout). */
-function DefaultGatewayCard({ current, configured, toast, onSaved }: { current: 'woovi' | 'efi' | null; configured: { efi: boolean; woovi: boolean }; toast: Toast; onSaved: () => void }) {
+function DefaultGatewayCard({ current, pixMinutes, configured, toast, onSaved }: { current: 'woovi' | 'efi' | null; pixMinutes: number; configured: { efi: boolean; woovi: boolean }; toast: Toast; onSaved: () => void }) {
   const qc = useQueryClient();
   const save = useMutation({
     mutationFn: (provider: 'woovi' | 'efi' | null) => adminApi.put<{ ok: boolean; message: string }>('/gateways/default', { provider }),
@@ -93,6 +94,19 @@ function DefaultGatewayCard({ current, configured, toast, onSaved }: { current: 
     },
     onError: (err) => toast.err(err instanceof ApiError ? err.message : 'Erro ao salvar'),
   });
+  const expiry = useMutation({
+    mutationFn: (minutes: number) => adminApi.put<{ ok: boolean; message: string }>('/gateways/pix-expiration', { minutes }),
+    onSuccess: (r) => (toast.ok(r.message), onSaved()),
+    onError: (err) => toast.err(err instanceof ApiError ? err.message : 'Erro ao salvar'),
+  });
+  const expiryOptions = [
+    [30, '30 minutos'],
+    [60, '1 hora'],
+    [120, '2 horas (recomendado)'],
+    [360, '6 horas'],
+    [720, '12 horas'],
+    [1440, '24 horas'],
+  ] as const;
   const options: { value: 'woovi' | 'efi' | null; label: ReactNode; hint: string; disabled?: boolean }[] = [
     { value: 'efi', label: <EfiLogo />, hint: configured.efi ? 'Todos os produtos recebem pela Efí' : 'Configure a Efí abaixo para usar', disabled: !configured.efi },
     { value: 'woovi', label: <WooviLogo />, hint: configured.woovi ? 'Todos os produtos recebem pela Woovi' : 'Configure a Woovi abaixo para usar', disabled: !configured.woovi },
@@ -129,6 +143,24 @@ function DefaultGatewayCard({ current, configured, toast, onSaved }: { current: 
           );
         })}
       </div>
+      <div className="mt-5 flex flex-col gap-3 rounded-xl border border-zinc-200 bg-zinc-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-semibold text-zinc-800">Validade do Pix</p>
+          <p className="text-xs text-zinc-500">Por quanto tempo o Pix e o QR Code continuam pagáveis (pedido pendente). Na página de pagamento o cliente vê um cronômetro de 15 min que reinicia sozinho.</p>
+        </div>
+        <select
+          value={pixMinutes}
+          disabled={expiry.isPending}
+          onChange={(ev) => expiry.mutate(Number(ev.target.value))}
+          className="h-11 shrink-0 rounded-xl border border-zinc-300 bg-white px-3 text-sm font-medium text-zinc-800"
+          aria-label="Validade do Pix"
+        >
+          {!expiryOptions.some(([v]) => v === pixMinutes) && <option value={pixMinutes}>{pixMinutes} minutos</option>}
+          {expiryOptions.map(([v, l]) => (
+            <option key={v} value={v}>{l}</option>
+          ))}
+        </select>
+      </div>
     </section>
   );
 }
@@ -149,7 +181,7 @@ export function GatewayCards({ toast }: { toast: Toast }) {
   const w = data.woovi;
   return (
     <>
-      <DefaultGatewayCard current={data.defaultProvider} configured={{ efi: e.configured, woovi: w.configured }} toast={toast} onSaved={refresh} />
+      <DefaultGatewayCard current={data.defaultProvider} pixMinutes={data.pixExpiresMinutes ?? 120} configured={{ efi: e.configured, woovi: w.configured }} toast={toast} onSaved={refresh} />
       <GatewayCard
         logo={<EfiLogo />}
         title={`Efí Bank${e.sandbox ? ' · homologação' : ''}`}

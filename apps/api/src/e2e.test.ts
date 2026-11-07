@@ -139,6 +139,10 @@ describe('venda completa', () => {
     expect(o.tracking.geo_city).toBeUndefined(); // geo só vem do servidor
     expect(db.order_items.filter((i) => i.order_id === o.id)).toHaveLength(2);
     expect(charges.get(o.id)?.value).toBe(2690);
+    // validade real do Pix: 2 horas (padrão de Integrações), não os 15 min do cronômetro da página
+    const ttl = (new Date(o.expires_at).getTime() - Date.now()) / 60000;
+    expect(ttl).toBeGreaterThan(118);
+    expect(ttl).toBeLessThanOrEqual(120);
   });
 
   it('envia sale.pending à PayTracking com o ID de 7 dígitos e telefone com 55', async () => {

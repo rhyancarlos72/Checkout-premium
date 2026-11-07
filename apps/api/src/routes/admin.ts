@@ -764,6 +764,7 @@ adminRouter.get('/gateways', async (_req, res) => {
   const g = (await import('../services/gateways.js'));
   res.json({
     defaultProvider: g.globalProvider(),
+    pixExpiresMinutes: g.pixExpiresMinutes(),
     woovi: {
       configured: Boolean(w.appId),
       source: w.source,
@@ -785,6 +786,14 @@ adminRouter.get('/gateways', async (_req, res) => {
 });
 
 /** Gateway global: um só gateway para todos os produtos (também grava em todos os checkouts). */
+/** Validade real do Pix para todos os produtos (o cronômetro de 15 min da página é só visual). */
+adminRouter.put('/gateways/pix-expiration', async (req, res) => {
+  const { minutes } = z.object({ minutes: z.number().int().min(15, 'Mínimo de 15 minutos').max(1440, 'Máximo de 24 horas') }).parse(req.body);
+  await patchGateways((g) => ({ ...g, pixExpiresMinutes: minutes }));
+  const h = minutes / 60;
+  res.json({ ok: true, message: `Pix válido por ${Number.isInteger(h) ? `${h} hora${h > 1 ? 's' : ''}` : `${minutes} minutos`} em todos os produtos (vale para os próximos Pix gerados)` });
+});
+
 adminRouter.put('/gateways/default', async (req, res) => {
   const b = z.object({ provider: z.enum(['woovi', 'efi']).nullable() }).parse(req.body);
   if (b.provider && !(b.provider === 'woovi' ? woovi : efi).isConfigured())

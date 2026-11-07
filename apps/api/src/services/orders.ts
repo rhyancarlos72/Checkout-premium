@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { HttpError, logger, must, onlyDigits, productCode, supabase } from '../lib/core.js';
 import { getProvider, type ProviderName } from '../providers/index.js';
-import { globalProvider } from './gateways.js';
+import { globalProvider, pixExpiresMinutes } from './gateways.js';
 import { pixQrDataUrl } from '../lib/qr.js';
 import { emitInvoice } from './invoices.js';
 import { sendDeliveryEmail, type DeliveryItem } from './email.js';
@@ -176,7 +176,7 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
       orderId: order.id,
       amountCents: q.totalCents,
       description: `Pedido #${order.number} - ${checkout.product.name}`,
-      expiresInSeconds: checkout.pix_expires_minutes * 60,
+      expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
       customer: { name: input.customer.name, email: input.customer.email, phone: input.customer.phone, document: doc || null },
     });
     // QR Code gerado aqui mesmo a partir do copia e cola: sai na hora, sem baixar imagem do gateway
@@ -403,7 +403,7 @@ export async function renewOrder(token: string): Promise<{ token: string; renewe
       orderId: order.id,
       amountCents: old.total_cents,
       description: `Pedido #${order.number} - ${checkout.product?.name ?? checkout.name}`,
-      expiresInSeconds: checkout.pix_expires_minutes * 60,
+      expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
       customer: { name: old.customer?.name ?? '', email: old.customer?.email ?? '', phone: old.customer?.phone ?? null, document: old.customer?.document ?? null },
     });
     const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
@@ -504,7 +504,7 @@ export async function createUpsellOrder(parentToken: string): Promise<{ token: s
       orderId: order.id,
       amountCents: offer.price_cents,
       description: `Pedido #${order.number} - ${offer.title}`,
-      expiresInSeconds: checkout.pix_expires_minutes * 60,
+      expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
       customer: { name: parent.customer?.name ?? '', email: parent.customer?.email ?? '', phone: parent.customer?.phone ?? null, document: parent.customer?.document ?? null },
     });
     const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;

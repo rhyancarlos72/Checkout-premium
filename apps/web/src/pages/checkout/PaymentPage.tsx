@@ -363,13 +363,16 @@ export default function PaymentPage() {
       </Shell>
     );
 
-  const hh = left !== null ? Math.floor(left / 3600) : 0;
-  const mm = left !== null ? String(Math.floor((left % 3600) / 60)).padStart(2, '0') : '--';
-  const ss = left !== null ? String(left % 60).padStart(2, '0') : '--';
-  const clock = hh > 0 ? `${hh}:${mm}:${ss}` : `${mm}:${ss}`;
+  // Cronômetro visual de 15 min que reinicia sozinho; o Pix continua válido até a validade real (padrão 2 h)
+  const CYCLE = 15 * 60;
+  const elapsed = Math.max(0, Math.floor((now - createdAt) / 1000));
+  const shown = left !== null ? Math.min(left, CYCLE - (elapsed % CYCLE)) : CYCLE;
+  const mm = String(Math.floor(shown / 60)).padStart(2, '0');
+  const ss = String(shown % 60).padStart(2, '0');
+  const clock = `${mm}:${ss}`;
   const guarantee = (theme as any)?.guaranteeDays ?? 7;
   const storeName = order.store?.name;
-  const pctLeft = left !== null ? Math.min(100, (left / totalWindow) * 100) : 100;
+  const pctLeft = Math.min(100, (shown / CYCLE) * 100);
 
   return (
     <Shell theme={theme}>
@@ -390,11 +393,11 @@ export default function PaymentPage() {
           {left !== null && (
             <div className="mx-auto mt-4 max-w-xs">
               <div className="flex items-center justify-between text-xs text-ck-muted">
-                <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> Expira em</span>
-                <span className={cn('font-mono text-sm font-bold tabular-nums', left < 120 ? 'text-red-500' : 'text-ck-text')}>{clock}</span>
+                <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> Pague em</span>
+                <span className={cn('font-mono text-sm font-bold tabular-nums', shown < 120 ? 'text-red-500' : 'text-ck-text')}>{clock}</span>
               </div>
               <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-ck-surface-2">
-                <div className={cn('h-full rounded-full transition-[width] duration-1000 ease-linear', left < 120 ? 'bg-red-500' : 'bg-brand')} style={{ width: `${pctLeft}%` }} />
+                <div className={cn('h-full rounded-full transition-[width] duration-1000 ease-linear', shown < 120 ? 'bg-red-500' : 'bg-brand')} style={{ width: `${pctLeft}%` }} />
               </div>
             </div>
           )}

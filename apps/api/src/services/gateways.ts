@@ -13,6 +13,8 @@ import { supabase } from '../lib/core.js';
 export interface GatewaySettings {
   /** Gateway usado por TODOS os produtos/checkouts. Vazio = cada checkout usa o seu. */
   defaultProvider?: 'woovi' | 'efi' | null;
+  /** Validade real do Pix para todos os produtos (minutos). Padrão: 120 (2 horas). */
+  pixExpiresMinutes?: number;
   woovi?: { appId?: string; webhookSecret?: string };
   efi?: {
     clientId?: string;
@@ -59,6 +61,12 @@ export async function patchGateways(fn: (cur: GatewaySettings) => GatewaySetting
 
 /** Gateway global escolhido em Integrações (null = cada checkout escolhe o seu). */
 export const globalProvider = (): 'woovi' | 'efi' | null => snap.defaultProvider ?? null;
+
+/** Validade real do Pix em minutos (configurada em Integrações; padrão 2 horas). */
+export const pixExpiresMinutes = (): number => {
+  const v = Number(snap.pixExpiresMinutes);
+  return Number.isInteger(v) && v >= 15 && v <= 1440 ? v : 120;
+};
 
 export const randomSecret = () => crypto.randomBytes(24).toString('hex');
 export const mask = (v?: string) => (v ? `••••${v.slice(-4)}` : '');

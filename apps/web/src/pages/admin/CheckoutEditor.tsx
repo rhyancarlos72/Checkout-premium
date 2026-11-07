@@ -261,7 +261,7 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                       <Segmented value={f.provider} onChange={(v) => set({ provider: v })} options={[{ value: 'woovi', label: 'Woovi' }, { value: 'efi', label: 'Efí Bank' }]} />
                     </Field>
                   )}
-                  <Field label="Validade do PIX (minutos)" hint="Padrão: 120 min (2 horas)"><Input type="number" min={5} max={1440} value={f.pix_expires_minutes} onChange={(e) => set({ pix_expires_minutes: Number(e.target.value) })} /></Field>
+                  <p className="rounded-xl bg-zinc-50 px-3 py-2.5 text-xs text-zinc-600">A validade do Pix (padrão 2 horas) vale para todos os produtos e fica em <Link to="/admin/integracoes" className="font-semibold text-blue-600 underline">Integrações</Link>. Na página de pagamento o cliente vê um cronômetro de 15 min que reinicia sozinho.</p>
                 </Group>
                 <Group title="Campos do comprador" desc="Menos campos = mais conversão. Nome e e-mail são sempre pedidos; CPF não é pedido.">
                   <div className="flex flex-col gap-3">
