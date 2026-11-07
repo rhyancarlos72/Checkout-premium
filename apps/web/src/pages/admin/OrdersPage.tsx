@@ -1,10 +1,11 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Download, MailCheck, MailPlus, Receipt, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, Trash2, MailCheck, MailPlus, Receipt, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge, Button, Card, cn, EmptyState, Input, Modal, PageLoader, Select, StatusBadge, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { brl, dateTime, productCode } from '@/lib/format';
 import { PageHeader } from './AdminApp';
+import { useMe } from '@/lib/me';
 import { invoiceStatus } from './InvoicesCard';
 
 interface OrderRow {
@@ -31,7 +32,42 @@ export function useDebounced<T>(v: T, ms = 350) {
   return d;
 }
 
+/** Lixeira: exclui a cobrança (ex.: testes) para não bagunçar vendas e conversão. Só o dono. */
+function DeleteOrderButton({ order, onDeleted, label }: { order: OrderRow | { id: string; number: number; status: string; total_cents: number; customer?: { name?: string } | null }; onDeleted?: () => void; label?: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const del = useMutation({
+    mutationFn: () => adminApi.del(`/orders/${order.id}`),
+    onSuccess: () => {
+      toast.ok('Cobrança excluída');
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      qc.invalidateQueries({ queryKey: ['dashboard'] });
+      qc.invalidateQueries({ queryKey: ['progress'] });
+      onDeleted?.();
+    },
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao excluir'),
+  });
+  const ask = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const paid = order.status === 'paid' ? '\n\nATENÇÃO: esta venda está PAGA. Ela sairá do faturamento e dos relatórios.' : '';
+    if (confirm(`Excluir a cobrança ID ${productCode(order.number)} (${brl(order.total_cents)}${order.customer?.name ? ` · ${order.customer.name}` : ''})?\n\nEla some de Vendas, do dashboard e da conversão. Não dá para desfazer.${paid}`)) del.mutate();
+  };
+  return (
+    <>
+      {label ? (
+        <Button size="sm" variant="ghost" loading={del.isPending} onClick={ask} className="text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /> Excluir cobrança</Button>
+      ) : (
+        <button type="button" title="Excluir cobrança" aria-label="Excluir cobrança" disabled={del.isPending} onClick={ask} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-zinc-400 transition hover:border-red-500/30 hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
+          {del.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+        </button>
+      )}
+      {toast.node}
+    </>
+  );
+}
+
 export default function OrdersPage() {
+  const isOwner = useMe().data?.role === 'owner';
   const [status, setStatus] = useState(() => new URLSearchParams(window.location.search).get('status') || 'all');
   const [q, setQ] = useState('');
   const [page, setPage] = useState(1);
@@ -77,7 +113,7 @@ export default function OrdersPage() {
                     <td className="px-5 py-3 text-gray-600">{(() => { const m = o.items.find((i) => i.kind === 'main'); return m ? <span className="pv">{m.product?.number && <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID: {productCode(m.product.number)}</span>}{m.name}</span> : null; })()}{o.items.some((i) => i.kind === 'bump') && <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-teal-700"><Zap className="h-3 w-3" />+{o.items.filter((i) => i.kind === 'bump').length}</span>}</td>
                     <td className="px-5 py-3 text-xs text-gray-500">{o.tracking?.utm_source ?? 'direto'}{o.tracking?.utm_campaign ? ` / ${o.tracking.utm_campaign}` : ''}</td>
                     <td className="pv px-5 py-3 text-right font-semibold tabular-nums">{brl(o.total_cents)}</td>
-                    <td className="px-5 py-3"><div className="flex items-center gap-2"><StatusBadge status={o.status} />{(o.status === 'pending' || o.status === 'expired') && <RecoveryEmailButton order={o} />}</div></td>
+                    <td className="px-5 py-3"><div className="flex items-center gap-2"><StatusBadge status={o.status} />{(o.status === 'pending' || o.status === 'expired') && <RecoveryEmailButton order={o} />}{isOwner && <DeleteOrderButton order={o} />}</div></td>
                   </tr>
                 ))}
               </tbody>
@@ -136,6 +172,7 @@ function RecoveryEmailButton({ order }: { order: OrderRow }) {
 }
 
 function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
+  const isOwner = useMe().data?.role === 'owner';
   const qc = useQueryClient();
   const toast = useToast();
   const { data: o, isLoading } = useQuery({ queryKey: ['order', id], queryFn: () => adminApi.get<any>(`/orders/${id}`) });
@@ -166,6 +203,7 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
             {o.status === 'paid' && <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'resend-delivery'} onClick={() => action.mutate('resend-delivery')}><Send className="h-3.5 w-3.5" /> Reenviar acesso</Button>}
             <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'resend-tracking'} onClick={() => action.mutate('resend-tracking')}><Zap className="h-3.5 w-3.5" /> Reenviar ao PayTracking</Button>
             {o.status === 'paid' && <Button size="sm" variant="ghost" onClick={() => confirm('Marcar como reembolsado? Faça o estorno do PIX no painel do gateway.') && action.mutate('refund')}><Undo2 className="h-3.5 w-3.5" /> Marcar reembolso</Button>}
+            {isOwner && <DeleteOrderButton order={o} label onDeleted={onClose} />}
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-gray-200 p-4 text-sm">

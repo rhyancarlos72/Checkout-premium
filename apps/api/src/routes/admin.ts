@@ -572,6 +572,25 @@ adminRouter.get('/integrations/invoices/list', async (_req, res) => {
   res.json(data ?? []);
 });
 
+/**
+ * Exclui uma cobrança (ex.: testes) e tudo que é dela: itens, eventos de conversão, logs e nota.
+ * Somente o dono. A cobrança no gateway (Pix) não é afetada: se alguém pagar depois, o webhook é ignorado.
+ */
+adminRouter.delete('/orders/:id', requireOwner, async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const { data: o } = await supabase.from('orders').select('id, status, coupon_id').eq('id', id).maybeSingle();
+  if (!o) throw new HttpError(404, 'Pedido não encontrado');
+  const { error } = await supabase.from('orders').delete().eq('id', id);
+  if (error) throw new HttpError(500, error.message);
+  // devolve o uso do cupom se a venda excluída era paga
+  if ((o as any).status === 'paid' && (o as any).coupon_id) {
+    const { data: c } = await supabase.from('coupons').select('used_count').eq('id', (o as any).coupon_id).maybeSingle();
+    if (c) await supabase.from('coupons').update({ used_count: Math.max(0, ((c as any).used_count ?? 1) - 1) }).eq('id', (o as any).coupon_id);
+  }
+  clearCheckoutCache();
+  res.status(204).end();
+});
+
 adminRouter.post('/orders/:id/refund', async (req, res) => {
   // Marca como reembolsado no sistema (o estorno do PIX é feito no painel do gateway)
   const id = uuid.parse(req.params.id);

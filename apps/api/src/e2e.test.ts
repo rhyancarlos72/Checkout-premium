@@ -342,6 +342,10 @@ describe('validações do checkout', () => {
   it('rotas do painel exigem login', async () => {
     expect((await api('GET', '/api/admin/orders')).status).toBe(401);
     expect((await api('GET', '/api/admin/gateways')).status).toBe(401);
+    // excluir cobrança também exige login (e só o dono pode)
+    const before = db.orders.length;
+    expect((await api('DELETE', `/api/admin/orders/${db.orders[0].id}`)).status).toBe(401);
+    expect(db.orders.length).toBe(before);
   });
 });
 
