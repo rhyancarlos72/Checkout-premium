@@ -220,3 +220,6 @@ html.admin-dark ::selection { background: rgb(16 185 129 / .35); }
 html.privacy-on .pv { filter: blur(7px); user-select: none; }
 html.privacy-on .pv-chart { filter: blur(9px); pointer-events: none; }
 @media print { html.privacy-on .pv, html.privacy-on .pv-chart { filter: blur(7px); } }
+
+/* campo com ícone à esquerda (nome, e-mail, WhatsApp) */
+.ck-input.ck-input-icon { padding-left: 2.75rem; }

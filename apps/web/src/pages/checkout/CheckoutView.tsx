@@ -125,15 +125,21 @@ function CkField({
   valid,
   reg,
   className,
+  icon,
   ...input
-}: { label: string; required?: boolean; error?: string; hint?: string; valid?: boolean; reg: UseFormRegisterReturn; className?: string } & React.InputHTMLAttributes<HTMLInputElement>) {
+}: { label: string; required?: boolean; error?: string; hint?: string; valid?: boolean; reg: UseFormRegisterReturn; className?: string; icon?: ReactNode } & React.InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className={cn('block', className)}>
       <span className="mb-2 block text-[14px] font-bold text-ck-text">
         {label} {required && <span className="text-red-500">*</span>}
       </span>
       <span className="relative block">
-        <input className="ck-input ck-input-plain" aria-invalid={error ? true : undefined} {...reg} {...input} />
+        <input className={cn('ck-input ck-input-plain peer', icon && 'ck-input-icon')} aria-invalid={error ? true : undefined} {...reg} {...input} />
+        {icon && (
+          <span aria-hidden className={cn('pointer-events-none absolute left-3.5 top-1/2 flex -translate-y-1/2 text-ck-muted transition-colors peer-focus:text-brand [&>svg]:h-[18px] [&>svg]:w-[18px]', error && 'text-red-500', valid && !error && 'text-emerald-600')}>
+            {icon}
+          </span>
+        )}
         {valid && !error && (
           <span className="animate-pop absolute right-3.5 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full bg-emerald-500 text-white">
             <Check className="h-3 w-3" strokeWidth={3} />
@@ -511,11 +517,12 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
           <Section step={1} title="Dados pessoais">
             <div className="grid gap-4">
-              <CkField label="Nome completo" reg={register('name')} error={err.name?.message} valid={isValid('name')} autoComplete="name" placeholder="Seu nome completo" enterKeyHint="next" />
-              <CkField label="E-mail" reg={register('email')} error={err.email?.message} valid={isValid('email')} type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="Seu melhor e-mail" hint="Você receberá o acesso neste e-mail" enterKeyHint="next" />
+              <CkField label="Nome completo" icon={<User strokeWidth={1.9} />} reg={register('name')} error={err.name?.message} valid={isValid('name')} autoComplete="name" placeholder="Seu nome completo" enterKeyHint="next" />
+              <CkField label="E-mail" icon={<Mail strokeWidth={1.9} />} reg={register('email')} error={err.email?.message} valid={isValid('email')} type="email" inputMode="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="Seu melhor e-mail" hint="Você receberá o acesso neste e-mail" enterKeyHint="next" />
               {checkout.fields.phone && (
                 <CkField
                   label="Celular (WhatsApp)"
+                  icon={<Phone strokeWidth={1.9} />}
                   reg={{ ...register('phone'), onChange: async (e) => setValue('phone', maskPhone(e.target.value), { shouldValidate: formState.isSubmitted }) }}
                   error={err.phone?.message}
                   valid={isValid('phone')}
