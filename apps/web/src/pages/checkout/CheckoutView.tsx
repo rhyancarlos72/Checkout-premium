@@ -542,7 +542,11 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                 <span className="text-[13px] font-bold text-ck-text">Pix</span>
               </button>
             </div>
-            <ol className="mt-4 rounded-[calc(var(--ck-r)*.8)] border border-ck-border bg-ck-surface-2 px-4">
+            {/* celular: uma linha só (os passos completos já aparecem na página do Pix) */}
+            <p className="mt-3 flex items-center gap-2 text-[13px] font-medium text-ck-muted @4xl:hidden">
+              <Zap className="h-4 w-4 shrink-0 text-brand" /> Pix gerado na hora · acesso liberado automaticamente
+            </p>
+            <ol className="mt-4 hidden rounded-[calc(var(--ck-r)*.8)] border border-ck-border bg-ck-surface-2 px-4 @4xl:block">
               {[
                 [`Clique em “${t.buttonText || 'Finalizar compra'}”`, 'Geramos na hora o QR Code e o código Pix “copia e cola” do seu pedido.'],
                 ['Pague no app do seu banco', 'Abra o app do banco, escolha Pix, escaneie o QR Code ou cole o código copiado.'],
@@ -568,7 +572,6 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                 <div className="min-w-0 flex-1">
                   <p className="font-display text-[16px] font-extrabold leading-tight tracking-tight @lg:text-[18px]">Aproveite e leve junto com desconto</p>
                 </div>
-                <span className="hidden shrink-0 rounded-full bg-red-500 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-white @md:inline-block">Só agora</span>
               </div>
               {checkout.bumps.map((b) => {
                 const on = bumps.includes(b.id);
@@ -595,7 +598,6 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                           ) : (
                             <div className="flex h-16 w-16 items-center justify-center rounded-[calc(var(--ck-r)*.5)] bg-[#fff1b8] text-[#7a5200] shadow-sm @md:h-[72px] @md:w-[72px]"><Gift className="h-7 w-7" /></div>
                           )}
-                          {off > 0 && <span className="absolute -right-2 -top-2 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white shadow-md">-{off}%</span>}
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-[13.5px] font-bold leading-snug">{b.title}</p>

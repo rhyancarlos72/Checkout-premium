@@ -223,3 +223,7 @@ html.privacy-on .pv-chart { filter: blur(9px); pointer-events: none; }
 
 /* campo com ícone à esquerda (nome, e-mail, WhatsApp) */
 .ck-input.ck-input-icon { padding-left: 2.75rem; }
+
+/* Checkout e página do Pix: uma família só (Poppins) nos títulos e textos; Inter só nos campos.
+   O painel admin continua com Outfit/Inter. Como o Outfit deixa de ser usado aqui, nem é baixado. */
+.font-checkout .font-display { font-family: var(--font-checkout); }
