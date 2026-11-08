@@ -445,7 +445,7 @@ export default function PaymentPage() {
             <span className="relative flex h-2.5 w-2.5"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-60" /><span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" /></span>
             Verificando o pagamento automaticamente. Pode deixar esta página aberta.
           </p>
-          <button onClick={() => refresh.mutate()} disabled={refresh.isPending} className="flex items-center gap-2 rounded-full border border-ck-border bg-ck-surface px-4 py-2 text-sm font-semibold transition hover:border-brand hover:text-brand disabled:opacity-60">
+          <button onClick={() => refresh.mutate()} disabled={refresh.isPending} className="flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full border border-ck-border bg-ck-surface px-4 py-2 text-sm font-semibold transition hover:border-brand hover:text-brand disabled:opacity-60">
             <RefreshCw className={cn('h-4 w-4', refresh.isPending && 'animate-spin')} /> Já paguei
           </button>
         </div>
