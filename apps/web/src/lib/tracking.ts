@@ -1,4 +1,3 @@
-import { publicApi } from './api';
 
 const KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck', 'xcod', 'fbclid', 'gclid', 'ttclid', 'external_id', 'pt_xid'];
 
@@ -91,7 +90,14 @@ export function collectTracking(): Record<string, string> {
 }
 
 export function track(checkout_slug: string, type: string, data: Record<string, unknown> = {}) {
-  publicApi.post('/events', { checkout_slug, type, session_id: sessionId(), data }).catch(() => {});
+  const body = JSON.stringify({ checkout_slug, type, session_id: sessionId(), data });
+  // Estatística: vai como beacon (prioridade mínima do navegador), fora da cadeia crítica do carregamento.
+  try {
+    if (navigator.sendBeacon?.('/api/public/events', new Blob([body], { type: 'application/json' }))) return;
+  } catch {
+    /* cai no fetch abaixo */
+  }
+  fetch('/api/public/events', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true, priority: 'low' } as RequestInit).catch(() => {});
 }
 
 // ------------------------------------------------------------------ Meta Pixel
