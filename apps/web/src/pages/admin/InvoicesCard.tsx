@@ -42,6 +42,11 @@ export function InvoicesCard({ toast }: { toast: Toast }) {
   const { data, isLoading } = useQuery({ queryKey: ['invoice-settings'], queryFn: () => adminApi.get<InvoiceSettings>('/integrations/invoices') });
   const list = useQuery({ queryKey: ['invoice-list'], queryFn: () => adminApi.get<InvoiceRow[]>('/integrations/invoices/list') });
   const [open, setOpen] = useState(false);
+  const retry = useMutation({
+    mutationFn: (orderId: string) => adminApi.post<{ ok: boolean; message: string }>(`/orders/${orderId}/invoice`),
+    onSuccess: (r) => ((r.ok ? toast.ok : toast.err)(r.message), qc.invalidateQueries({ queryKey: ['invoice-list'] })),
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao reemitir'),
+  });
   const [lastTest, setLastTest] = useState<{ ok: boolean; message: string; at: number } | null>(null);
   const test = useMutation({
     mutationFn: () => adminApi.post<{ ok: boolean; message: string }>('/integrations/invoices/test'),
@@ -109,6 +114,11 @@ export function InvoicesCard({ toast }: { toast: Toast }) {
                 </span>
                 <span className="pv tabular-nums text-zinc-700">{brl(i.amount_cents)}</span>
                 <span className={cn('rounded-full px-2 py-0.5 text-xs font-semibold', invoiceStatus[i.status]?.cls)}>{invoiceStatus[i.status]?.label ?? i.status}</span>
+                {i.status === 'error' && (
+                  <button type="button" disabled={retry.isPending} onClick={() => retry.mutate(i.order_id)} className="shrink-0 rounded-lg border border-zinc-200 px-2 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-50 disabled:opacity-50">
+                    {retry.isPending && retry.variables === i.order_id ? 'Enviando…' : 'Tentar de novo'}
+                  </button>
+                )}
                 <span className="hidden text-xs text-zinc-400 sm:block">{dateTime(i.updated_at)}</span>
               </li>
             ))}

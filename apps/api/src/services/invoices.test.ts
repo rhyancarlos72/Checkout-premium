@@ -43,3 +43,13 @@ describe('Spedy: uma nota por venda', () => {
     expect(inv.mapSpedyStatus('canceled')).toBe('canceled');
   });
 });
+
+describe('data de emissão da NFS-e', () => {
+  it('vai no horário de Brasília e nunca no futuro (folga de 5 min)', () => {
+    const at = Date.UTC(2026, 10, 8, 15, 0, 0); // 12:00 em Brasília
+    expect(inv.issueDateBR(at)).toBe('2026-11-08T11:55:00-03:00');
+    const p = inv.buildServicePayload(order, s);
+    expect(new Date(p.issuedOn).getTime()).toBeLessThan(Date.now());
+    expect(p.issuedOn).toMatch(/-03:00$/);
+  });
+});

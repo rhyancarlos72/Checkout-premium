@@ -72,6 +72,16 @@ export async function saveInvoiceSettings(input: unknown) {
 }
 
 // ------------------------------------------------------------------ payloads
+/**
+ * Data de emissão no horário de Brasília (-03:00) com 5 minutos de folga para trás.
+ * O emissor nacional da NFS-e recusa DPS com data "posterior ao processamento" quando o relógio
+ * do servidor está alguns segundos adiantado (erro: "A data de emissão da DPS não pode ser
+ * posterior à data do seu processamento").
+ */
+export function issueDateBR(at = Date.now()) {
+  const d = new Date(at - 5 * 60_000 - 3 * 3600_000); // desloca para -03:00
+  return `${d.toISOString().slice(0, 19)}-03:00`;
+}
 export interface InvoiceOrder {
   id: string;
   number: number;
@@ -93,7 +103,7 @@ export function saleDescription(o: InvoiceOrder) {
 export const invoiceAmountCents = (o: InvoiceOrder, s: InvoiceSettings) => Math.max(0, o.total_cents - s.deductCents);
 
 export function buildServicePayload(o: InvoiceOrder, s: InvoiceSettings) {
-  const now = new Date().toISOString();
+  const now = issueDateBR();
   const amount = brl(invoiceAmountCents(o, s));
   const doc = onlyDigits(o.customer?.document);
   return {
@@ -126,7 +136,7 @@ export function buildProductPayload(o: InvoiceOrder, s: InvoiceSettings) {
   const zero = { baseValue: 0, rate: 0, value: 0 };
   return {
     integrationId: o.id,
-    issuedOn: new Date().toISOString(),
+    issuedOn: issueDateBR(),
     operationType: 'outgoing',
     purposeType: 'normal',
     issueType: 'normal',
@@ -195,7 +205,10 @@ function spedyMessage(json: any, raw: string) {
   const m = (typeof d === 'string' ? d : d?.message ?? d?.description) ?? json?.message ?? json?.title ?? json?.errors ?? raw;
   return (typeof m === 'string' ? m : JSON.stringify(m)).slice(0, 500);
 }
-const numberOf = (j: any) => (j?.number ?? j?.invoiceNumber ?? j?.rpsNumber ?? null) && String(j.number ?? j.invoiceNumber ?? j.rpsNumber);
+const numberOf = (j: any) => {
+  const n = j?.number ?? j?.invoiceNumber ?? j?.rpsNumber ?? null;
+  return n && String(n) !== '0' ? String(n) : null; // nº 0 = ainda não numerada pela prefeitura
+};
 
 async function loadOrder(orderId: string) {
   const { data } = await supabase
