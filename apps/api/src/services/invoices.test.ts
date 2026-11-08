@@ -44,12 +44,17 @@ describe('Spedy: uma nota por venda', () => {
   });
 });
 
-describe('data de emissão da NFS-e', () => {
-  it('vai no horário de Brasília e nunca no futuro (folga de 5 min)', () => {
-    const at = Date.UTC(2026, 10, 8, 15, 0, 0); // 12:00 em Brasília
-    expect(inv.issueDateBR(at)).toBe('2026-11-08T11:55:00-03:00');
+describe('data de emissão (formato do sistema PHP antigo)', () => {
+  const at = Date.UTC(2026, 10, 8, 15, 0, 0); // 12:00 em Brasília
+  it('NFS-e: relógio de Brasília com sufixo Z, como o PHP (date("Y-m-d\\TH:i:s.v\\Z"))', () => {
+    expect(inv.issueDateNfse(at)).toBe('2026-11-08T11:59:00.000Z');
     const p = inv.buildServicePayload(order, s);
-    expect(new Date(p.issuedOn).getTime()).toBeLessThan(Date.now());
-    expect(p.issuedOn).toMatch(/-03:00$/);
+    expect(p.issuedOn).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(p.effectiveDate).toBe(p.issuedOn);
+    // lido como UTC, fica ~3 h antes da hora real: nunca "posterior ao processamento"
+    expect(new Date(p.issuedOn).getTime()).toBeLessThan(Date.now() - 2.9 * 3600_000);
+  });
+  it('NF-e: relógio de Brasília com -03:00', () => {
+    expect(inv.issueDateNfe(at)).toBe('2026-11-08T11:59:00-03:00');
   });
 });

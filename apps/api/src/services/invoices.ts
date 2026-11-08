@@ -73,15 +73,18 @@ export async function saveInvoiceSettings(input: unknown) {
 
 // ------------------------------------------------------------------ payloads
 /**
- * Data de emissão no horário de Brasília (-03:00) com 5 minutos de folga para trás.
- * O emissor nacional da NFS-e recusa DPS com data "posterior ao processamento" quando o relógio
- * do servidor está alguns segundos adiantado (erro: "A data de emissão da DPS não pode ser
- * posterior à data do seu processamento").
+ * Datas no MESMO formato do sistema PHP antigo, que já emitia sem erro nesta conta Spedy:
+ *  - NFS-e: date("Y-m-d\\TH:i:s.v\\Z") → horário de Brasília com sufixo "Z" (a Spedy lê como UTC e
+ *    converte para Brasília, ficando ~3 h antes do processamento: nunca "no futuro").
+ *    Com a hora real em UTC, a Spedy convertia e a DPS saía alguns segundos À FRENTE do Emissor
+ *    Nacional → "A data de emissão da DPS não pode ser posterior à data do seu processamento".
+ *  - NF-e: date("Y-m-d\\TH:i:sP") → horário de Brasília com -03:00.
  */
-export function issueDateBR(at = Date.now()) {
-  const d = new Date(at - 5 * 60_000 - 3 * 3600_000); // desloca para -03:00
-  return `${d.toISOString().slice(0, 19)}-03:00`;
-}
+const brWall = (at: number) => new Date(at - 3 * 3600_000).toISOString(); // relógio de Brasília (sem horário de verão)
+export const issueDateNfse = (at = Date.now()) => brWall(at - 60_000); // 1 min de folga
+export const issueDateNfe = (at = Date.now()) => `${brWall(at - 60_000).slice(0, 19)}-03:00`;
+/** @deprecated mantido para compatibilidade */
+export const issueDateBR = issueDateNfe;
 export interface InvoiceOrder {
   id: string;
   number: number;
@@ -103,7 +106,7 @@ export function saleDescription(o: InvoiceOrder) {
 export const invoiceAmountCents = (o: InvoiceOrder, s: InvoiceSettings) => Math.max(0, o.total_cents - s.deductCents);
 
 export function buildServicePayload(o: InvoiceOrder, s: InvoiceSettings) {
-  const now = issueDateBR();
+  const now = issueDateNfse();
   const amount = brl(invoiceAmountCents(o, s));
   const doc = onlyDigits(o.customer?.document);
   return {
@@ -136,7 +139,7 @@ export function buildProductPayload(o: InvoiceOrder, s: InvoiceSettings) {
   const zero = { baseValue: 0, rate: 0, value: 0 };
   return {
     integrationId: o.id,
-    issuedOn: issueDateBR(),
+    issuedOn: issueDateNfe(),
     operationType: 'outgoing',
     purposeType: 'normal',
     issueType: 'normal',
