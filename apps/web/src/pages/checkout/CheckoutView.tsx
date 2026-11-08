@@ -542,8 +542,8 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                 <span className="text-[13px] font-bold text-ck-text">Pix</span>
               </button>
             </div>
-            {/* aviso de pagamento: instantâneo + ambiente seguro */}
-            <div className="mt-4 overflow-hidden rounded-[calc(var(--ck-r)*.8)] border border-brand/25 bg-brand/[.06]">
+            {/* aviso de pagamento (só celular; no computador ficam os 3 passos) */}
+            <div className="mt-4 overflow-hidden rounded-[calc(var(--ck-r)*.8)] border border-brand/25 bg-brand/[.06] @4xl:hidden">
               <div className="flex items-start gap-3 px-4 py-3.5">
                 <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand text-white shadow-md shadow-brand/30"><Zap className="h-[18px] w-[18px]" /></span>
                 <div className="min-w-0">
@@ -559,7 +559,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                 </div>
               </div>
             </div>
-            <ol className="mt-3 hidden rounded-[calc(var(--ck-r)*.8)] border border-ck-border bg-ck-surface-2 px-4 @4xl:block">
+            <ol className="mt-4 hidden rounded-[calc(var(--ck-r)*.8)] border border-ck-border bg-ck-surface-2 px-4 @4xl:block">
               {[
                 [`Clique em “${t.buttonText || 'Finalizar compra'}”`, 'Geramos na hora o QR Code e o código Pix “copia e cola” do seu pedido.'],
                 ['Pague no app do seu banco', 'Abra o app do banco, escolha Pix, escaneie o QR Code ou cole o código copiado.'],
