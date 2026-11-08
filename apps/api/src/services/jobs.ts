@@ -72,7 +72,10 @@ export async function sendRecoveries() {
     .gt('created_at', notBefore)
     .limit(20);
 
-  for (const o of (data ?? []) as any[]) {
+  // várias cobranças pendentes da mesma pessoa: um único e-mail, da mais recente
+  const latestByCustomer = new Map<string, any>();
+  for (const o of (data ?? []) as any[]) if (!latestByCustomer.has(o.customer_id) || latestByCustomer.get(o.customer_id).created_at < o.created_at) latestByCustomer.set(o.customer_id, o);
+  for (const o of [...latestByCustomer.values()]) {
     // marca antes para nunca enviar duas vezes
     const { data: claimed } = await supabase
       .from('orders')
@@ -81,6 +84,8 @@ export async function sendRecoveries() {
       .is('recovery_sent_at', null)
       .select('id');
     if (!claimed?.length || !o.customer || !o.checkout) continue;
+    // as outras cobranças pendentes desta pessoa contam como já lembradas (um e-mail por cliente)
+    await supabase.from('orders').update({ recovery_sent_at: new Date().toISOString() }).eq('customer_id', o.customer_id).eq('status', 'pending').is('recovery_sent_at', null);
 
     // não incomoda quem já comprou depois
     const { count } = await supabase

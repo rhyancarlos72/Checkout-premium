@@ -351,7 +351,7 @@ export async function sendRecoveryForOrder(o: any) {
   });
 }
 
-export const RECOVERY_ORDER_SELECT = 'id, status, public_token, total_cents, customer_id, customer:customers(name, email), checkout:checkouts(slug, theme), items:order_items(kind, name, product:products(image_url))';
+export const RECOVERY_ORDER_SELECT = 'id, status, public_token, total_cents, customer_id, created_at, customer:customers(name, email), checkout:checkouts(slug, theme), items:order_items(kind, name, product:products(image_url))';
 
 export async function testEmail(to: string) {
   const t = getTransporter();

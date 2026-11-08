@@ -147,9 +147,8 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
   const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
   const customer = await upsertCustomer(input.customer);
 
-  // Sem Pix duplicado: a mesma pessoa, no mesmo checkout, com a MESMA compra (itens e valor)
-  // e um Pix ainda válido recebe de volta esse Pix. Se a compra mudou (order bump, cupom),
-  // gera um novo e encerra os pendentes anteriores (sem lembretes duplicados).
+  // Sem cobrança duplicada: a mesma pessoa, no mesmo checkout, com o MESMO valor (e itens)
+  // e um Pix ainda válido recebe de volta esse Pix. Valor diferente = cobrança nova (a anterior continua).
   const reuse = await findReusablePix(checkout.id, customer.id, q);
   if (reuse) return reuse;
 
@@ -194,13 +193,15 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
       supabase.from('orders').update({ provider_charge_id: charge.chargeId, pix_code: charge.pixCode, pix_qr_image: qrImage, expires_at: expiresAt }).eq('id', order.id),
     ]);
 
-    // pedidos pendentes anteriores desta pessoa neste checkout foram substituídos por este
+    // MESMO valor (mesmo ticket) da mesma pessoa neste checkout: a cobrança anterior (ex.: Pix vencido)
+    // é substituída por esta, para ficar só uma no painel. Valores diferentes ficam como estão.
     void supabase
       .from('orders')
       .update({ status: 'canceled', error: `Substituído pelo pedido ${productCode(order.number)}` })
       .eq('checkout_id', checkout.id)
       .eq('customer_id', customer.id)
       .eq('status', 'pending')
+      .eq('total_cents', q.totalCents)
       .neq('id', order.id)
       .then(() => {});
     void supabase.from('events').insert({ checkout_id: checkout.id, order_id: order.id, type: 'pix_generated', session_id: tracking.session_id ?? null, data: { total_cents: q.totalCents } }).then(() => {});

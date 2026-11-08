@@ -746,7 +746,11 @@ export async function sendWhatsAppRecoveries(max = 10) {
     .gte('created_at', since)
     .order('created_at', { ascending: true })
     .limit(200);
-  const orders = ((data ?? []) as any[]).filter((o) => o.customer?.phone && o.checkout?.slug);
+  const all = ((data ?? []) as any[]).filter((o) => o.customer?.phone && o.checkout?.slug);
+  // várias cobranças pendentes da mesma pessoa (valores diferentes): lembra só da mais recente
+  const latest = new Map<string, any>();
+  for (const o of all) if (!latest.has(o.customer_id) || latest.get(o.customer_id).created_at < o.created_at) latest.set(o.customer_id, o);
+  const orders = all.filter((o) => latest.get(o.customer_id) === o);
   if (!orders.length) return;
   // uma consulta para as tentativas e outra para quem já comprou (antes eram 2 consultas por pedido)
   const [evRes, paidRes] = await Promise.all([

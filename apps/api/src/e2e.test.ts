@@ -386,24 +386,53 @@ describe('link curto do pedido', () => {
 
 describe('Pix sem duplicar para a mesma pessoa', () => {
   const buyer = { name: 'Bruna Costa', email: 'bruna@x.com', phone: '11922221111' };
-  it('mesma compra devolve o MESMO Pix; com order bump gera outro e encerra o anterior', async () => {
+  it('mesmo valor devolve o MESMO Pix; valor diferente gera outra cobrança e mantém a anterior', async () => {
     const a = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer, bump_ids: [], tracking: {} });
     const b = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { ...buyer, email: 'BRUNA@x.com' }, bump_ids: [], tracking: {} });
     expect(b.body.token).toBe(a.body.token);
     expect(b.body.order.pix_code).toBe(a.body.order.pix_code);
     expect(db.orders.filter((o) => o.customer_id === db.orders.find((x) => x.public_token === a.body.token)!.customer_id && o.status === 'pending')).toHaveLength(1);
 
+    // valor diferente (com order bump): cobrança nova e a anterior CONTINUA pendente
     const withBump = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer, bump_ids: ['00000000-0000-4000-8000-0000000000b1'], tracking: {} });
     expect(withBump.body.token).not.toBe(a.body.token);
     await settle();
-    expect(db.orders.find((x) => x.public_token === a.body.token)!.status).toBe('canceled');
+    expect(db.orders.find((x) => x.public_token === a.body.token)!.status).toBe('pending');
     expect(db.orders.find((x) => x.public_token === withBump.body.token)!.status).toBe('pending');
+    // voltar ao valor sem bump reaproveita a primeira cobrança (continua só uma de cada valor)
+    const back = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer, bump_ids: [], tracking: {} });
+    expect(back.body.token).toBe(a.body.token);
   });
-  it('Pix vencido não é reaproveitado', async () => {
+  it('mesmo valor com Pix vencido: gera novo e substitui o antigo (só uma cobrança)', async () => {
     const buyer2 = { name: 'Caio Reis', email: 'caio@x.com', phone: '11911110000' };
     const a = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer2, bump_ids: [], tracking: {} });
     db.orders.find((x) => x.public_token === a.body.token)!.expires_at = new Date(Date.now() - 1000).toISOString();
     const b = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer2, bump_ids: [], tracking: {} });
     expect(b.body.token).not.toBe(a.body.token);
+    // mesmo valor com Pix vencido: a nova substitui a antiga (fica só uma cobrança desse valor)
+    await settle();
+    expect(db.orders.find((x) => x.public_token === a.body.token)!.status).toBe('canceled');
+    expect(db.orders.filter((x) => x.customer_id === db.orders.find((y) => y.public_token === b.body.token)!.customer_id && x.status === 'pending')).toHaveLength(1);
   });
+});
+
+describe('cobranças de valores diferentes da mesma pessoa', () => {
+  it('ficam as duas no painel, mas a recuperação no WhatsApp lembra só da mais recente', async () => {
+    const buyer = { name: 'Diego Lopes', email: 'diego@x.com', phone: '11900009999' };
+    const a = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer, bump_ids: [], tracking: {} });
+    const b = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: buyer, bump_ids: ['00000000-0000-4000-8000-0000000000b1'], tracking: {} });
+    expect(a.body.token).not.toBe(b.body.token);
+    const oa = db.orders.find((x) => x.public_token === a.body.token)!;
+    const ob = db.orders.find((x) => x.public_token === b.body.token)!;
+    expect([oa.status, ob.status]).toEqual(['pending', 'pending']);
+    oa.created_at = new Date(Date.now() - 30 * 60_000).toISOString();
+    ob.created_at = new Date(Date.now() - 25 * 60_000).toISOString();
+    const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
+    const before = waSent.length;
+    await sendWhatsAppRecoveries();
+    const mine = waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('00009999'));
+    expect(mine).toHaveLength(1);
+    expect(db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === ob.id)).toHaveLength(1);
+    expect(db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === oa.id)).toHaveLength(0);
+  }, 20_000);
 });
