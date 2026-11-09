@@ -28,6 +28,8 @@ export interface GatewaySettings {
     passphrase?: string;
     sandbox?: boolean;
     webhookSecret?: string;
+    /** Identificador de conta Efí (payee_code): público, usado no navegador para gerar o payment_token do cartão */
+    payeeCode?: string;
   };
 }
 
@@ -67,8 +69,18 @@ export const globalProvider = (): 'woovi' | 'efi' | null => snap.defaultProvider
 export const cardConfig = () => {
   const c = snap.card ?? {};
   const provider = c.provider ?? 'woovi';
-  const ready = provider === 'woovi' ? Boolean(wooviConfig().appId) : false; // cartão Efí: próxima etapa
-  return { enabled: Boolean(c.enabled) && ready, configured: Boolean(c.enabled), provider, maxInstallments: Math.min(12, Math.max(1, Number(c.maxInstallments) || 1)) };
+  // Efí: API de Cobranças com as mesmas credenciais (aplicação com "API de Emissões" ativa) + identificador de conta
+  const e = efiConfig();
+  const ready = provider === 'woovi' ? Boolean(wooviConfig().appId) : Boolean(e.clientId && e.clientSecret && e.payeeCode);
+  return {
+    enabled: Boolean(c.enabled) && ready,
+    configured: Boolean(c.enabled),
+    ready,
+    provider,
+    maxInstallments: Math.min(12, Math.max(1, Number(c.maxInstallments) || 1)),
+    // dados PÚBLICOS para a biblioteca da Efí no navegador (nunca segredos)
+    efi: provider === 'efi' ? { payeeCode: e.payeeCode, sandbox: Boolean(e.sandbox) } : null,
+  };
 };
 
 /** Validade real do Pix em minutos (configurada em Integrações; padrão 2 horas). */
@@ -123,6 +135,7 @@ export function efiConfig() {
     certSource,
     sandbox: e.sandbox ?? env.EFI_SANDBOX,
     webhookSecret: e.webhookSecret || env.EFI_WEBHOOK_SECRET || '',
+    payeeCode: e.payeeCode || '',
   };
   // chave que muda quando credenciais/certificado mudam (o provedor recria o agente mTLS)
   const key = crypto

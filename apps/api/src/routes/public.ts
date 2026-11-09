@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { Router } from 'express';
+import express, { Router } from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
@@ -156,6 +156,15 @@ publicRouter.post('/orders/:token/upsell/decline', pollLimiter, async (req, res)
   if (data) await supabase.from('events').insert({ order_id: (data as any).id, checkout_id: (data as any).checkout_id, type: 'upsell_declined', data: {} });
   res.status(204).end();
 });
+
+/** Volta da verificação 3DS do banco (cartão Efí): o banco pode voltar com POST; leva para a página do pedido. */
+const tdsReturn = (req: any, res: any) => {
+  const token = String(req.params.token ?? '');
+  if (!/^[a-f0-9]{48}$/.test(token)) return res.redirect(303, '/');
+  res.redirect(303, `/pedido/${token}`);
+};
+publicRouter.get('/orders/:token/3ds-return', tdsReturn);
+publicRouter.post('/orders/:token/3ds-return', express.urlencoded({ extended: false, limit: '20kb' }), tdsReturn);
 
 /** Pix vencido: gera um novo Pix para a mesma compra, sem preencher nada. */
 publicRouter.post('/orders/:token/renew', tokenLimiter, async (req, res) => {

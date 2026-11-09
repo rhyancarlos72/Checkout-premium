@@ -14,12 +14,26 @@ const RUN = !!process.env.BROWSER_E2E;
 
 const charges = new Map<string, { status: string; value: number }>();
 const pt: string[] = [];
+const efiCharges = new Map<string, { status: string; body: any; total: number }>();
+let efiSeq = 7000;
 const fake = http.createServer((req, res) => {
   let b = '';
   req.on('data', (c) => (b += c));
   req.on('end', () => {
     const body = b ? JSON.parse(b) : null;
     const json = (s: number, v: unknown) => res.writeHead(s, { 'Content-Type': 'application/json' }).end(JSON.stringify(v));
+    if (req.url === '/cob/v1/authorize') return json(200, { access_token: 'efi-tok', expires_in: 600 });
+    if (req.url === '/cob/v1/charge/card' && req.method === 'POST') {
+      const id = String(++efiSeq);
+      const status = String(body.payment_token).includes('challenge') ? 'waiting' : 'approved';
+      efiCharges.set(id, { status, body, total: body.items[0].value });
+      return json(200, { charge_id: Number(id), status, total: body.items[0].value, installments: body.installments, ...(status === 'waiting' ? { tds_challenge: { form_data: { action_url: 'https://acs.banco.test/3ds', creq: 'CREQ', threeDSSessionData: 'SESS' } } } : {}) });
+    }
+    const eg = req.url!.match(/^\/cob\/v1\/charge\/(\d+)$/);
+    if (eg) {
+      const c = efiCharges.get(eg[1]);
+      return c ? json(200, { data: { charge_id: Number(eg[1]), status: c.status, total: c.total } }) : json(404, {});
+    }
     const sf = req.url!.match(/^\/woovi\/api\/v1\/charge\/([^/]+)\/card\/smartform$/);
     if (req.method === 'POST' && sf) return json(200, { checkoutUrl: `https://woovi.test/card/${sf[1]}` });
     if (req.method === 'POST' && req.url === '/woovi/api/v1/charge' && body.type === 'CREDIT_CARD') {
@@ -43,6 +57,7 @@ const fake = http.createServer((req, res) => {
 });
 
 let base = '';
+let ext = '';
 let server: http.Server;
 let browser: any;
 const report: string[] = [];
@@ -51,7 +66,7 @@ const ok = (msg: string) => report.push(`✅ ${msg}`);
 beforeAll(async () => {
   if (!RUN) return;
   await new Promise<void>((r) => fake.listen(0, '127.0.0.1', r));
-  const ext = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
+  ext = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
   Object.assign(process.env, { NODE_ENV: 'test', PUBLIC_URL: 'http://127.0.0.1', SUPABASE_URL: 'https://fake.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'test-key-test-key-test-key', SUPABASE_ANON_KEY: 'anon-key-anon-key-anon-key', WOOVI_API_URL: `${ext}/woovi`, JOBS_ENABLED: 'false' });
   const now = new Date().toISOString();
   db.settings = [
@@ -458,5 +473,90 @@ describe.skipIf(!RUN)('cartão de crédito no checkout', () => {
       await refreshGateways(true);
       (await import('./services/orders.js')).clearCheckoutCache();
     }, 90_000);
+  }
+});
+
+// biblioteca da Efí simulada no navegador (a de verdade fala com a Efí)
+const fakeEfiLib = () => {
+  const st: any = {};
+  const api: any = {
+    setCardNumber: (n: string) => ((st.n = n), api),
+    verifyCardBrand: async () => 'visa',
+    setAccount: (a: string) => ((st.a = a), api),
+    setEnvironment: (e: string) => ((st.e = e), api),
+    setBrand: () => api,
+    setTotal: (t: number) => ((st.t = t), api),
+    getInstallments: async () => ({ installments: [1, 2, 3].map((n) => ({ installment: n, has_interest: false, value: Math.round(st.t / n) })) }),
+    setCreditCardData: (d: any) => ((st.d = d), api),
+    getPaymentToken: async () => {
+      (window as any).__efiLast = { ...st.d, account: st.a, env: st.e };
+      return { payment_token: `${String(st.d.holderName).includes('BANCO') ? 'tok-challenge' : 'tok-approve'}-1234567890`, card_mask: 'XXXXXXXXXXXX0087', tds_identifier: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6' };
+    },
+  };
+  (window as any).__efiTest = { CreditCard: api };
+};
+
+describe.skipIf(!RUN)('cartão pela Efí no checkout', () => {
+  for (const [label, viewport] of [['computador', { width: 1366, height: 900 }], ['celular', { width: 390, height: 844 }]] as const) {
+    it(`campos do cartão no checkout, token da Efí, aprovado na hora e verificação do banco (${label})`, async () => {
+      process.env.EFI_COBRANCAS_URL = `${ext}/cob`;
+      const g = db.settings.find((x) => x.key === 'gateways')!;
+      g.value = { ...g.value, efi: { clientId: 'cid', clientSecret: 'cs', payeeCode: 'PAYEE-PRIME', sandbox: true }, card: { enabled: true, provider: 'efi', maxInstallments: 3 } };
+      const { refreshGateways } = await import('./services/gateways.js');
+      await refreshGateways(true);
+      (await import('./services/orders.js')).clearCheckoutCache();
+      const ctx = await browser.newContext({ viewport, locale: 'pt-BR' });
+      await ctx.addInitScript(fakeEfiLib);
+      const p = await ctx.newPage();
+      const errors: string[] = [];
+      p.on('pageerror', (e: Error) => errors.push(e.message));
+      await p.route('https://acs.banco.test/**', (r: any) => r.fulfill({ contentType: 'text/html', body: '<h1>Confirme no app do banco</h1>' }));
+      const fill = async (name: string, email: string) => {
+        await p.goto(`${base}/checkout?produto_id=8931442`);
+        await p.getByRole('button', { name: 'Cartão' }).click();
+        await p.getByPlaceholder('Seu nome completo').fill('Diana Souza');
+        await p.getByPlaceholder('Seu melhor e-mail').fill(email);
+        await p.getByPlaceholder('(00) 00000-0000').fill('11966665555');
+        await p.getByPlaceholder('000.000.000-00').fill('52998224725');
+        await p.getByPlaceholder('0000 0000 0000 0000').fill('4485785674290087');
+        await p.getByPlaceholder('COMO ESTÁ NO CARTÃO').fill(name);
+        await p.getByPlaceholder('MM/AA').fill('0530');
+        await p.getByPlaceholder('123').fill('123');
+      };
+      await fill('DIANA SOUZA', `diana-${label}@x.com`);
+      expect(await p.getByPlaceholder('0000 0000 0000 0000').inputValue()).toBe('4485 7856 7429 0087');
+      expect(await p.getByPlaceholder('MM/AA').inputValue()).toBe('05/30');
+      await p.locator('select').last().selectOption('3');
+      await p.getByPlaceholder('MM/AA').scrollIntoViewIfNeeded();
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/efi-cartao-${label}.png` });
+      await p.locator('button[type="submit"]:visible').first().click();
+      await p.getByText(/Pagamento aprovado!|Espere! Seu pedido/).first().waitFor({ timeout: 15_000 });
+      const lib = await p.evaluate(() => (window as any).__efiLast);
+      expect(lib).toMatchObject({ account: 'PAYEE-PRIME', env: 'sandbox', holderDocument: '52998224725', expirationMonth: '05', expirationYear: '2030', enable3ds: true, totalValue: 1999 });
+      const o = db.orders.find((x) => db.customers.find((c) => c.id === x.customer_id)?.email === `diana-${label}@x.com`)!;
+      expect(o).toMatchObject({ status: 'paid', provider: 'efi', payment_method: 'card' });
+      // o número do cartão nunca chegou ao servidor: só o token
+      expect(JSON.stringify(efiCharges.get(o.provider_charge_id)!.body)).not.toContain('4485785674290087');
+      expect(efiCharges.get(o.provider_charge_id)!.body).toMatchObject({ payment_token: 'tok-approve-1234567890', installments: 3 });
+      ok(`[${label}] cartão Efí: campos no checkout, token gerado no navegador (número nunca vai ao servidor), 3x, aprovado na hora`);
+
+      // banco pede verificação → tela do banco; ao voltar, "confirmando com o banco" e aprova pela Efí
+      await fill('DIANA BANCO SOUZA', `diana3ds-${label}@x.com`);
+      await p.locator('button[type="submit"]:visible').first().click();
+      await p.waitForURL(/acs\.banco\.test/, { timeout: 15_000 });
+      const o2 = db.orders.find((x) => db.customers.find((c) => c.id === x.customer_id)?.email === `diana3ds-${label}@x.com`)!;
+      expect(o2.status).toBe('pending');
+      await p.goto(`${base}/pedido/${o2.public_token}`);
+      await p.getByText('Confirmando o pagamento com o seu banco…').waitFor({ timeout: 15_000 });
+      efiCharges.get(o2.provider_charge_id)!.status = 'paid';
+      await p.getByText(/Pagamento aprovado!|Espere! Seu pedido/).first().waitFor({ timeout: 20_000 });
+      ok(`[${label}] cartão Efí com verificação do banco (3DS): foi para a tela do banco e aprovou ao voltar`);
+      expect(errors).toEqual([]);
+      await ctx.close();
+      g.value = { ...g.value, card: { enabled: false } };
+      await refreshGateways(true);
+      (await import('./services/orders.js')).clearCheckoutCache();
+      delete process.env.EFI_COBRANCAS_URL;
+    }, 120_000);
   }
 });

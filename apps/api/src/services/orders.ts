@@ -2,7 +2,8 @@ import { ensureMemberAccess, membersLink } from './members.js';
 import { assertCanSell, isOwnerOrg, orgInfo, orgOfOrder, runAsOrg, withOrderOrg } from '../lib/tenant.js';
 import type { SplitSpec } from '../providers/types.js';
 import { feeFieldsFor } from './fees.js';
-import { recordSale } from './ledger.js';
+import { recordChargeback, recordRefund, recordSale } from './ledger.js';
+import { createEfiCardCharge, getEfiCardCharge } from './efiCard.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
@@ -36,6 +37,15 @@ export const createOrderSchema = z.object({
   tracking: z.record(z.string(), z.unknown()).optional().default({}),
   /** forma de pagamento escolhida no checkout (padrão Pix) */
   payment_method: z.enum(['pix', 'card']).optional().default('pix'),
+  /** cartão Efí: token gerado NO NAVEGADOR pela biblioteca oficial (o número do cartão nunca chega aqui) */
+  card: z
+    .object({
+      payment_token: z.string().trim().min(10).max(200),
+      tds_identifier: z.string().trim().min(10).max(100),
+      installments: z.number().int().min(1).max(12).default(1),
+    })
+    .optional()
+    .nullable(),
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
@@ -163,8 +173,14 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
   const method = input.payment_method ?? 'pix';
   const card = method === 'card' ? await cardAllowed(checkout.org_id) : null;
   if (card && onlyDigits(input.customer.document).length !== 11 && onlyDigits(input.customer.document).length !== 14) throw new HttpError(400, 'Informe um CPF válido para pagar com cartão');
+  if (card?.provider === 'efi') {
+    if (!input.card) throw new HttpError(400, 'Dados do cartão incompletos. Preencha o cartão novamente.');
+    if (onlyDigits(input.customer.document).length !== 11) throw new HttpError(400, 'Informe o CPF do titular do cartão');
+  }
   // gateway: cartão → o do cartão (Super Admin); Pix → o do produtor, senão o global (Integrações), senão o do checkout
-  const provider = getProvider((card ? card.provider : ((await orgInfo(checkout.org_id))?.pix_provider ?? globalProvider() ?? checkout.provider)) as ProviderName);
+  const providerName = (card ? card.provider : ((await orgInfo(checkout.org_id))?.pix_provider ?? globalProvider() ?? checkout.provider)) as ProviderName;
+  // cartão Efí usa a API de Cobranças (sem certificado/chave Pix): não exige o Pix da Efí configurado
+  const provider = card?.provider === 'efi' ? null : getProvider(providerName);
   const customer = await upsertCustomer(input.customer);
 
   // Sem cobrança duplicada: a mesma pessoa, no mesmo checkout, com o MESMO valor (e itens)
@@ -181,7 +197,7 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
       .insert({
         checkout_id: checkout.id,
         customer_id: customer.id,
-        provider: provider.name,
+        provider: providerName,
         subtotal_cents: q.subtotalCents,
         discount_cents: q.discountCents,
         total_cents: q.totalCents,
@@ -201,7 +217,64 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
   const itemsSaved = supabase.from('order_items').insert(q.lines.map((l) => ({ ...l, order_id: order.id })));
 
   try {
-    const charge = await provider.createCharge({
+    // ---------------- cartão Efí (API de Cobranças): resposta na hora (aprovado / recusado / verificação do banco)
+    if (card?.provider === 'efi') {
+      const cc = input.card!;
+      const cpf = onlyDigits(input.customer.document);
+      const sp = await splitFor(order.id);
+      const r = await createEfiCardCharge({
+        orderId: order.id,
+        publicToken: order.public_token,
+        description: `Pedido #${order.number} - ${checkout.product.name}`,
+        totalCents: q.totalCents,
+        installments: Math.min(cc.installments, card.maxInstallments),
+        paymentToken: cc.payment_token,
+        tdsIdentifier: cc.tds_identifier,
+        customer: { name: input.customer.name, cpf, email: input.customer.email, phone: input.customer.phone },
+        // produtor com cartão liberado: a parte dele vai direto para a conta Efí dele (payee_code)
+        repasse: sp ? { payeeCode: String((await orgInfo(checkout.org_id))?.recipient?.payee_code ?? ''), fixedCents: sp.producerCents } : null,
+      });
+      await Promise.all([
+        itemsSaved,
+        supabase.from('orders').update({ provider_charge_id: r.chargeId, expires_at: new Date(Date.now() + 30 * 60_000).toISOString() }).eq('id', order.id),
+        sp ? saveSplit(order.id, { gateway: 'efi', card: true, producerCents: sp.producerCents, platformCents: sp.platformCents }) : null,
+      ]);
+      void supabase.from('events').insert({ checkout_id: checkout.id, order_id: order.id, type: 'card_attempt', session_id: tracking.session_id ?? null, data: { status: r.raw } }).then(() => {});
+      if (r.status === 'refused' || r.status === 'canceled') {
+        await supabase.from('orders').update({ status: 'failed', error: `Cartão recusado${r.refusal ? `: ${r.refusal}` : ''}` }).eq('id', order.id);
+        throw new HttpError(402, `Pagamento não aprovado${r.refusal ? `: ${r.refusal}` : ''}. Confira os dados do cartão, use outro cartão ou pague com Pix.`);
+      }
+      void dispatchTracking(order.id, 'sale.pending');
+      const status = r.status === 'paid' ? ((await syncOrderWithProvider(order.id)) === 'paid' ? 'paid' : 'pending') : 'pending';
+      return {
+        token: order.public_token,
+        order: {
+          number: order.number,
+          status,
+          total_cents: q.totalCents,
+          subtotal_cents: q.subtotalCents,
+          discount_cents: q.discountCents,
+          pix_code: null,
+          pix_qr_image: null,
+          payment_method: 'card',
+          card_url: null,
+          // verificação 3DS: o navegador envia o cliente para a tela do banco e ele volta para a página do pedido
+          tds_challenge: r.challenge ?? null,
+          expires_at: null,
+          paid_at: null,
+          created_at: new Date().toISOString(),
+          items: q.lines.map((l) => ({ kind: l.kind, name: l.name, price_cents: l.price_cents })),
+          content_ids: [productCode(checkout.product.number)].filter(Boolean),
+          external_id: tracking.external_id || tracking.pt_xid || customer.id,
+          customer: { name: input.customer.name, email: input.customer.email, phone: onlyDigits(input.customer.phone) || null },
+          checkout: { slug: checkout.slug, name: checkout.name, theme: checkout.theme, metaPixelId: checkout.tracking?.metaPixelId ?? null },
+          purchase_event_id: (tracking as any).purchase_event_id ?? null,
+          delivery: [],
+        },
+      };
+    }
+
+    const charge = await provider!.createCharge({
       orderId: order.id,
       amountCents: q.totalCents,
       description: `Pedido #${order.number} - ${checkout.product.name}`,
@@ -356,16 +429,35 @@ export async function syncOrderWithProvider(orderId: string): Promise<string> {
   return withOrderOrg(orderId, () => syncOrderImpl(orderId));
 }
 async function syncOrderImpl(orderId: string): Promise<string> {
-  const { data } = await supabase
-    .from('orders')
-    .select('id, status, provider, provider_charge_id, total_cents, checkout_id, tracking')
-    .eq('id', orderId)
-    .maybeSingle();
+  const { data } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle(); // '*': inclui payment_method quando existir
   const order: any = data;
   if (!order?.provider_charge_id) return 'not_found';
-  if (order.status === 'paid') return 'already_paid';
+  const efiCard = order.payment_method === 'card' && order.provider === 'efi';
+  if (order.status === 'paid' && !efiCard) return 'already_paid';
 
-  const info = await getProvider(order.provider).getCharge(order.provider_charge_id);
+  let info: { status: string; paidAmountCents?: number };
+  if (efiCard) {
+    // cartão Efí (API de Cobranças): consulta o status direto na Efí — nunca confia só na notificação
+    const c = await getEfiCardCharge(order.provider_charge_id);
+    if (order.status === 'paid') {
+      if (c.status === 'refunded' || c.status === 'chargeback') {
+        const { data: changed } = await supabase.from('orders').update({ status: 'refunded', error: c.status === 'chargeback' ? 'Chargeback (contestação no cartão)' : 'Estornado na Efí' }).eq('id', orderId).eq('status', 'paid').select('id');
+        if (changed?.length) {
+          await (c.status === 'chargeback' ? recordChargeback(orderId) : recordRefund(orderId));
+          void dispatchTracking(orderId, c.status === 'chargeback' ? 'sale.chargeback' : 'sale.refunded');
+        }
+        return c.status;
+      }
+      return 'already_paid';
+    }
+    if (c.status === 'refused' || c.status === 'canceled') {
+      await supabase.from('orders').update({ status: 'failed', error: `Cartão recusado${c.reason ? `: ${c.reason}` : ''}` }).eq('id', orderId).eq('status', 'pending');
+      return 'refused';
+    }
+    info = { status: c.status, paidAmountCents: c.totalCents };
+  } else {
+    info = await getProvider(order.provider).getCharge(order.provider_charge_id);
+  }
   if (info.status === 'paid' && order.status === 'canceled') {
     // o cliente pagou um Pix que o sistema tinha substituído (ainda válido no banco): dinheiro recebido
     // = acesso liberado. Reabre o pedido para a confirmação normal abaixo (entrega, nota, rastreamento).
@@ -640,16 +732,22 @@ async function saveSplit(orderId: string, info: Record<string, unknown> | null |
 async function cardAllowed(orgId: string | null | undefined) {
   const cc = cardConfig();
   if (!cc.enabled) throw new HttpError(400, 'Pagamento com cartão indisponível no momento. Use o Pix.');
-  if (!(await isOwnerOrg(orgId)) && !(await orgInfo(orgId))?.card_split_enabled) throw new HttpError(400, 'Pagamento com cartão indisponível para este produto. Use o Pix.');
+  if (!(await isOwnerOrg(orgId)) && !(await producerCardReady(orgId, cc.provider))) throw new HttpError(400, 'Pagamento com cartão indisponível para este produto. Use o Pix.');
   return cc;
+}
+
+/** Produtor no cartão: só pela Efí (repasse por payee_code, documentado) e com o cartão liberado pelo Super Admin. */
+async function producerCardReady(orgId: string | null | undefined, provider: string) {
+  const org = await orgInfo(orgId);
+  return provider === 'efi' && Boolean(org?.card_split_enabled) && Boolean((org?.recipient as any)?.payee_code);
 }
 
 /** Cartão aparece no checkout? (mesma regra do servidor, sem lançar erro) */
 export async function cardOptionFor(orgId: string | null | undefined) {
   const cc = cardConfig();
   if (!cc.enabled) return null;
-  if (!(await isOwnerOrg(orgId)) && !(await orgInfo(orgId))?.card_split_enabled) return null;
-  return { maxInstallments: cc.maxInstallments };
+  if (!(await isOwnerOrg(orgId)) && !(await producerCardReady(orgId, cc.provider))) return null;
+  return { maxInstallments: cc.maxInstallments, provider: cc.provider, efi: cc.efi };
 }
 
 /** Pix pendente e ainda válido da mesma pessoa para a mesma compra (itens + valor), pronto para reaproveitar. */

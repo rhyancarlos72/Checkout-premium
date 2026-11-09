@@ -106,7 +106,7 @@ export async function withOrderOrg<T>(orderId: string, fn: () => Promise<T>): Pr
 }
 
 // ------------------------------------------------------------------ produtor vendedor
-export interface OrgInfo { id: string; status: string; is_platform_owner: boolean; split_enabled: boolean; card_split_enabled?: boolean; pix_provider: 'woovi' | 'efi' | null; name: string; recipient?: { pixKey?: string; pix_key?: string; account?: string; document?: string; name?: string } }
+export interface OrgInfo { id: string; status: string; is_platform_owner: boolean; split_enabled: boolean; card_split_enabled?: boolean; pix_provider: 'woovi' | 'efi' | null; name: string; recipient?: { pixKey?: string; pix_key?: string; account?: string; document?: string; name?: string; payee_code?: string } }
 const orgCache = new Map<string, { v: OrgInfo | null; at: number }>();
 export async function orgInfo(orgId: string | null | undefined): Promise<OrgInfo | null> {
   if (!orgId) return null;

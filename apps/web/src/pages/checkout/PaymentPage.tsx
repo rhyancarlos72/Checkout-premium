@@ -178,7 +178,11 @@ export default function PaymentPage() {
   const now = useNow();
   const { data: order, isLoading, error } = useQuery({
     queryKey: ['order', token],
-    queryFn: () => publicApi.get<PublicOrder>(`/orders/${token}`),
+    // cartão pendente (ex.: voltou da verificação do banco): confere direto no gateway a cada consulta
+    queryFn: () => {
+      const prev = qc.getQueryData<PublicOrder>(['order', token]);
+      return prev?.payment_method === 'card' && prev.status === 'pending' ? publicApi.post<PublicOrder>(`/orders/${token}/refresh`) : publicApi.get<PublicOrder>(`/orders/${token}`);
+    },
     refetchInterval: (q) => (q.state.data?.status === 'pending' ? 4000 : false),
     refetchIntervalInBackground: true,
   });
@@ -358,8 +362,8 @@ export default function PaymentPage() {
     return (
       <Shell theme={theme}>
         <section className="ck-card p-8 text-center">
-          <h1 className="text-xl font-bold">{order.status === 'canceled' ? 'Seu Pix foi atualizado' : 'Pedido indisponível'}</h1>
-          <p className="mt-2 text-ck-muted">{order.status === 'canceled' ? 'Este código foi substituído por um mais novo. Toque abaixo para abrir o Pix atual.' : 'Não foi possível concluir este pedido.'}</p>
+          <h1 className="text-xl font-bold">{order.status === 'canceled' ? 'Seu Pix foi atualizado' : order.payment_method === 'card' && order.status === 'failed' ? 'Pagamento não aprovado' : 'Pedido indisponível'}</h1>
+          <p className="mt-2 text-ck-muted">{order.status === 'canceled' ? 'Este código foi substituído por um mais novo. Toque abaixo para abrir o Pix atual.' : order.payment_method === 'card' && order.status === 'failed' ? 'O banco não aprovou o cartão. Tente outro cartão ou pague com Pix.' : 'Não foi possível concluir este pedido.'}</p>
           {order.status === 'canceled' && (
             <button type="button" disabled={renew.isPending} onClick={() => renew.mutate()} className="ck-cta mt-6 inline-flex h-12 items-center justify-center gap-2 px-8 font-bold disabled:opacity-70">
               {renew.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />} Abrir meu Pix
@@ -400,7 +404,7 @@ export default function PaymentPage() {
                 <Lock className="h-[18px] w-[18px]" /> Pagar com cartão
               </a>
             ) : (
-              <p className="mt-6 text-sm text-ck-muted">Estamos preparando a página do cartão…</p>
+              <p className="mt-6 flex items-center justify-center gap-2 text-sm font-medium text-ck-muted"><span className="h-4 w-4 animate-spin rounded-full border-2 border-brand border-t-transparent" /> Confirmando o pagamento com o seu banco…</p>
             )}
             <p className="mx-auto mt-4 flex max-w-sm items-start justify-center gap-2 text-[13px] text-ck-muted">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Página segura do pagamento, com verificação do seu banco. Esta tela atualiza sozinha quando o pagamento for aprovado.

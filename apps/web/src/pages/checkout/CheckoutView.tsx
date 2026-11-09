@@ -11,6 +11,7 @@ import { imageDims } from '@/lib/image';
 import { brl, contrastText, digits, maskDocument, maskPhone, nationalPhone, productCode } from '@/lib/format';
 import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track, visitorExternalId } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
+import { emptyCard, EfiCardFields, submitThreeDS, tokenizeEfiCard, validateCard, type EfiCardData } from './EfiCard';
 
 function makeSchema(fields: PublicCheckout['fields'], card = false) {
   return z.object({
@@ -199,6 +200,12 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
   const cardOption = checkout.payment?.card ?? null;
   const [method, setMethod] = useState<'pix' | 'card'>('pix');
+  // cartão Efí (checkout transparente): os dados ficam só no navegador e viram um token na Efí
+  const efiCard = method === 'card' && cardOption?.provider === 'efi' && cardOption.efi ? cardOption.efi : null;
+  const [cardData, setCardData] = useState<EfiCardData>(emptyCard);
+  const [cardErrors, setCardErrors] = useState<Partial<Record<keyof EfiCardData, string>>>({});
+  const [tokenizing, setTokenizing] = useState(false);
+  const cardTokenRef = useRef<{ payment_token: string; tds_identifier: string; installments: number } | null>(null);
   const schema = useMemo(() => makeSchema(checkout.fields, method === 'card'), [checkout.fields, method]);
   const { register, handleSubmit, setValue, formState, watch, reset, getFieldState } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -290,6 +297,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         checkout_slug: checkout.slug,
         customer: { name: v.name, email: v.email, phone: v.phone ? nationalPhone(v.phone) : null, document: method === 'card' ? digits(v.document ?? '') : null },
         payment_method: method,
+        ...(efiCard && cardTokenRef.current ? { card: cardTokenRef.current } : {}),
         bump_ids: bumps,
         coupon_code: coupon?.code ?? null,
         tracking: { ...collectTracking(), initiate_checkout_event_id: eventIds.ic, add_payment_info_event_id: eventIds.api, purchase_event_id: eventIds.purchase },
@@ -309,14 +317,31 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
       // cartão: segue para a página segura do gateway (o "voltar" do navegador cai na página do pedido)
       const cardUrl = (r.order as { card_url?: string | null } | undefined)?.card_url;
       if (cardUrl) window.location.assign(cardUrl);
+      // cartão Efí: o banco pediu verificação (3DS) → tela do banco; ele volta para a página do pedido
+      const challenge = (r.order as { tds_challenge?: { action_url: string; creq: string; threeDSSessionData: string } | null } | undefined)?.tds_challenge;
+      if (challenge) submitThreeDS(challenge);
     },
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Não foi possível gerar o Pix. Tente novamente.'),
   });
 
   const onSubmit = handleSubmit(
-    (v) => {
+    async (v) => {
       setServerError(null);
       if (preview) return setServerError('Pré-visualização: o pagamento funciona no link publicado.');
+      if (efiCard) {
+        const ce = validateCard(cardData);
+        setCardErrors(ce);
+        if (Object.keys(ce).length) return;
+        setTokenizing(true);
+        try {
+          // número/CVV vão direto do navegador para a Efí; ao servidor só chega o token
+          cardTokenRef.current = { ...(await tokenizeEfiCard(cardData, v.document ?? '', total, efiCard)), installments: cardData.installments };
+        } catch (e) {
+          setTokenizing(false);
+          return setServerError((e as Error).message);
+        }
+        setTokenizing(false);
+      }
       fireInitiate();
       submit.mutate(v);
     },
@@ -331,7 +356,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const banner = t.bannerUrl || t.mockupUrl;
   const compareAt = t.compareAtCents ?? 0;
   const productImage = checkout.product.image_url || t.mockupUrl;
-  const busy = submit.isPending;
+  const busy = submit.isPending || tokenizing;
   const showSticky = !ctaVisible && !footerVisible;
 
   // ---------- blocos reutilizados (desktop lateral / mobile empilhado)
@@ -571,10 +596,20 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                   autoComplete="off"
                   placeholder="000.000.000-00"
                 />
-                <p className="flex items-start gap-2 text-[13px] font-medium text-ck-muted">
-                  <Lock className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
-                  {cardOption.maxInstallments > 1 ? `Em até ${cardOption.maxInstallments}x sem juros. ` : ''}Você digita o cartão numa página segura do pagamento, com verificação do seu banco.
-                </p>
+                {efiCard ? (
+                  <>
+                    <EfiCardFields value={cardData} onChange={setCardData} errors={cardErrors} totalCents={total} maxInstallments={cardOption.maxInstallments} cfg={efiCard} />
+                    <p className="flex items-start gap-2 text-[13px] font-medium text-ck-muted">
+                      <Lock className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+                      Os dados do cartão são criptografados direto com o banco processador e não ficam salvos. Seu banco pode pedir uma confirmação.
+                    </p>
+                  </>
+                ) : (
+                  <p className="flex items-start gap-2 text-[13px] font-medium text-ck-muted">
+                    <Lock className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+                    {cardOption.maxInstallments > 1 ? `Em até ${cardOption.maxInstallments}x sem juros. ` : ''}Você digita o cartão numa página segura do pagamento, com verificação do seu banco.
+                  </p>
+                )}
               </div>
             )}
             {/* celular: uma linha só (os passos completos já aparecem na página do Pix) */}
@@ -679,7 +714,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           <div className="space-y-4">
             <button ref={ctaRef} type="submit" disabled={busy} className="ck-cta flex h-[60px] w-full items-center justify-center gap-2.5 text-[17px] font-bold disabled:opacity-70">
               {busy ? (
-                <><span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> Gerando seu Pix…</>
+                <><span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> {method === 'card' ? 'Processando pagamento…' : 'Gerando seu Pix…'}</>
               ) : (
                 <><Lock className="h-[18px] w-[18px]" /> {t.buttonText || 'Finalizar compra'}</>
               )}

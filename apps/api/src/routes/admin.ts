@@ -923,6 +923,7 @@ adminRouter.get('/gateways', async (_req, res) => {
       clientId_hint: gwMask(e.clientId),
       hasClientSecret: Boolean(e.clientSecret),
       pixKey: e.pixKey, // chave Pix não é segredo (é o que o pagador vê)
+      payeeCode: e.payeeCode, // identificador de conta (público: vai para o navegador no cartão)
       sandbox: e.sandbox,
       cert: e.pfx ? { source: e.certSource, name: g.efiCertMeta().name, uploadedAt: g.efiCertMeta().uploadedAt } : null,
       hasWebhookSecret: Boolean(e.webhookSecret),
@@ -943,11 +944,15 @@ adminRouter.put('/gateways/pix-expiration', async (req, res) => {
 /** Cartão de crédito: liga/desliga, gateway e parcelas (só o Super Admin). */
 adminRouter.put('/gateways/card', async (req, res) => {
   const b = z.object({ enabled: z.boolean(), provider: z.enum(['woovi', 'efi']).default('woovi'), maxInstallments: z.number().int().min(1).max(12).default(1) }).parse(req.body);
-  if (b.provider === 'efi') throw new HttpError(400, 'Cartão pela Efí ainda não está disponível. Use a Woovi para cartão.');
-  if (b.enabled && !wooviConfig().appId) throw new HttpError(400, 'Configure a Woovi (AppID) antes de ligar o cartão');
+  if (b.enabled && b.provider === 'woovi' && !wooviConfig().appId) throw new HttpError(400, 'Configure a Woovi (AppID) antes de ligar o cartão');
+  if (b.enabled && b.provider === 'efi') {
+    const e = efiConfig();
+    if (!e.clientId || !e.clientSecret) throw new HttpError(400, 'Configure a Efí (Client ID e Client Secret) antes de ligar o cartão');
+    if (!e.payeeCode) throw new HttpError(400, 'Informe o Identificador de conta da Efí (API → Introdução → Identificador de conta)');
+  }
   await patchGateways((g) => ({ ...g, card: b }));
   clearCheckoutCache();
-  res.json({ ok: true, message: b.enabled ? `Cartão ligado${b.maxInstallments > 1 ? ` em até ${b.maxInstallments}x sem juros` : ''}. Confirme na Woovi que o cartão (e o parcelamento) estão habilitados na sua conta.` : 'Cartão desligado' });
+  res.json({ ok: true, message: b.enabled ? `Cartão ligado pela ${b.provider === 'efi' ? 'Efí' : 'Woovi'}${b.maxInstallments > 1 ? ` em até ${b.maxInstallments}x` : ''}.` : 'Cartão desligado' });
 });
 
 adminRouter.put('/gateways/default', async (req, res) => {
@@ -1000,6 +1005,7 @@ adminRouter.put('/gateways/efi', async (req, res) => {
       clientSecret: z.string().trim().max(500).optional(),
       pixKey: z.string().trim().max(120).optional(),
       sandbox: z.boolean().optional(),
+      payeeCode: z.string().trim().max(64).optional(), // Identificador de conta (cartão)
     })
     .parse(req.body);
   await patchGateways((g) => ({
@@ -1010,6 +1016,7 @@ adminRouter.put('/gateways/efi', async (req, res) => {
       ...(b.clientSecret ? { clientSecret: b.clientSecret } : {}),
       ...(b.pixKey !== undefined && b.pixKey !== '' ? { pixKey: b.pixKey } : {}),
       ...(b.sandbox !== undefined ? { sandbox: b.sandbox } : {}),
+      ...(b.payeeCode !== undefined ? { payeeCode: b.payeeCode } : {}),
       // mantém o segredo em uso (inclusive o das variáveis), para não invalidar webhook já registrado
       webhookSecret: g.efi?.webhookSecret || env.EFI_WEBHOOK_SECRET || randomSecret(),
     },

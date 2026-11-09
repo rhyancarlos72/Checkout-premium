@@ -16,6 +16,9 @@ const spedyCalls: any[] = [];
 const ptCalls: { event: string; body: any; headers: http.IncomingHttpHeaders }[] = [];
 const waSent: { instance: string; body: any }[] = [];
 let evoDown = false; // simula a Evolution fora do ar
+// Efí API de Cobranças simulada (cartão)
+const efiCharges = new Map<string, { status: string; body: any; total: number }>();
+let efiSeq = 9000;
 const ptB: { event: string; body: any }[] = []; // PayTracking do produtor B (marketplace)
 const fake = http.createServer((req, res) => {
   let b = '';
@@ -44,6 +47,32 @@ const fake = http.createServer((req, res) => {
       if (evoDown) return json(502, { error: 'bad gateway' });
       waSent.push({ instance: decodeURIComponent(req.url!.split('/').pop()!), body });
       return json(201, { key: { id: 'x' } });
+    }
+    if (req.url === '/cob/v1/authorize' && req.method === 'POST') {
+      return req.headers.authorization?.startsWith('Basic ') ? json(200, { access_token: 'efi-tok', expires_in: 600, token_type: 'Bearer' }) : json(401, { error_description: 'credenciais' });
+    }
+    if (req.url === '/cob/v1/charge/card' && req.method === 'POST') {
+      if (req.headers.authorization !== 'Bearer efi-tok') return json(401, {});
+      const id = String(++efiSeq);
+      const tok = String(body.payment_token);
+      const status = tok.includes('refuse') ? 'unpaid' : tok.includes('challenge') ? 'waiting' : 'approved';
+      efiCharges.set(id, { status, body, total: body.items[0].value });
+      return json(200, {
+        installments: body.installments, installment_value: body.items[0].value, charge_id: Number(id), status, total: body.items[0].value,
+        ...(status === 'unpaid' ? { refusal: { reason: 'G4 - Transação não autorizada.', retry: true } } : {}),
+        ...(status === 'waiting' ? { tds_challenge: { form_data: { method: 'POST', action_url: 'https://acs.banco.test/3ds', creq: 'CREQ123', threeDSSessionData: 'SESS456' }, html_template: '<html></html>' } } : {}),
+      });
+    }
+    const efiGet = req.url!.match(/^\/cob\/v1\/charge\/(\d+)$/);
+    if (efiGet && req.method === 'GET') {
+      const c = efiCharges.get(efiGet[1]);
+      return c ? json(200, { code: 200, data: { charge_id: Number(efiGet[1]), total: c.total, status: c.status } }) : json(404, { detail: 'not found' });
+    }
+    const efiNotif = req.url!.match(/^\/cob\/v1\/notification\/([\w-]+)$/);
+    if (efiNotif && req.method === 'GET') {
+      const id = efiNotif[1].replace('notif-', '');
+      const c = efiCharges.get(id);
+      return c ? json(200, { code: 200, data: [{ identifiers: { charge_id: Number(id) }, status: { current: 'new' } }, { identifiers: { charge_id: Number(id) }, status: { current: c.status } }] }) : json(404, { detail: 'token inválido' });
     }
     if (req.url === '/paytracking-b') {
       ptB.push({ event: body?.event, body });
@@ -771,7 +800,7 @@ describe('marketplace multiusuário', () => {
     expect((await as('b', 'PUT', '/api/admin/gateways/card', { enabled: true, provider: 'woovi', maxInstallments: 3 })).status).toBe(403);
     const on = await as('owner', 'PUT', '/api/admin/gateways/card', { enabled: true, provider: 'woovi', maxInstallments: 3 });
     expect(on.status).toBe(200);
-    expect((await api('GET', '/api/public/checkouts/8931442')).body.payment.card).toEqual({ maxInstallments: 3 });
+    expect((await api('GET', '/api/public/checkouts/8931442')).body.payment.card).toEqual({ maxInstallments: 3, provider: 'woovi', efi: null });
     expect((await api('GET', `/api/public/checkouts/${bSlug}`)).body.payment.card).toBeNull(); // produtor: sem split de cartão
     // sem CPF: recusado
     expect((await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Lia Card', email: 'lia-card@x.com', phone: '11944445555' }, bump_ids: [], tracking: {}, payment_method: 'card' })).status).toBe(400);
@@ -790,6 +819,76 @@ describe('marketplace multiusuário', () => {
     // produtor no cartão: recusado (sem split de cartão)
     expect((await api('POST', '/api/public/orders', { checkout_slug: bSlug, customer: { name: 'Rui Card', email: 'rui-card@x.com', phone: '11944446666', document: '52998224725' }, bump_ids: [], tracking: {}, payment_method: 'card' })).status).toBe(400);
     await as('owner', 'PUT', '/api/admin/gateways/card', { enabled: false, provider: 'woovi', maxInstallments: 1 });
+  });
+
+  it('cartão pela Efí: token do navegador, aprovado na hora, recusado com motivo, verificação do banco + notificação, repasse ao produtor', async () => {
+    process.env.EFI_COBRANCAS_URL = `${ext}/cob`;
+    const g = db.settings.find((x) => x.key === 'gateways')!;
+    g.value = { ...g.value, efi: { clientId: 'cid', clientSecret: 'csec', payeeCode: 'PAYEE-PRIME' } };
+    const { refreshGateways } = await import('./services/gateways.js');
+    await refreshGateways(true);
+    expect((await as('owner', 'PUT', '/api/admin/gateways/card', { enabled: true, provider: 'efi', maxInstallments: 6 })).status).toBe(200);
+    const pub = await api('GET', '/api/public/checkouts/8931442');
+    expect(pub.body.payment.card).toEqual({ maxInstallments: 6, provider: 'efi', efi: { payeeCode: 'PAYEE-PRIME', sandbox: false } });
+    const buy = (email: string, token: string, extra: any = {}) =>
+      api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Bruno Efí', email, phone: '11955554444', document: '52998224725' }, bump_ids: [], tracking: {}, payment_method: 'card', card: { payment_token: token, tds_identifier: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6', installments: 3 }, ...extra });
+    // sem o token do cartão: recusado (o número do cartão nunca vem para o servidor)
+    expect((await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Bruno Efí', email: 'b1@x.com', phone: '11955554444', document: '52998224725' }, bump_ids: [], tracking: {}, payment_method: 'card' })).status).toBe(400);
+
+    // aprovado na hora → pago, entregue e no livro-razão como cartão
+    const ok = await buy('b-ok@x.com', 'tok-approve-1234567890');
+    expect(ok.status).toBe(201);
+    expect(ok.body.order.status).toBe('paid');
+    const o1 = db.orders.find((x) => x.public_token === ok.body.token)!;
+    expect(o1).toMatchObject({ status: 'paid', provider: 'efi', payment_method: 'card' });
+    const sent = efiCharges.get(o1.provider_charge_id)!.body;
+    expect(sent).toMatchObject({ installments: 3, payment_token: 'tok-approve-1234567890', customer: { cpf: '52998224725', email: 'b-ok@x.com', phone_number: '11955554444' }, metadata: { custom_id: o1.id, notification_url: 'https://checkout.loja.com/api/webhooks/efi-card' }, tds_info: { tds_identifier: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6', challenge_callback_url: `https://checkout.loja.com/api/public/orders/${o1.public_token}/3ds-return` } });
+    expect(sent.items[0].marketplace).toBeUndefined(); // venda da Prime: sem repasse
+    expect(db.ledger_entries.find((l) => l.order_id === o1.id && l.type === 'sale')!.data).toMatchObject({ method: 'card' });
+
+    // recusado → 402 com o motivo; pedido falhou
+    const no = await buy('b-no@x.com', 'tok-refuse-1234567890');
+    expect(no.status).toBe(402);
+    expect(no.body.error).toMatch(/G4 - Transação não autorizada/);
+    expect(db.orders.filter((x) => db.customers.find((c) => c.id === x.customer_id)?.email === 'b-no@x.com').every((x) => x.status === 'failed')).toBe(true);
+
+    // banco pede verificação (3DS) → pendente com os dados do desafio; a notificação da Efí aprova
+    const ch = await buy('b-3ds@x.com', 'tok-challenge-1234567890');
+    expect(ch.status).toBe(201);
+    expect(ch.body.order).toMatchObject({ status: 'pending', tds_challenge: { action_url: 'https://acs.banco.test/3ds', creq: 'CREQ123', threeDSSessionData: 'SESS456' } });
+    const o3 = db.orders.find((x) => x.public_token === ch.body.token)!;
+    const back = await fetch(`${base}/api/public/orders/${o3.public_token}/3ds-return`, { method: 'POST', redirect: 'manual', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'cres=abc' });
+    expect(back.status).toBe(303);
+    expect(back.headers.get('location')).toBe(`/pedido/${o3.public_token}`);
+    // notificação falsa (token que a Efí não conhece): nada muda
+    await fetch(`${base}/api/webhooks/efi-card`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'notification=notif-999999' });
+    await settle();
+    expect(o3.status).toBe('pending');
+    efiCharges.get(o3.provider_charge_id)!.status = 'paid';
+    await fetch(`${base}/api/webhooks/efi-card`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `notification=notif-${o3.provider_charge_id}` });
+    await settle();
+    expect(o3.status).toBe('paid');
+
+    // estorno/chargeback na Efí depois de pago → reembolsado + livro-razão
+    efiCharges.get(o1.provider_charge_id)!.status = 'contested';
+    await fetch(`${base}/api/webhooks/efi-card`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `notification=notif-${o1.provider_charge_id}` });
+    await settle();
+    expect(o1.status).toBe('refunded');
+    expect(db.ledger_entries.some((l) => l.order_id === o1.id && l.type === 'chargeback')).toBe(true);
+
+    // produtor: cartão só com o repasse para a conta Efí dele liberado pelo Super Admin
+    expect((await api('GET', `/api/public/checkouts/${bSlug}`)).body.payment.card).toBeNull();
+    expect((await as('owner', 'PUT', `/api/admin/platform/producers/${B_ORG}`, { card_split_enabled: true })).status).toBe(400); // sem payee_code
+    expect((await as('owner', 'PUT', `/api/admin/platform/producers/${B_ORG}`, { recipient: { pix_key: 'b@produtor.com', name: 'Produtor B', payee_code: 'PAYEE-B' }, card_split_enabled: true })).status).toBe(200);
+    expect((await api('GET', `/api/public/checkouts/${bSlug}`)).body.payment.card).toMatchObject({ provider: 'efi' });
+    const pb = await api('POST', '/api/public/orders', { checkout_slug: bSlug, customer: { name: 'Tina Cartão', email: 'tina@x.com', phone: '11966665555', document: '52998224725' }, bump_ids: [], tracking: {}, payment_method: 'card', card: { payment_token: 'tok-approve-b-1234567', tds_identifier: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6', installments: 1 } });
+    expect(pb.status).toBe(201);
+    const ob = db.orders.find((x) => x.public_token === pb.body.token)!;
+    expect(efiCharges.get(ob.provider_charge_id)!.body.items[0].marketplace).toEqual({ mode: 1, repasses: [{ payee_code: 'PAYEE-B', fixed: ob.total_cents - ob.platform_fee_cents }] });
+    expect(ob.status).toBe('paid');
+
+    await as('owner', 'PUT', '/api/admin/gateways/card', { enabled: false, provider: 'woovi', maxInstallments: 1 });
+    delete process.env.EFI_COBRANCAS_URL;
   });
 
   it('produtor suspenso perde o acesso na hora', async () => {

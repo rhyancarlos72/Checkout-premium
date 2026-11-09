@@ -16,7 +16,8 @@ interface Producer {
   owner: boolean;
   pix_provider: 'woovi' | 'efi' | null;
   split_enabled: boolean;
-  recipient: { account?: string; document?: string; pix_key?: string; name?: string };
+  recipient: { account?: string; document?: string; pix_key?: string; name?: string; payee_code?: string };
+  card_split_enabled?: boolean;
   emails: string[];
   products: number;
   gross_cents: number;
@@ -96,7 +97,7 @@ function Producers() {
 function ProducerModal({ p, onClose }: { p: Producer; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [f, setF] = useState<{ status: Producer['status']; pix_provider: string; split_enabled: boolean; recipient: Producer['recipient'] & { account: string; document: string; pix_key: string; name: string } }>({ status: p.status === 'pending' ? 'active' : p.status, pix_provider: p.pix_provider ?? '', split_enabled: p.split_enabled, recipient: { account: '', document: '', pix_key: '', name: '', ...p.recipient } });
+  const [f, setF] = useState<{ status: Producer['status']; pix_provider: string; split_enabled: boolean; recipient: Producer['recipient'] & { account: string; document: string; pix_key: string; name: string; payee_code: string }; card_split_enabled: boolean }>({ card_split_enabled: Boolean(p.card_split_enabled), status: p.status === 'pending' ? 'active' : p.status, pix_provider: p.pix_provider ?? '', split_enabled: p.split_enabled, recipient: { account: '', document: '', pix_key: '', name: '', payee_code: '', ...p.recipient } });
   const save = useMutation({
     mutationFn: () => adminApi.put(`/platform/producers/${p.id}`, { ...f, pix_provider: f.pix_provider || null }),
     onSuccess: () => (qc.invalidateQueries({ queryKey: ['platform'] }), onClose()),
@@ -128,8 +129,10 @@ function ProducerModal({ p, onClose }: { p: Producer; onClose: () => void }) {
             <Field label="Chave Pix"><Input value={f.recipient.pix_key} onChange={(e) => setR('pix_key', e.target.value)} /></Field>
             <Field label="CPF/CNPJ do titular"><Input value={f.recipient.document} onChange={(e) => setR('document', e.target.value)} /></Field>
             <Field label="Nome do titular"><Input value={f.recipient.name} onChange={(e) => setR('name', e.target.value)} /></Field>
+            <Field label="Identificador de conta Efí (cartão)" hint="Para o repasse no cartão (payee_code)"><Input value={f.recipient.payee_code} onChange={(e) => setR('payee_code', e.target.value)} /></Field>
           </div>
         </div>
+        <Switch checked={f.card_split_enabled} onChange={(v) => setF({ ...f, card_split_enabled: v })} label="Liberar cartão (Efí) com repasse para a conta Efí deste produtor" />
         <Switch checked={f.split_enabled} onChange={(v) => setF({ ...f, split_enabled: v })} label="Liberar vendas deste produtor (com split)" />
         <p className="text-xs text-zinc-500">Com as vendas liberadas, cada Pix deste produtor sai com split: a parte dele (venda − comissão) vai direto para o recebedor e a comissão fica na conta da Prime. Se o gateway recusar o split, o Pix não é gerado (o dinheiro dele nunca cai na sua conta).</p>
         <div className="flex justify-end gap-2 pt-2">

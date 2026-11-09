@@ -47,7 +47,7 @@ export interface PublicCheckout {
   bumps: { id: string; title: string; description: string | null; price_cents: number; compare_at_cents: number | null; image_url: string | null }[];
   store: { name: string; supportEmail: string; document: string };
   /** formas além do Pix (cartão só quando liberado pela plataforma) */
-  payment?: { card: { maxInstallments: number } | null };
+  payment?: { card: { maxInstallments: number; provider?: 'woovi' | 'efi'; efi?: { payeeCode: string; sandbox: boolean } | null } | null };
 }
 
 export const themeDefaults: Required<Pick<Theme, 'mode' | 'primaryColor' | 'backgroundColor' | 'radius' | 'buttonText' | 'guaranteeDays' | 'showTimer' | 'timerMinutes' | 'showSeals' | 'stickyMobileCta'>> = {

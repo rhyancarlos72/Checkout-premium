@@ -38,6 +38,7 @@ platformRouter.get('/producers', async (_req, res) => {
       owner: o.is_platform_owner,
       pix_provider: o.pix_provider,
       split_enabled: o.split_enabled,
+      card_split_enabled: Boolean(o.card_split_enabled),
       recipient: o.recipient ?? {},
       created_at: o.created_at,
       emails: ((members ?? []) as any[]).filter((m) => m.org_id === o.id).map((m) => m.email).filter(Boolean),
@@ -54,7 +55,11 @@ const producerPatch = z.object({
   pix_provider: z.enum(['woovi', 'efi']).nullable().optional(),
   split_enabled: z.boolean().optional(),
   // identificação do recebedor no gateway (conta Efí / chave Pix / subconta Woovi), validada na fase do split
-  recipient: z.object({ account: z.string().trim().max(60).optional(), document: z.string().trim().max(20).optional(), pix_key: z.string().trim().max(120).optional(), name: z.string().trim().max(120).optional() }).optional(),
+  recipient: z
+    .object({ account: z.string().trim().max(60).optional(), document: z.string().trim().max(20).optional(), pix_key: z.string().trim().max(120).optional(), name: z.string().trim().max(120).optional(), payee_code: z.string().trim().max(64).optional() })
+    .optional(),
+  // cartão com repasse para a conta Efí do produtor (payee_code)
+  card_split_enabled: z.boolean().optional(),
   name: z.string().trim().min(2).max(120).optional(),
 });
 platformRouter.put('/producers/:id', async (req, res) => {
@@ -72,6 +77,10 @@ platformRouter.put('/producers/:id', async (req, res) => {
     if (provider === 'woovi' && !rec?.pix_key) throw new HttpError(400, 'Woovi: informe a chave Pix do produtor para o split');
     const doc = String(rec?.document ?? '').replace(/\D/g, '');
     if (provider === 'efi' && (!rec?.account || (doc.length !== 11 && doc.length !== 14))) throw new HttpError(400, 'Efí: informe o número da conta Efí e o CPF/CNPJ do titular para o split');
+  }
+  if (b.card_split_enabled) {
+    const rec = b.recipient ?? ((await supabase.from('organizations').select('recipient').eq('id', id).maybeSingle()).data as any)?.recipient;
+    if (!rec?.payee_code) throw new HttpError(400, 'Cartão do produtor: informe o Identificador de conta Efí (payee_code) dele');
   }
   const row = must(await supabase.from('organizations').update({ ...b, updated_at: new Date().toISOString() }).eq('id', id).select('*').single());
   clearOrgCache();

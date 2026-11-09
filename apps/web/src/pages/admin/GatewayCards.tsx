@@ -10,6 +10,7 @@ interface Gateways {
   defaultProvider: 'woovi' | 'efi' | null;
   pixExpiresMinutes?: number;
   card?: { enabled: boolean; configured: boolean; provider: 'woovi' | 'efi'; maxInstallments: number };
+  efiPayeeCode?: string;
   woovi: { configured: boolean; source: 'painel' | 'env' | null; appId_hint: string; hasWebhookSecret: boolean; webhookUrl: string };
   efi: {
     configured: boolean;
@@ -24,12 +25,17 @@ interface Gateways {
 }
 type Toast = { ok: (m: string) => void; err: (m: string) => void };
 
-/** Cartão de crédito no checkout (Woovi): o cliente digita o cartão numa página segura da Woovi, com 3DS. */
-function CardGatewayCard({ card, wooviReady, toast, onSaved }: { card: NonNullable<Gateways['card']>; wooviReady: boolean; toast: Toast; onSaved: () => void }) {
+/** Cartão de crédito no checkout: Woovi (página segura da Woovi) ou Efí (campos no checkout + token da Efí). */
+function CardGatewayCard({ card, wooviReady, efiReady, payeeCode, toast, onSaved }: { card: NonNullable<Gateways['card']>; wooviReady: boolean; efiReady: boolean; payeeCode: string; toast: Toast; onSaved: () => void }) {
   const [enabled, setEnabled] = useState(card.configured);
+  const [provider, setProvider] = useState<'woovi' | 'efi'>(card.provider ?? 'woovi');
   const [max, setMax] = useState(card.maxInstallments || 1);
+  const [payee, setPayee] = useState(payeeCode ?? '');
   const save = useMutation({
-    mutationFn: () => adminApi.put<{ message: string }>('/gateways/card', { enabled, provider: 'woovi', maxInstallments: max }),
+    mutationFn: async () => {
+      if (provider === 'efi' && payee.trim() !== (payeeCode ?? '')) await adminApi.put('/gateways/efi', { payeeCode: payee.trim() });
+      return adminApi.put<{ message: string }>('/gateways/card', { enabled, provider, maxInstallments: max });
+    },
     onSuccess: (r) => (toast.ok(r.message), onSaved()),
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
   });
@@ -38,23 +44,45 @@ function CardGatewayCard({ card, wooviReady, toast, onSaved }: { card: NonNullab
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="font-semibold text-zinc-900">Cartão de crédito</p>
-          <p className="mt-1 text-sm text-zinc-500">Aparece no checkout ao lado do Pix. O cliente informa o CPF e digita o cartão numa página segura da Woovi (com verificação 3DS do banco). Os dados do cartão nunca passam pelo seu sistema. Vale para as suas vendas; produtores só depois que o split de cartão for habilitado pela Woovi.</p>
-          {!wooviReady && <p className="mt-2 text-sm font-medium text-amber-600">Configure a Woovi (AppID) antes de ligar o cartão.</p>}
+          <p className="mt-1 text-sm text-zinc-500">
+            {provider === 'efi'
+              ? 'Efí: o cliente digita o cartão no seu checkout, mas a biblioteca oficial da Efí criptografa os dados no navegador (o número do cartão nunca passa pelo seu servidor). Com verificação 3DS do banco. Produtores podem vender no cartão com repasse para a conta Efí deles.'
+              : 'Woovi: o cliente informa o CPF e digita o cartão numa página segura da Woovi (com 3DS). Só para as suas vendas (a Woovi não documenta split no cartão).'}
+          </p>
+          {provider === 'woovi' && !wooviReady && <p className="mt-2 text-sm font-medium text-amber-600">Configure a Woovi (AppID) antes de ligar o cartão.</p>}
+          {provider === 'efi' && !efiReady && <p className="mt-2 text-sm font-medium text-amber-600">Configure a Efí (Client ID e Secret) antes de ligar o cartão.</p>}
         </div>
-        <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold', card.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-500')}>{card.enabled ? 'Ligado' : 'Desligado'}</span>
+        <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold', card.enabled ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-500')}>{card.enabled ? `Ligado · ${card.provider === 'efi' ? 'Efí' : 'Woovi'}` : 'Desligado'}</span>
       </div>
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-        <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 accent-blue-600" /> Aceitar cartão no checkout
-        </label>
-        <Field label="Parcelas sem juros (máximo)" className="sm:w-56">
+      <div className="mt-4 grid gap-3 sm:grid-cols-3 sm:items-end">
+        <Field label="Gateway do cartão">
+          <select value={provider} onChange={(e) => setProvider(e.target.value as 'woovi' | 'efi')} className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm">
+            <option value="woovi">Woovi</option>
+            <option value="efi">Efí Bank</option>
+          </select>
+        </Field>
+        <Field label="Parcelas (máximo)">
           <select value={max} onChange={(e) => setMax(Number(e.target.value))} className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm">
             {Array.from({ length: 12 }, (_, i) => i + 1).map((n) => <option key={n} value={n}>{n === 1 ? 'Somente à vista' : `Até ${n}x`}</option>)}
           </select>
         </Field>
+        {provider === 'efi' && (
+          <Field label="Identificador de conta Efí" hint="Efí → API → Introdução → Identificador de conta">
+            <Input value={payee} onChange={(e) => setPayee(e.target.value)} placeholder="ex.: 4d2f…" />
+          </Field>
+        )}
+      </div>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 accent-blue-600" /> Aceitar cartão no checkout
+        </label>
         <Button className="sm:ml-auto" loading={save.isPending} onClick={() => save.mutate()}>Salvar</Button>
       </div>
-      <p className="mt-3 text-xs text-zinc-500">Antes de ligar: peça à Woovi a habilitação do cartão (e do parcelamento, se usar mais de 1x) e aguarde o KYC ficar “Ativo” em Cartão de Crédito → Ajustes.</p>
+      <p className="mt-3 text-xs text-zinc-500">
+        {provider === 'efi'
+          ? 'Antes de ligar: na sua aplicação Efí, ative a "API de Emissões" (cobranças), cadastre o ramo de atividade e preencha o formulário de KYC de cartão da Efí. A Efí avisa os pagamentos em /api/webhooks/efi-card (configurado sozinho em cada cobrança).'
+          : 'Antes de ligar: peça à Woovi a habilitação do cartão (e do parcelamento, se usar mais de 1x) e aguarde o KYC ficar "Ativo" em Cartão de Crédito → Ajustes.'}
+      </p>
     </div>
   );
 }
@@ -218,7 +246,7 @@ export function GatewayCards({ toast }: { toast: Toast }) {
   return (
     <>
       <DefaultGatewayCard current={data.defaultProvider} pixMinutes={data.pixExpiresMinutes ?? 120} configured={{ efi: e.configured, woovi: w.configured }} toast={toast} onSaved={refresh} />
-      {data.card && <CardGatewayCard card={data.card} wooviReady={w.configured} toast={toast} onSaved={refresh} />}
+      {data.card && <CardGatewayCard card={data.card} wooviReady={w.configured} efiReady={Boolean(e.clientId_hint && e.hasClientSecret)} payeeCode={(e as any).payeeCode ?? ''} toast={toast} onSaved={refresh} />}
       <GatewayCard
         logo={<EfiLogo />}
         title={`Efí Bank${e.sandbox ? ' · homologação' : ''}`}

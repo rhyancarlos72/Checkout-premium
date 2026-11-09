@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import { Router, type Request } from 'express';
+import express, { Router, type Request } from 'express';
+import { readEfiNotification } from '../services/efiCard.js';
 import { efiConfig, wooviConfig } from '../services/gateways.js';
 import { logger, supabase } from '../lib/core.js';
 import { findOrderByCharge, syncOrderWithProvider } from '../services/orders.js';
@@ -81,3 +82,25 @@ async function efiHandler(req: Request, res: any) {
 }
 webhookRouter.post('/efi', efiHandler);
 webhookRouter.post('/efi/pix', efiHandler);
+
+/**
+ * Cartão Efí (API de Cobranças): a Efí envia só um token em `notification` (form ou JSON).
+ * O status é SEMPRE consultado na Efí com as nossas credenciais (GET /v1/notification/:token),
+ * então um POST falso não aprova nada.
+ */
+webhookRouter.post('/efi-card', express.urlencoded({ extended: false, limit: '10kb' }), async (req: Request, res) => {
+  const token = String((req.body as any)?.notification ?? '').trim();
+  res.status(200).json({ ok: true });
+  if (!/^[\w-]{8,100}$/.test(token)) return log('efi-card', null, null, 'ignored', 'sem token');
+  try {
+    const n = await readEfiNotification(token);
+    if (!n?.chargeId) return log('efi-card', token, null, 'ignored', 'notificação sem cobrança');
+    const orderId = await findOrderByCharge('efi', n.chargeId);
+    if (!orderId) return log('efi-card', n.chargeId, { status: n.status }, 'ignored', 'pedido não encontrado');
+    const result = await syncOrderWithProvider(orderId);
+    await log('efi-card', n.chargeId, { status: n.status }, 'processed', result);
+  } catch (e: any) {
+    logger.error({ err: e?.message }, 'Notificação de cartão Efí falhou');
+    await log('efi-card', token, null, 'error', String(e?.message ?? e));
+  }
+});

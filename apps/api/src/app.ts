@@ -16,7 +16,11 @@ import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
 import { membersRouter } from './routes/members.js';
 import { webhookRouter } from './routes/webhooks.js';
-import { refreshGateways } from './services/gateways.js';
+import { cardConfig, refreshGateways } from './services/gateways.js';
+const efiCardActive = () => {
+  const c = cardConfig();
+  return c.enabled && c.provider === 'efi';
+};
 import { runJobs } from './services/jobs.js';
 import crypto from 'node:crypto';
 
@@ -34,9 +38,28 @@ export function createApp() {
         useDefaults: true,
         directives: {
           'default-src': ["'self'"],
-          'script-src': ["'self'", 'https://connect.facebook.net'],
+          'script-src': [
+            "'self'",
+            'https://connect.facebook.net',
+            // cartão Efí: antifraude da biblioteca oficial (payment-token-efi) e o script 3DS do banco, que a
+            // biblioteca injeta inline — liberado SÓ nas páginas de checkout/pedido e só com o cartão Efí ligado
+            'https://device.clearsale.com.br',
+            ((req: any) => (efiCardActive() && /^\/(checkout|c\/|pedido\/)/.test(req.path ?? '') ? "'unsafe-inline'" : "'self'")) as any,
+          ],
           'img-src': ["'self'", 'data:', 'blob:', 'https:'],
-          'connect-src': ["'self'", supabaseHost, supabaseHost.replace('https://', 'wss://'), 'https://www.facebook.com', 'https://connect.facebook.net'],
+          'connect-src': [
+            "'self'",
+            supabaseHost,
+            supabaseHost.replace('https://', 'wss://'),
+            'https://www.facebook.com',
+            'https://connect.facebook.net',
+            // cartão Efí: tokenização do cartão no navegador (o número do cartão vai direto para a Efí)
+            'https://tokenizer.sejaefi.com.br',
+            'https://cobrancas.api.efipay.com.br',
+            'https://cobrancas-h.api.efipay.com.br',
+          ],
+          // verificação 3DS: o navegador envia o cliente para a tela do banco (endereço varia por banco)
+          'form-action': ["'self'", 'https:'],
           'style-src': ["'self'", "'unsafe-inline'"],
           'font-src': ["'self'", 'data:'],
           // aulas da área de membros: vídeos do YouTube, Vimeo, Panda, Drive etc. (links cadastrados pelo admin)
