@@ -139,6 +139,11 @@ describe.skipIf(!RUN)('checkup do checkout no navegador', () => {
       const token = p.url().split('/pedido/')[1];
       const order = db.orders.find((o) => o.public_token === token)!;
       await p.getByText('Aguardando pagamento').waitFor();
+      // a página do Pix abre no topo (o botão foi clicado lá embaixo no checkout)
+      expect(await p.evaluate(() => window.scrollY)).toBe(0);
+      const qrTop = await p.locator('img[alt="QR Code Pix"]').evaluate((el) => el.getBoundingClientRect().top);
+      ok(`[${label}] página do Pix abre no topo (QR Code a ${Math.round(qrTop)} px do topo da tela)`);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/pix-topo-${label}.png` });
       expect(await p.getByText('R$ 26,90').count()).toBeGreaterThan(0);
       expect(await p.locator('img[alt="QR Code Pix"]').count()).toBe(1);
       expect(await p.getByText(order.pix_code).count()).toBe(1);

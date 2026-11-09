@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, CheckCircle2, Clock, Gift, Zap, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { cn } from '@/components/ui';
 import { checkoutPath } from '@/lib/links';
@@ -167,6 +167,10 @@ function Shell({ theme, children }: { theme: Theme; children: ReactNode }) {
 
 export default function PaymentPage() {
   const { token = '' } = useParams();
+  // abre sempre no topo (QR Code e copia e cola à vista), mesmo vindo do fim da página do checkout
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [token]);
   const qc = useQueryClient();
   const now = useNow();
   const { data: order, isLoading, error } = useQuery({

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { lazy, StrictMode, Suspense } from 'react';
+import { lazy, StrictMode, Suspense, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { PageLoader } from './components/ui';
@@ -33,12 +33,24 @@ function RootRedirect() {
   return <Navigate to={(isAuthLink ? '/admin/nova-senha' : '/admin') + hash} replace />;
 }
 
+// Ao trocar de página (ex.: "Finalizar compra" → página do Pix), começa do topo, onde ficam o QR Code e o código Pix.
+// Sem isso o navegador mantém a rolagem da página anterior e o cliente cai no meio/fim da página do Pix.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+function ScrollToTop() {
+  const { pathname } = useLocation();
+  useLayoutEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+  return null;
+}
+
 const qc = new QueryClient({ defaultOptions: { queries: { refetchOnWindowFocus: false, staleTime: 15_000 } } });
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={qc}>
       <BrowserRouter>
+        <ScrollToTop />
         <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/checkout" element={<CheckoutPage />} />
