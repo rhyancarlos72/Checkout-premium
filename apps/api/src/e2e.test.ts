@@ -16,6 +16,7 @@ const spedyCalls: any[] = [];
 const ptCalls: { event: string; body: any; headers: http.IncomingHttpHeaders }[] = [];
 const waSent: { instance: string; body: any }[] = [];
 let evoDown = false; // simula a Evolution fora do ar
+const ptB: { event: string; body: any }[] = []; // PayTracking do produtor B (marketplace)
 const fake = http.createServer((req, res) => {
   let b = '';
   req.on('data', (c) => (b += c));
@@ -40,6 +41,10 @@ const fake = http.createServer((req, res) => {
       if (evoDown) return json(502, { error: 'bad gateway' });
       waSent.push({ instance: decodeURIComponent(req.url!.split('/').pop()!), body });
       return json(201, { key: { id: 'x' } });
+    }
+    if (req.url === '/paytracking-b') {
+      ptB.push({ event: body?.event, body });
+      return json(200, { ok: true });
     }
     if (req.url === '/paytracking') {
       ptCalls.push({ event: body?.event, body, headers: req.headers });
@@ -600,4 +605,161 @@ describe('área de membros', () => {
       db.checkouts = savedCk;
     }
   }, 15_000);
+});
+
+
+// =============================================================================
+// MARKETPLACE: isolamento entre produtores, isenção da Prime e comissões
+// =============================================================================
+describe('marketplace multiusuário', () => {
+  const OWNER_ORG = '0a000000-0000-4000-8000-000000000001';
+  const B_ORG = '0b000000-0000-4000-8000-000000000002';
+  const OWNER_USER = '0a000000-0000-4000-8000-0000000000aa';
+  const B_USER = '0b000000-0000-4000-8000-0000000000bb';
+  const B_PRODUCT = '0b000000-0000-4000-8000-0000000000p1'.replace('p1', 'a1');
+  const B_BUMP_PRODUCT = '0b000000-0000-4000-8000-0000000000a2';
+  const B_BUMP = '0b000000-0000-4000-8000-0000000000b1';
+  const as = async (who: 'owner' | 'b', method: string, path: string, body?: unknown) => {
+    const r = await fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json', Authorization: `Bearer tok-${who}`, 'X-Forwarded-For': '187.10.20.77' }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const text = await r.text();
+    return { status: r.status, body: text ? JSON.parse(text) : null };
+  };
+  let bSlug = '';
+
+  beforeAll(async () => {
+    const now = new Date().toISOString();
+    // migração: organização proprietária com todos os dados atuais + produtor B aprovado
+    db.organizations = [
+      { id: OWNER_ORG, name: 'Prime', status: 'active', is_platform_owner: true, split_enabled: true, pix_provider: null, recipient: {}, created_at: now },
+      { id: B_ORG, name: 'Produtor B', status: 'active', is_platform_owner: false, split_enabled: false, pix_provider: null, recipient: {}, created_at: now },
+    ];
+    for (const t of ['products', 'checkouts', 'order_bumps', 'checkout_bumps', 'coupons', 'orders', 'events', 'upsells', 'invoices']) for (const r of db[t] ?? []) r.org_id ??= OWNER_ORG;
+    db.admins = [{ user_id: OWNER_USER, role: 'owner', email: 'dono@prime.com' }];
+    db.org_members = [{ org_id: OWNER_ORG, user_id: OWNER_USER, role: 'owner', email: 'dono@prime.com' }, { org_id: B_ORG, user_id: B_USER, role: 'owner', email: 'b@produtor.com' }];
+    db.fee_policies = [{ id: 'fp-1', org_id: null, fixed_cents: 99, percent_bps: 0, bump_cents: 40, gateway_fee_payer: 'producer', refund_policy: 'keep_fee', created_at: '2026-01-01T00:00:00.000Z' }];
+    db.ledger_entries = [];
+    const { supabase } = await import('./lib/core.js');
+    (supabase as any).auth.getUser = async (t: string) =>
+      t === 'tok-owner' ? { data: { user: { id: OWNER_USER, email: 'dono@prime.com', factors: [] } }, error: null } : t === 'tok-b' ? { data: { user: { id: B_USER, email: 'b@produtor.com', factors: [] } }, error: null } : { data: { user: null }, error: { message: 'x' } };
+    const { clearOwnerCache, clearOrgCache } = await import('./lib/tenant.js');
+    clearOwnerCache();
+    clearOrgCache();
+    const { clearAuthCache } = await import('./middleware/auth.js');
+    clearAuthCache();
+  });
+
+  it('produtor cria o próprio produto e não enxerga nada da Prime', async () => {
+    const created = await as('b', 'POST', '/api/admin/products', { name: 'Curso do B', price_cents: 990, delivery_type: 'link', delivery_url: 'https://drive.google.com/b', active: true });
+    expect(created.status).toBe(201);
+    const p = db.products.find((x) => x.name === 'Curso do B')!;
+    expect(p.org_id).toBe(B_ORG);
+    bSlug = created.body.checkout.slug;
+    expect(db.checkouts.find((c) => c.slug === bSlug)!.org_id).toBe(B_ORG);
+    // bump do B (produto e bump dele)
+    db.products.push({ id: B_BUMP_PRODUCT, org_id: B_ORG, number: 9001, name: 'Bônus do B', price_cents: 490, active: true, delivery_type: 'link', delivery_url: 'https://drive.google.com/b2', created_at: new Date().toISOString() });
+    db.order_bumps.push({ id: B_BUMP, org_id: B_ORG, product_id: B_BUMP_PRODUCT, title: 'Bônus do B', price_cents: 490, active: true, created_at: new Date().toISOString() });
+    db.checkout_bumps.push({ checkout_id: db.checkouts.find((c) => c.slug === bSlug)!.id, bump_id: B_BUMP, sort: 0, org_id: B_ORG });
+
+    const mine = await as('b', 'GET', '/api/admin/products');
+    expect(mine.body.map((x: any) => x.name).sort()).toEqual(['Bônus do B', 'Curso do B']);
+    const ownerList = await as('owner', 'GET', '/api/admin/products');
+    expect(ownerList.body.map((x: any) => x.name)).not.toContain('Curso do B');
+    // ids da Prime na URL não funcionam para o produtor
+    expect((await as('b', 'GET', '/api/admin/products/00000000-0000-4000-8000-000000000001')).status).toBe(404);
+    const ownerOrder = db.orders.find((o) => o.org_id === OWNER_ORG)!;
+    expect((await as('b', 'POST', `/api/admin/orders/${ownerOrder.id}/sync`)).status).toBe(404);
+    expect((await as('b', 'GET', '/api/admin/orders')).body.data).toHaveLength(0);
+    // configurações globais e da plataforma: só o Super Admin
+    for (const path of ['/api/admin/gateways', '/api/admin/whatsapp', '/api/admin/platform/producers', '/api/admin/team', '/api/admin/integrations']) expect((await as('b', 'GET', path)).status).toBe(403);
+    expect((await as('owner', 'GET', '/api/admin/platform/producers')).status).toBe(200);
+    const me = await as('b', 'GET', '/api/admin/me');
+    expect(me.body).toMatchObject({ superAdmin: false, org: { id: B_ORG, owner: false, sellingEnabled: false } });
+    expect((await as('owner', 'GET', '/api/admin/me')).body).toMatchObject({ superAdmin: true, org: { id: OWNER_ORG, owner: true } });
+  });
+
+  it('venda do produtor fica bloqueada até o Super Admin liberar o recebimento', async () => {
+    const r = await api('POST', '/api/public/orders', { checkout_slug: bSlug, customer: { name: 'Caio Lima', email: 'caio@x.com', phone: '11911112222' }, bump_ids: [], tracking: {} });
+    expect(r.status).toBe(503);
+    // liberar exige gateway + recebedor
+    expect((await as('owner', 'PUT', `/api/admin/platform/producers/${B_ORG}`, { split_enabled: true })).status).toBe(400);
+    const ok = await as('owner', 'PUT', `/api/admin/platform/producers/${B_ORG}`, { pix_provider: 'woovi', recipient: { pix_key: 'b@produtor.com', name: 'Produtor B' }, split_enabled: true });
+    expect(ok.status).toBe(200);
+    // a conta proprietária não pode ser suspensa
+    expect((await as('owner', 'PUT', `/api/admin/platform/producers/${OWNER_ORG}`, { status: 'suspended' })).status).toBe(400);
+    expect(db.audit_logs.some((a) => a.action === 'producer.update' && a.target === B_ORG)).toBe(true);
+  });
+
+  it('comissão: R$ 0,99 por venda + R$ 0,40 por bump para o produtor; webhook repetido não duplica', async () => {
+    // PayTracking do produtor (tokens isolados): só ele recebe as vendas dele
+    expect((await as('b', 'POST', '/api/admin/webhooks', { name: 'PT do B', preset: 'paytracking', url: `${ext}/paytracking-b`, token: 'tok-b', secret: '', events: ['sale.pending', 'sale.approved'], active: true })).status).toBeLessThan(300);
+    expect(db.settings.find((x) => x.key === `webhooks@${B_ORG}`)).toBeTruthy();
+    expect(db.settings.find((x) => x.key === 'webhooks')!.value.items.map((w: any) => w.url)).not.toContain(`${ext}/paytracking-b`);
+
+    const ptOwnerBefore = ptCalls.length;
+    const r = await api('POST', '/api/public/orders', { checkout_slug: bSlug, customer: { name: 'Caio Lima', email: 'caio@x.com', phone: '11911112222' }, bump_ids: [B_BUMP], tracking: {} });
+    expect(r.status).toBe(201);
+    const o = db.orders.find((x) => x.public_token === r.body.token)!;
+    expect(o.org_id).toBe(B_ORG);
+    expect(o.total_cents).toBe(1480);
+    expect(o.platform_fee_cents).toBe(99 + 40);
+    expect(o.fee_snapshot).toMatchObject({ owner_exempt: false, fixedCents: 99, bumpCents: 40 });
+    charges.get(o.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } });
+    await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } }); // repetido
+    await settle();
+    expect(o.status).toBe('paid');
+    const led = db.ledger_entries.filter((l) => l.order_id === o.id);
+    expect(led.map((l) => [l.type, l.amount_cents]).sort()).toEqual([['platform_fee', -139], ['sale', 1480]]);
+    // rastreamento: foi para o PayTracking do B e não para o da Prime
+    expect(ptB.some((p) => p.event === 'sale.approved' && p.body.transaction_id === o.id)).toBe(true);
+    expect(ptCalls.slice(ptOwnerBefore).some((p) => p.body.transaction_id === o.id)).toBe(false);
+    // WhatsApp da plataforma não é usado para vendas de produtores
+    expect(waSent.some((w) => String(w.body?.number ?? '').includes('911112222'))).toBe(false);
+
+    const fin = await as('b', 'GET', '/api/admin/finance');
+    expect(fin.body).toMatchObject({ owner: false, gross_cents: 1480, platform_fees_cents: 139, net_estimated_cents: 1341 });
+  });
+
+  it('Prime (proprietária) não paga comissão em nenhum cenário', async () => {
+    const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Dona Prime', email: 'cliente-prime@x.com', phone: '11933334444' }, bump_ids: ['00000000-0000-4000-8000-0000000000b1'], tracking: {} });
+    const o = db.orders.find((x) => x.public_token === r.body.token)!;
+    expect(o.org_id).toBe(OWNER_ORG);
+    expect(o.platform_fee_cents).toBe(0);
+    expect(o.fee_snapshot.owner_exempt).toBe(true);
+    charges.get(o.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } });
+    await settle();
+    expect(db.ledger_entries.filter((l) => l.order_id === o.id).map((l) => l.type)).toEqual(['sale']);
+    const fin = await as('owner', 'GET', '/api/admin/finance');
+    expect(fin.body.owner).toBe(true);
+    expect(fin.body.platform_fees_cents).toBe(0);
+    // ninguém cria tabela de taxas para a conta proprietária
+    expect((await as('owner', 'POST', '/api/admin/platform/fees', { org_id: OWNER_ORG, fixed_cents: 500, percent_bps: 0, bump_cents: 0 })).status).toBe(400);
+    // produtor não cria taxas nem mexe em produtores
+    expect((await as('b', 'POST', '/api/admin/platform/fees', { org_id: null, fixed_cents: 0, percent_bps: 0, bump_cents: 0 })).status).toBe(403);
+  });
+
+  it('nova tabela de taxas vale para as próximas vendas; as antigas mantêm a taxa da época', async () => {
+    const before = db.orders.filter((x) => x.org_id === B_ORG).map((x) => [x.id, x.platform_fee_cents]);
+    expect((await as('owner', 'POST', '/api/admin/platform/fees', { org_id: null, fixed_cents: 150, percent_bps: 100, bump_cents: 50 })).status).toBe(201);
+    const r = await api('POST', '/api/public/orders', { checkout_slug: bSlug, customer: { name: 'Bia Nova', email: 'bia-nova@x.com', phone: '11955556666' }, bump_ids: [], tracking: {} });
+    const o = db.orders.find((x) => x.public_token === r.body.token)!;
+    expect(o.platform_fee_cents).toBe(150 + Math.round(990 * 0.01)); // R$ 1,50 + 1%
+    for (const [id, fee] of before) expect(db.orders.find((x) => x.id === id)!.platform_fee_cents).toBe(fee);
+  });
+
+  it('cupom vale só no produtor que o criou', async () => {
+    db.coupons.push({ id: '0b000000-0000-4000-8000-0000000000c9', org_id: B_ORG, code: 'BFIVE', type: 'fixed', value: 500, used_count: 0, min_cents: 0, active: true, created_at: new Date().toISOString() });
+    expect((await api('POST', `/api/public/checkouts/${bSlug}/quote`, { bump_ids: [], coupon_code: 'BFIVE' })).body.discount_cents).toBe(500);
+    expect((await api('POST', '/api/public/checkouts/8931442/quote', { bump_ids: [], coupon_code: 'BFIVE' })).body.coupon_error).toBeTruthy();
+    expect((await api('POST', `/api/public/checkouts/${bSlug}/quote`, { bump_ids: [], coupon_code: 'DEZ' })).body.coupon_error).toBeTruthy();
+  });
+
+  it('produtor suspenso perde o acesso na hora', async () => {
+    expect((await as('owner', 'PUT', `/api/admin/platform/producers/${B_ORG}`, { status: 'suspended' })).status).toBe(200);
+    const me = await as('b', 'GET', '/api/admin/me');
+    expect(me.status).toBe(403);
+    expect(me.body.error).toMatch(/suspensa/);
+    expect((await api('POST', '/api/public/orders', { checkout_slug: bSlug, customer: { name: 'José Souza', email: 'ze@x.com', phone: '11977778888' }, bump_ids: [], tracking: {} })).status).toBe(403);
+  });
 });

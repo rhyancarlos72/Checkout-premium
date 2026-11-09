@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { env } from '../config/env.js';
 import { z } from 'zod';
 import { HttpError, productCode, supabase } from '../lib/core.js';
+import { orgKey, runAsOrg } from '../lib/tenant.js';
 
 // ------------------------------------------------------------------ sessão do aluno
 // Token assinado (HMAC) com o id do cliente e a validade: não precisa de tabela de sessões.
@@ -50,7 +51,7 @@ export async function memberHome(customerId: string) {
   const owned = await ownedProductIds(customerId);
   const [{ data: customer }, { data: products }] = await Promise.all([
     supabase.from('customers').select('name, email').eq('id', customerId).maybeSingle(),
-    supabase.from('products').select('id, number, name, description, image_url, members_banner_url, active').eq('members_enabled', true),
+    supabase.from('products').select('*').eq('members_enabled', true), // '*' inclui org_id quando o marketplace está ativo
   ]);
   const all = ((products ?? []) as any[]).filter((p) => owned.has(p.id) || p.active);
   const ids = all.length ? all.map((p) => p.id) : ['00000000-0000-0000-0000-000000000000'];
@@ -90,10 +91,8 @@ export async function memberHome(customerId: string) {
       };
     });
   // vitrine escolhida no painel (Área de membros → Produtos adicionais); sem escolha: automática
-  const cfg = await getMembersConfig();
-  if (cfg.offers.length) return { customer, courses, extras: await manualExtras(owned, cfg), offers: { title: cfg.offersTitle, subtitle: cfg.offersSubtitle } };
   // cursos que a pessoa ainda não tem: aparecem bloqueados, com o link do checkout para liberar
-  const extras = all
+  const autoExtras = all
     .filter((p) => !owned.has(p.id) && p.active && checkoutOf.has(p.id))
     .map((p) => {
       const firstModule = ((modules ?? []) as ModuleRow[]).filter((m) => m.product_id === p.id).sort(sort)[0];
@@ -107,9 +106,20 @@ export async function memberHome(customerId: string) {
         code: productCode(p.number),
         badge: null as string | null,
         price_cents: null as number | null,
+        org_id: (p.org_id ?? null) as string | null,
       };
     });
-  return { customer, courses, extras, offers: { title: cfg.offersTitle, subtitle: cfg.offersSubtitle } };
+  // vitrine por produtor: o aluno só vê ofertas dos produtores de quem ele comprou (nunca de outros)
+  const myOrgs = [...new Set(all.filter((p) => owned.has(p.id)).map((p) => (p.org_id ?? null) as string | null))];
+  let offers = { title: 'Cursos adicionais', subtitle: 'Libere mais conteúdos' };
+  const extras: Omit<(typeof autoExtras)[number], 'org_id'>[] = [];
+  for (const org of myOrgs) {
+    const cfg = await runAsOrg(org, () => getMembersConfig());
+    if (!extras.length) offers = { title: cfg.offersTitle, subtitle: cfg.offersSubtitle };
+    if (cfg.offers.length) extras.push(...(await manualExtras(owned, cfg)));
+    else extras.push(...autoExtras.filter((x) => x.org_id === org).map(({ org_id: _o, ...x }) => x));
+  }
+  return { customer, courses, extras, offers };
 }
 
 // ------------------------------------------------------------------ vitrine de produtos adicionais
@@ -127,13 +137,13 @@ export const membersConfigSchema = z.object({
 });
 export type MembersConfig = z.infer<typeof membersConfigSchema>;
 export async function getMembersConfig(): Promise<MembersConfig> {
-  const { data } = await supabase.from('settings').select('value').eq('key', 'members').maybeSingle();
+  const { data } = await supabase.from('settings').select('value').eq('key', await orgKey('members')).maybeSingle();
   const r = membersConfigSchema.safeParse((data as any)?.value ?? {});
   return r.success ? r.data : membersConfigSchema.parse({});
 }
 export async function saveMembersConfig(input: unknown) {
   const value = membersConfigSchema.parse(input);
-  const { error } = await supabase.from('settings').upsert({ key: 'members', value, updated_at: new Date().toISOString() });
+  const { error } = await supabase.from('settings').upsert({ key: await orgKey('members'), value, updated_at: new Date().toISOString() });
   if (error) throw new HttpError(500, error.message);
   return value;
 }
@@ -143,7 +153,7 @@ async function manualExtras(owned: Set<string>, cfg: MembersConfig) {
   const ids = cfg.offers.map((o) => o.product_id).filter((id) => !owned.has(id));
   if (!ids.length) return [];
   const [{ data: products }, { data: checkouts }, { data: modules }] = await Promise.all([
-    supabase.from('products').select('id, number, name, description, image_url, price_cents, active').in('id', ids),
+    supabase.from('products').select('*').in('id', ids),
     supabase.from('checkouts').select('slug, product_id, price_cents, active, created_at').in('product_id', ids).eq('active', true).order('created_at', { ascending: true }),
     supabase.from('member_modules').select('product_id, cover_url, sort').in('product_id', ids).order('sort', { ascending: true }),
   ]);

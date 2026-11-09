@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../config/env.js';
+import { orgKey } from '../lib/tenant.js';
 import { supabase } from '../lib/core.js';
 
 /**
@@ -25,20 +26,23 @@ export interface Webhook {
 }
 
 const KEY = 'webhooks';
-let cache: { items: Webhook[]; at: number } | null = null;
+// cada produtor tem os próprios destinos (PayTracking, pixel, tokens): nada se mistura entre organizações
+const cache = new Map<string, { items: Webhook[]; at: number }>();
 
 export async function listWebhooks(): Promise<Webhook[]> {
-  if (cache && Date.now() - cache.at < 15_000) return cache.items;
-  const { data } = await supabase.from('settings').select('value').eq('key', KEY).maybeSingle();
+  const key = await orgKey(KEY);
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < 15_000) return hit.items;
+  const { data } = await supabase.from('settings').select('value').eq('key', key).maybeSingle();
   const items = (((data as any)?.value?.items ?? []) as Webhook[]).filter((w) => w && w.id && w.url);
-  cache = { items, at: Date.now() };
+  cache.set(key, { items, at: Date.now() });
   return items;
 }
 
 export async function saveWebhooks(items: Webhook[]) {
-  const { error } = await supabase.from('settings').upsert({ key: KEY, value: { items }, updated_at: new Date().toISOString() });
+  const { error } = await supabase.from('settings').upsert({ key: await orgKey(KEY), value: { items }, updated_at: new Date().toISOString() });
   if (error) throw new Error(error.message);
-  cache = null;
+  cache.clear();
 }
 
 export const newWebhookId = () => crypto.randomUUID();
@@ -63,7 +67,8 @@ export function envWebhook(): Webhook | null {
 /** Todos os destinos (painel + env), sem duplicar a mesma URL+token. */
 export async function allWebhooks(): Promise<Webhook[]> {
   const items = await listWebhooks();
-  const e = envWebhook();
+  // o PayTracking das variáveis de ambiente é da Prime: nunca recebe vendas de produtores
+  const e = (await orgKey(KEY)) === KEY ? envWebhook() : null;
   if (e && !items.some((w) => w.url === e.url && w.token === e.token)) return [...items, e];
   return items;
 }

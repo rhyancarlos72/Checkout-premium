@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { HttpError, must, productCode, supabase } from '../lib/core.js';
+import { HttpError, must, productCode } from '../lib/core.js';
+// filtro por organização (o roteador é montado dentro do /admin, que já define o produtor logado)
+import { tenantDb as supabase } from '../lib/tenant.js';
 import { getMembersConfig, saveMembersConfig } from '../services/members.js';
 
 /** Painel → Área de membros: seções, módulos e aulas de cada produto. (montado em /api/admin/members) */
@@ -132,5 +134,11 @@ adminMembersRouter.get('/offers', async (_req, res) => {
   res.json(await getMembersConfig());
 });
 adminMembersRouter.put('/offers', async (req, res) => {
+  // só produtos da própria organização podem ir para a vitrine
+  const ids: string[] = Array.isArray(req.body?.offers) ? req.body.offers.map((o: any) => String(o?.product_id ?? '')) : [];
+  if (ids.length) {
+    const { data } = await supabase.from('products').select('id').in('id', ids);
+    if ((data ?? []).length !== new Set(ids).size) throw new HttpError(400, 'Produto inválido na vitrine');
+  }
   res.json(await saveMembersConfig(req.body));
 });

@@ -94,3 +94,16 @@ Este documento faz duas coisas. Primeiro, registra o que o sistema faz hoje, ver
 - **Nada é apagado.** As colunas novas aceitam vazio durante a transição e só ficam obrigatórias depois do retroativo conferido.
 - Backup antes de cada fase: Supabase → Database → Backups, ou `pg_dump`.
 - Cada fase é validada com a suíte completa (API + navegador) antes de seguir.
+
+## 7. Andamento
+
+| Fase | Situação |
+|---|---|
+| 1. Auditoria | ✅ Este documento |
+| 2 + 3. Base multiusuário e conta proprietária | ✅ Feito: organizações, `org_id` em todas as tabelas de negócio (preenchido e travado pelo banco), filtro automático em todas as rotas do painel, Super Admin = o dono atual (mesmo `user_id`), isenção da Prime no servidor, motor de taxas versionado (R$ 0,99 + R$ 0,40/bump), livro-razão imutável, auditoria, configurações por produtor (loja, PayTracking, Spedy própria, vitrine), WhatsApp só para a Prime |
+| 4 + 5. Painéis | ✅ Feito: Financeiro (produtor e Prime), Plataforma (produtores, pedidos de cadastro, taxas, financeiro global, auditoria), cadastro com CPF/CNPJ e aceite dos termos |
+| 6. Split Pix | ⏳ Próxima: depende de ler a documentação (sites bloqueados neste ambiente) e da habilitação na Woovi/Efí. Até lá, produtor só vende quando o Super Admin libera, e o pedido fica marcado para o split. |
+| 7. Cartão | ⏳ Depois do Pix (decisão do dono) |
+| 8. Financeiro completo | Parcial: livro-razão, comissão, reembolso e chargeback; repasses e conciliação diária com o gateway entram junto com o split |
+
+**Ordem de implantação:** 1) backup do banco; 2) rodar `supabase/migrations/20261112000000_marketplace_base.sql`; 3) redeploy. O código novo funciona também sem o SQL (modo loja única, igual a antes), então a ordem não quebra a loja.

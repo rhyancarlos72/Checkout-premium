@@ -3,8 +3,13 @@ import { Router } from 'express';
 import { adminMembersRouter } from './adminMembers.js';
 import { z } from 'zod';
 import { env, features, isProd } from '../config/env.js';
-import { HttpError, must, productCode, supabase } from '../lib/core.js';
-import { clearAuthCache, requireAdmin, requireOwner } from '../middleware/auth.js';
+import { HttpError, must, productCode } from '../lib/core.js';
+// todas as consultas do painel passam pelo filtro da organização (cada produtor só vê os próprios dados)
+import { ownerOrgId, tenantCtx, tenantDb as supabase } from '../lib/tenant.js';
+import { audit } from '../services/audit.js';
+import { platformRouter } from './platform.js';
+import { supabase as rawDb } from '../lib/core.js';
+import { clearAuthCache, requireAdmin, requireOwner, requireSuperAdmin } from '../middleware/auth.js';
 import { emitInvoice, getInvoiceSettings, invoiceFile, refreshInvoice, saveInvoiceSettings, testSpedy } from '../services/invoices.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
 import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
@@ -17,12 +22,34 @@ import { lastJobRunAt } from '../services/jobs.js';
 import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
+import { recordRefund } from '../services/ledger.js';
 
 export const adminRouter = Router();
 adminRouter.use(requireAdmin);
-// integrações e credenciais (Woovi, Efí, Evolution/WhatsApp, webhooks) e equipe: somente o dono
-export const OWNER_ONLY_PATH = /^\/(gateways|integrations|whatsapp|webhooks|team)(\/|$)/i;
-adminRouter.use((req, res, next) => (OWNER_ONLY_PATH.test(req.path) ? requireOwner(req, res, next) : next()));
+// a partir daqui, toda consulta usa a organização de quem está logado
+adminRouter.use((req, _res, next) => tenantCtx.run({ orgId: req.orgId ?? null }, () => next()));
+// gateways, credenciais, WhatsApp da plataforma, equipe da Prime, jobs e gestão da plataforma: só o Super Admin
+export const SUPER_ADMIN_PATH = /^\/(gateways|whatsapp|team|jobs|platform)(\/|$)|^\/integrations\/?$|^\/integrations\/(email|efi)(\/|$)/i;
+// webhooks/PayTracking e nota fiscal da própria organização: só o dono da organização (não a equipe)
+export const OWNER_ONLY_PATH = /^\/webhooks(\/|$)|^\/integrations\/(invoices|paytracking)(\/|$)/i;
+adminRouter.use((req, res, next) => (SUPER_ADMIN_PATH.test(req.path) ? requireSuperAdmin(req, res, next) : OWNER_ONLY_PATH.test(req.path) ? requireOwner(req, res, next) : next()));
+// auditoria: toda alteração em gateways, WhatsApp da plataforma, equipe e jobs fica registrada (sem segredos)
+adminRouter.use((req, res, next) => {
+  if (req.method !== 'GET' && SUPER_ADMIN_PATH.test(req.path) && !req.path.startsWith('/platform')) res.on('finish', () => res.statusCode < 400 && void audit(req, `${req.method} ${req.path}`, null, req.body));
+  next();
+});
+adminRouter.use('/platform', platformRouter);
+// ids na URL (pedido/produto/checkout) precisam ser da organização: sem isso, serviços chamados com o id
+// (sincronizar, reenviar entrega, nota...) poderiam agir sobre dados de outro produtor
+for (const [path, table] of [['/orders/:id', 'orders'], ['/products/:id', 'products'], ['/checkouts/:id', 'checkouts']] as const) {
+  adminRouter.use(path, async (req, _res, next) => {
+    const id = String(req.params.id ?? '');
+    if (!/^[0-9a-f-]{36}$/i.test(id)) return next();
+    const { data } = await supabase.from(table).select('id').eq('id', id).maybeSingle();
+    if (!data) return next(new HttpError(404, 'Não encontrado'));
+    next();
+  });
+}
 // qualquer alteração no painel invalida o cache dos checkouts públicos
 adminRouter.use((req, _res, next) => {
   if (req.method !== 'GET') clearCheckoutCache();
@@ -36,7 +63,15 @@ const urlOrEmpty = z.string().url().or(z.literal('')).nullable().optional().tran
 
 adminRouter.get('/me', async (req, res) => {
   const { globalProvider } = await import('../services/gateways.js');
-  res.json({ id: req.adminId, email: req.adminEmail, role: req.adminRole ?? 'staff', defaultProvider: globalProvider() });
+  const { data: org } = req.orgId ? await supabase.from('organizations').select('id, name, status, is_platform_owner, split_enabled').eq('id', req.orgId).maybeSingle() : { data: null };
+  res.json({
+    id: req.adminId,
+    email: req.adminEmail,
+    role: req.adminRole ?? 'staff',
+    superAdmin: Boolean(req.isSuperAdmin),
+    org: org ? { id: (org as any).id, name: (org as any).name, owner: Boolean((org as any).is_platform_owner), sellingEnabled: Boolean((org as any).is_platform_owner || (org as any).split_enabled) } : null,
+    defaultProvider: globalProvider(),
+  });
 });
 
 // ------------------------------------------------------------------ equipe (somente o dono)
@@ -57,10 +92,8 @@ adminRouter.get('/team', async (_req, res) => {
   );
   res.json(rows);
 });
-/** Convida alguém como equipe: e-mail com link para criar a senha + acesso sem integrações. */
-async function inviteStaff(emailRaw: string) {
-  const email = emailRaw.trim().toLowerCase();
-  if (email === env.ADMIN_EMAIL) throw new HttpError(400, 'Este e-mail já é o dono da conta');
+/** Envia o convite (link para criar a senha) e devolve o id do usuário no Supabase Auth. */
+async function inviteUser(email: string) {
   const redirectTo = `${env.PUBLIC_URL}/admin/nova-senha`;
   let userId: string | null = null;
   const invited = await supabase.auth.admin.inviteUserByEmail(email, { redirectTo });
@@ -75,6 +108,14 @@ async function inviteStaff(emailRaw: string) {
     if (!userId) throw new HttpError(502, `Não foi possível convidar: ${invited.error?.message ?? 'erro'}`);
     await supabase.auth.resetPasswordForEmail(email, { redirectTo });
   }
+  return userId;
+}
+
+/** Convida alguém como equipe da Prime: e-mail com link para criar a senha + acesso sem integrações. */
+async function inviteStaff(emailRaw: string) {
+  const email = emailRaw.trim().toLowerCase();
+  if (email === env.ADMIN_EMAIL) throw new HttpError(400, 'Este e-mail já é o dono da conta');
+  const userId = await inviteUser(email);
   const r = await supabase.from('admins').upsert({ user_id: userId, role: 'staff', email });
   if (r.error && /role|email/.test(r.error.message)) throw new HttpError(400, 'Rode no Supabase o SQL "20261105000000_admin_roles.sql" antes de adicionar pessoas à equipe');
   if (r.error) throw new HttpError(500, r.error.message);
@@ -101,10 +142,32 @@ adminRouter.post('/team/requests/:id/:action', async (req, res) => {
     await supabase.from('access_requests').update({ status: 'rejected', decided_at: new Date().toISOString() }).eq('id', id);
     return res.json({ ok: true, message: 'Pedido recusado' });
   }
-  const msg = await inviteStaff((r as any).email);
+  // marketplace ativo: o pedido de cadastro vira um PRODUTOR (organização própria, isolada); sem marketplace: equipe
+  const msg = (await ownerOrgId()) ? await approveProducer(r as any, req.adminId!) : await inviteStaff((r as any).email);
   await supabase.from('access_requests').update({ status: 'approved', decided_at: new Date().toISOString() }).eq('id', id);
+  await audit(req, 'producer.approve', (r as any).email, { request_id: id });
   res.json({ ok: true, message: msg });
 });
+
+/** Aprova um produtor: cria a organização dele (vendas só depois de configurar o recebimento) e envia o convite. */
+async function approveProducer(r: { name: string; email: string; phone?: string | null; company?: string | null; document?: string | null; terms_accepted_at?: string | null }, actorId: string) {
+  const email = r.email.trim().toLowerCase();
+  const { data: admin } = await supabase.from('admins').select('user_id').eq('email', email).maybeSingle();
+  if (admin || email === env.ADMIN_EMAIL) throw new HttpError(400, 'Este e-mail já é da equipe da plataforma');
+  const userId = await inviteUser(email);
+  const { data: existing } = await supabase.from('org_members').select('org_id').eq('user_id', userId).maybeSingle();
+  if (existing) return `${email} já tem uma conta de produtor. Convite reenviado.`;
+  const org = must(
+    await supabase
+      .from('organizations')
+      .insert({ name: r.company || r.name, legal_name: r.company || null, document: r.document || null, phone: r.phone || null, status: 'active', terms_accepted_at: r.terms_accepted_at ?? null, created_by: actorId })
+      .select('id')
+      .single(),
+  ) as { id: string };
+  must(await supabase.from('org_members').insert({ org_id: org.id, user_id: userId, role: 'owner', email }).select('org_id').single());
+  clearAuthCache();
+  return `Produtor aprovado. Convite enviado para ${email}. As vendas ficam liberadas quando você configurar o recebimento (split) dele em Plataforma → Produtores.`;
+}
 
 adminRouter.delete('/team/:userId', async (req, res) => {
   const id = uuid.parse(req.params.userId);
@@ -618,6 +681,7 @@ adminRouter.post('/orders/:id/refund', async (req, res) => {
   const id = uuid.parse(req.params.id);
   const { data } = await supabase.from('orders').update({ status: 'refunded' }).eq('id', id).eq('status', 'paid').select('id');
   if (!data?.length) throw new HttpError(400, 'Só pedidos pagos podem ser marcados como reembolsados');
+  await recordRefund(id); // livro-razão: estorno (e devolução da comissão, se a política mandar)
   void dispatchTracking(id, 'sale.refunded');
   res.json({ ok: true });
 });
@@ -635,11 +699,13 @@ adminRouter.post('/orders/:id/resend-tracking', async (req, res) => {
 adminRouter.get('/customers', async (req, res) => {
   const q = z.object({ q: z.string().trim().max(100).optional(), page: z.coerce.number().int().min(1).default(1) }).parse(req.query);
   const pageSize = 30;
+  // clientes são da plataforma; cada produtor vê só quem fez pedido nos checkouts dele
   let query = supabase
     .from('customers')
-    .select('id, name, email, phone, document, created_at, orders(status, total_cents, created_at)', { count: 'exact' })
+    .select(req.orgId ? 'id, name, email, phone, document, created_at, orders!inner(status, total_cents, created_at, org_id)' : 'id, name, email, phone, document, created_at, orders(status, total_cents, created_at)', { count: 'exact' })
     .order('created_at', { ascending: false })
     .range((q.page - 1) * pageSize, q.page * pageSize - 1);
+  if (req.orgId) query = query.eq('orders.org_id', req.orgId);
   if (q.q) {
     const t = q.q.replace(/[%,()]/g, '');
     query = query.or(`email.ilike.%${t}%,name.ilike.%${t}%,phone.ilike.%${t}%`);
@@ -658,6 +724,44 @@ adminRouter.get('/customers', async (req, res) => {
     total: count ?? 0,
     page: q.page,
     pageSize,
+  });
+});
+
+// ------------------------------------------------------------------ financeiro do produtor (e da Prime, com taxas R$ 0,00)
+adminRouter.get('/finance', async (req, res) => {
+  const q = z.object({ from: z.string().datetime({ offset: true }).optional(), to: z.string().datetime({ offset: true }).optional() }).parse(req.query);
+  const to = q.to ? new Date(q.to) : new Date();
+  const from = q.from ? new Date(q.from) : new Date(to.getTime() - 30 * 86400_000);
+  if (!req.orgId) return res.json({ enabled: false });
+  const [{ data: orders }, { data: ledger }, { data: org }] = await Promise.all([
+    supabase.from('orders').select('status, total_cents, platform_fee_cents, created_at, paid_at').gte('created_at', from.toISOString()).lt('created_at', to.toISOString()).limit(50_000),
+    rawDb.from('ledger_entries').select('type, amount_cents, created_at, order_id').eq('org_id', req.orgId).order('created_at', { ascending: false }).limit(50_000),
+    rawDb.from('organizations').select('is_platform_owner, split_enabled, pix_provider').eq('id', req.orgId).maybeSingle(),
+  ]);
+  const os = (orders ?? []) as any[];
+  const all = (ledger ?? []) as any[];
+  const inPeriod = all.filter((l) => l.created_at >= from.toISOString() && l.created_at < to.toISOString());
+  const t = (rows: any[], type: string) => rows.filter((l) => l.type === type).reduce((s, l) => s + l.amount_cents, 0);
+  const gross = t(inPeriod, 'sale');
+  const fees = -t(inPeriod, 'platform_fee') - t(inPeriod, 'fee_reversal');
+  const refunds = -t(inPeriod, 'refund');
+  const chargebacks = -t(inPeriod, 'chargeback');
+  res.json({
+    enabled: true,
+    period: { from, to },
+    owner: Boolean((org as any)?.is_platform_owner), // Prime: isenta de taxas da plataforma
+    split_enabled: Boolean((org as any)?.split_enabled || (org as any)?.is_platform_owner),
+    gateway: (org as any)?.pix_provider ?? null,
+    gross_cents: gross,
+    approved_count: inPeriod.filter((l) => l.type === 'sale').length,
+    pending_cents: os.filter((o) => o.status === 'pending').reduce((s, o) => s + o.total_cents, 0),
+    pending_count: os.filter((o) => o.status === 'pending').length,
+    platform_fees_cents: fees,
+    refunds_cents: refunds,
+    chargebacks_cents: chargebacks,
+    net_estimated_cents: gross - fees - refunds - chargebacks, // antes das tarifas do gateway (conforme contrato)
+    net_total_cents: all.reduce((s, l) => s + l.amount_cents, 0), // acumulado desde o início (o dinheiro cai direto na sua conta pelo split)
+    entries: all.slice(0, 50),
   });
 });
 

@@ -1,3 +1,4 @@
+import { ownerOrgId } from '../lib/tenant.js';
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
@@ -86,11 +87,25 @@ authRouter.post('/request-access', requestLimiter, async (req, res) => {
       phone: z.string().trim().max(30).optional().nullable(),
       company: z.string().trim().max(120).optional().nullable(),
       message: z.string().trim().max(600).optional().nullable(),
+      document: z.string().trim().max(20).optional().nullable(), // CPF/CNPJ do produtor
+      terms: z.boolean().optional(), // aceite dos termos de uso da plataforma
       website: z.string().optional(), // armadilha anti-robô (campo invisível)
     })
     .parse(req.body);
   if (b.website) return res.json({ ok: true }); // robô: finge sucesso
-  const { error } = await supabase.from('access_requests').insert({ name: b.name, email: b.email, phone: b.phone || null, company: b.company || null, message: b.message || null, ip: clientIp(req as any) });
+  const marketplace = Boolean(await ownerOrgId());
+  if (marketplace && !b.terms) throw new HttpError(400, 'Para criar sua conta, aceite os termos de uso da plataforma');
+  const doc = (b.document ?? '').replace(/\D/g, '');
+  if (doc && doc.length !== 11 && doc.length !== 14) throw new HttpError(400, 'CPF ou CNPJ inválido');
+  const { error } = await supabase.from('access_requests').insert({
+    name: b.name,
+    email: b.email,
+    phone: b.phone || null,
+    company: b.company || null,
+    message: b.message || null,
+    ip: clientIp(req as any),
+    ...(marketplace ? { document: doc || null, terms_accepted_at: new Date().toISOString() } : {}),
+  });
   if (error) {
     if (/duplicate|unique/i.test(error.message)) return res.json({ ok: true, already: true });
     if (/relation|does not exist|schema cache/i.test(error.message)) throw new HttpError(503, 'Cadastro indisponível no momento. Fale com o administrador.');

@@ -24,8 +24,8 @@ const tabs = [
   { key: 'perfil', label: 'Perfil', icon: User },
   { key: 'seguranca', label: 'Segurança', icon: Shield },
   { key: 'loja', label: 'Loja e metas', icon: Store },
-  { key: 'marca', label: 'Logo do sistema', icon: ImageIcon },
-  { key: 'equipe', label: 'Equipe', icon: Users, ownerOnly: true },
+  { key: 'marca', label: 'Logo do sistema', icon: ImageIcon, superOnly: true },
+  { key: 'equipe', label: 'Equipe', icon: Users, superOnly: true },
 ] as const;
 
 function Panel({ title, desc, icon, children, footer }: { title: string; desc?: string; icon: ReactNode; children: ReactNode; footer?: ReactNode }) {
@@ -409,12 +409,12 @@ export default function SettingsPage() {
   const [params, setParams] = useSearchParams();
   const tab = (tabs.find((t) => t.key === params.get('tab'))?.key ?? 'perfil') as (typeof tabs)[number]['key'];
   const toast = useToast();
-  const isOwner = useMe().data?.role === 'owner';
+  const isSuper = Boolean(useMe().data?.superAdmin); // logo do sistema e equipe da Prime: só o Super Admin
   return (
     <>
       <PageHeader title="Configurações" subtitle="Sua conta, segurança e preferências da loja" />
       <div className="mb-6 inline-flex flex-wrap gap-1 rounded-2xl border border-zinc-200 bg-white p-1.5">
-        {tabs.filter((t) => !('ownerOnly' in t && t.ownerOnly) || isOwner).map((t) => (
+        {tabs.filter((t) => !('superOnly' in t && t.superOnly) || isSuper).map((t) => (
           <button key={t.key} onClick={() => setParams({ tab: t.key })} className={cn('flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition', tab === t.key ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-md shadow-blue-600/25' : 'text-zinc-600 hover:bg-zinc-100')}>
             <t.icon className="h-4 w-4" /> {t.label}
           </button>
@@ -423,8 +423,8 @@ export default function SettingsPage() {
       {tab === 'perfil' && <ProfileTab toast={toast} />}
       {tab === 'seguranca' && <SecurityTab toast={toast} />}
       {tab === 'loja' && <StoreTab toast={toast} />}
-      {tab === 'marca' && <BrandTab toast={toast} />}
-      {tab === 'equipe' && isOwner && <TeamTab toast={toast} />}
+      {tab === 'marca' && isSuper && <BrandTab toast={toast} />}
+      {tab === 'equipe' && isSuper && <TeamTab toast={toast} />}
       {toast.node}
     </>
   );

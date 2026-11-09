@@ -16,7 +16,8 @@ const UNIQUE: Record<string, string[]> = {
   upsells: ['product_id'],
   settings: ['key'],
   checkouts: ['slug'],
-  coupons: ['code'],
+  coupons: ['org_id+code'], // código único por produtor
+  ledger_entries: ['order_id+type'], // uma venda/comissão por pedido
   admins: ['user_id'],
   access_requests: ['email'],
 };
@@ -27,6 +28,7 @@ export function resetDb() {
   for (const k of Object.keys(seq)) delete seq[k];
 }
 const table = (t: string) => (db[t] ??= []);
+const TENANT = new Set(['products', 'checkouts', 'order_bumps', 'checkout_bumps', 'coupons', 'orders', 'events', 'upsells', 'invoices', 'member_sections', 'member_modules', 'member_lessons']);
 
 function withDefaults(t: string, r: Row): Row {
   const now = new Date().toISOString();
@@ -44,6 +46,17 @@ function withDefaults(t: string, r: Row): Row {
   if (t === 'invoices') (row.status ??= 'processing'), (row.attempts ??= 0), (row.response ??= {});
   if (t === 'upsells' || t === 'order_bumps' || t === 'coupons') row.active ??= true;
   if (t === 'coupons') row.used_count ??= 0;
+  // marketplace: imita o trigger do banco que preenche org_id pelo "pai" (produto, checkout, pedido)
+  if (TENANT.has(t) && row.org_id == null && (db.organizations ?? []).length) {
+    const find = (tb: string, id: unknown) => (db[tb] ?? []).find((x) => x.id === id)?.org_id;
+    row.org_id =
+      (['checkouts', 'order_bumps', 'upsells', 'member_sections', 'member_modules', 'member_lessons'].includes(t) && find('products', row.product_id)) ||
+      (t === 'checkout_bumps' && find('checkouts', row.checkout_id)) ||
+      (t === 'orders' && find('checkouts', row.checkout_id)) ||
+      ((t === 'invoices' || t === 'events') && (find('orders', row.order_id) || find('checkouts', row.checkout_id))) ||
+      db.organizations.find((o) => o.is_platform_owner)?.id;
+  }
+  if (t === 'orders') (row.platform_fee_cents ??= 0), (row.fee_snapshot ??= {});
   return row;
 }
 
@@ -190,7 +203,10 @@ class Query implements PromiseLike<any> {
   }
 
   private dup(row: Row, ignore?: Row) {
-    for (const col of UNIQUE[this.t] ?? []) if (row[col] != null && table(this.t).some((r) => r !== ignore && r[col] === row[col])) return col;
+    for (const col of UNIQUE[this.t] ?? []) {
+      const cols = col.split('+');
+      if (row[cols[cols.length - 1]] != null && table(this.t).some((r) => r !== ignore && cols.every((c) => (r[c] ?? null) === (row[c] ?? null)))) return col.replace('+', '_');
+    }
     return null;
   }
   private run(): { data: any; error: any; count?: number } {

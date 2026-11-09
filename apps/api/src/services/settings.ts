@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { supabase } from '../lib/core.js';
+import { orgKey } from '../lib/tenant.js';
 
 export const settingsSchema = z.object({
   recovery: z
@@ -31,20 +32,34 @@ export const settingsSchema = z.object({
 });
 export type Settings = z.infer<typeof settingsSchema>;
 
-let cache: { value: Settings; at: number } | null = null;
+// cache por chave (cada produtor tem a sua)
+const cache = new Map<string, { value: Settings; at: number }>();
 
+/** Configurações da organização atual (loja, meta, recuperação). A marca do sistema é sempre a da plataforma. */
 export async function getSettings(): Promise<Settings> {
-  if (cache && Date.now() - cache.at < 30_000) return cache.value;
-  const { data } = await supabase.from('settings').select('value').eq('key', 'general').maybeSingle();
-  const value = settingsSchema.parse((data as any)?.value ?? {});
-  cache = { value, at: Date.now() };
+  const key = await orgKey('general');
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < 30_000) return hit.value;
+  const { data } = await supabase.from('settings').select('value').eq('key', key).maybeSingle();
+  let value = settingsSchema.parse((data as any)?.value ?? {});
+  if (key !== 'general') {
+    const { data: base } = await supabase.from('settings').select('value').eq('key', 'general').maybeSingle();
+    value = { ...value, brand: settingsSchema.parse((base as any)?.value ?? {}).brand };
+  }
+  cache.set(key, { value, at: Date.now() });
   return value;
 }
 
 export async function saveSettings(input: unknown) {
-  const value = settingsSchema.parse(input);
-  const { error } = await supabase.from('settings').upsert({ key: 'general', value, updated_at: new Date().toISOString() });
+  const key = await orgKey('general');
+  let value = settingsSchema.parse(input);
+  // produtor não altera a marca do sistema (logo/nome da plataforma)
+  if (key !== 'general') {
+    const { data: cur } = await supabase.from('settings').select('value').eq('key', key).maybeSingle();
+    value = { ...value, brand: settingsSchema.parse((cur as any)?.value ?? {}).brand };
+  }
+  const { error } = await supabase.from('settings').upsert({ key, value, updated_at: new Date().toISOString() });
   if (error) throw new Error(error.message);
-  cache = null;
+  cache.clear();
   return value;
 }

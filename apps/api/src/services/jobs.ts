@@ -4,6 +4,7 @@ import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
 import { fulfill, notifyPixExpired, syncOrderWithProvider } from './orders.js';
 import { getSettings } from './settings.js';
+import { orgOfOrder, runAsOrg } from '../lib/tenant.js';
 import { refreshPendingInvoices } from './invoices.js';
 
 /**
@@ -59,9 +60,8 @@ export async function restoreExpiredToPending() {
 }
 
 export async function sendRecoveries() {
-  const s = await getSettings();
-  if (!s.recovery.enabled) return;
-  const olderThan = new Date(Date.now() - s.recovery.delayMinutes * 60 * 1000).toISOString();
+  // cada produtor liga/desliga e define o tempo da própria recuperação; aqui busca a partir do mínimo (5 min)
+  const olderThan = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   const notBefore = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
   const { data } = await supabase
     .from('orders')
@@ -76,6 +76,9 @@ export async function sendRecoveries() {
   const latestByCustomer = new Map<string, any>();
   for (const o of (data ?? []) as any[]) if (!latestByCustomer.has(o.customer_id) || latestByCustomer.get(o.customer_id).created_at < o.created_at) latestByCustomer.set(o.customer_id, o);
   for (const o of [...latestByCustomer.values()]) {
+    const orgId = await orgOfOrder(o.id);
+    const s = await runAsOrg(orgId, () => getSettings());
+    if (!s.recovery.enabled || Date.now() - new Date(o.created_at).getTime() < s.recovery.delayMinutes * 60_000) continue;
     // marca antes para nunca enviar duas vezes
     const { data: claimed } = await supabase
       .from('orders')
@@ -96,7 +99,7 @@ export async function sendRecoveries() {
       .gt('created_at', new Date(Date.now() - 48 * 3600 * 1000).toISOString());
     if ((count ?? 0) > 0) continue;
 
-    await sendRecoveryForOrder(o);
+    await runAsOrg(orgId, () => sendRecoveryForOrder(o)); // e-mail com o nome da loja do produtor
     await sleep(1500); // envio espaçado: rajadas de e-mails idênticos pesam contra a reputação
   }
 }

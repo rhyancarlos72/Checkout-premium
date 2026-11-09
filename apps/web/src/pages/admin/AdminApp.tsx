@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Boxes, CreditCard, GraduationCap, Eye, EyeOff, LayoutDashboard, LogOut, Menu, Moon, PlugZap, RefreshCw, Settings, ShoppingCart, Sun, Ticket, Users, X, Zap } from 'lucide-react';
+import { Boxes, Building2, CreditCard, GraduationCap, Wallet, Eye, EyeOff, LayoutDashboard, LogOut, Menu, Moon, PlugZap, RefreshCw, Settings, ShoppingCart, Sun, Ticket, Users, X, Zap } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { cn, PageLoader } from '@/components/ui';
@@ -17,6 +17,8 @@ import CustomersPage from './CustomersPage';
 import DashboardPage from './DashboardPage';
 import IntegrationsPage from './IntegrationsPage';
 import MembersPage from './MembersPage';
+import FinancePage from './FinancePage';
+import PlatformPage from './PlatformPage';
 import LoginPage, { MfaChallenge } from './LoginPage';
 import NewPasswordPage from './NewPasswordPage';
 import OrdersPage from './OrdersPage';
@@ -32,7 +34,9 @@ const nav = [
   { to: '/admin/order-bumps', label: 'Order Bumps', icon: Zap },
   { to: '/admin/cupons', label: 'Cupons', icon: Ticket },
   { to: '/admin/area-de-membros', label: 'Área de membros', icon: GraduationCap },
+  { to: '/admin/financeiro', label: 'Financeiro', icon: Wallet },
   { to: '/admin/integracoes', label: 'Integrações', icon: PlugZap, ownerOnly: true },
+  { to: '/admin/plataforma', label: 'Plataforma', icon: Building2, superOnly: true },
   { to: '/admin/configuracoes', label: 'Configurações', icon: Settings },
 ];
 
@@ -106,9 +110,11 @@ function ProgressCard() {
 // ------------------------------------------------------------------ barra lateral
 function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: string; email: string; onNavigate?: () => void; theme: AdminTheme; onToggleTheme: () => void }) {
   const brand = useBrand();
-  const isOwner = useMe().data?.role === 'owner';
+  const me = useMe().data;
+  const isOwner = me?.role === 'owner';
+  const isSuper = Boolean(me?.superAdmin);
   const priv = useHideEmail();
-  const pendingReq = useQuery({ queryKey: ['team-requests'], queryFn: () => adminApi.get<unknown[]>('/team/requests'), enabled: isOwner, refetchInterval: 120_000 }).data?.length ?? 0;
+  const pendingReq = useQuery({ queryKey: ['team-requests'], queryFn: () => adminApi.get<unknown[]>('/team/requests'), enabled: isSuper, refetchInterval: 120_000 }).data?.length ?? 0;
   return (
     <nav className="flex h-full flex-col border-r border-white/[.06] bg-[#0d1426] font-display text-slate-300">
       <div className="flex h-16 items-center gap-3 px-5">
@@ -119,7 +125,7 @@ function Sidebar({ name, email, onNavigate, theme, onToggleTheme }: { name: stri
         </div>
       </div>
       <div className="flex-1 space-y-1 overflow-y-auto px-3 py-3">
-        {nav.filter((n) => !('ownerOnly' in n && n.ownerOnly) || isOwner).map((n) => (
+        {nav.filter((n) => (!('ownerOnly' in n && n.ownerOnly) || isOwner) && (!('superOnly' in n && n.superOnly) || isSuper)).map((n) => (
           <NavLink
             key={n.to}
             to={n.to}
@@ -184,6 +190,23 @@ function AuthedShell({ email, name }: { email: string; name: string }) {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const [theme, toggleTheme] = useAdminTheme();
+  const me = useMe();
+
+  // conta de produtor em análise ou suspensa: o servidor recusa (403) e aqui mostramos o motivo
+  if (me.error && (me.error as any).status === 403) {
+    return (
+      <div className="bg-aurora flex min-h-screen items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-2xl border border-white/10 bg-white/[.06] p-8 text-center text-white backdrop-blur">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-400/15 text-amber-300"><Building2 className="h-6 w-6" /></div>
+          <h2 className="mt-4 text-lg font-semibold">Acesso indisponível</h2>
+          <p className="mt-2 text-sm text-zinc-300">{(me.error as Error).message}</p>
+          <button onClick={() => supabase.auth.signOut()} className="mt-6 inline-flex h-11 items-center gap-2 rounded-xl bg-white/10 px-5 text-sm font-semibold hover:bg-white/15">
+            <LogOut className="h-4 w-4" /> Sair
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f6f7fb] font-display">
@@ -221,6 +244,8 @@ function AuthedShell({ email, name }: { email: string; name: string }) {
             <Route path="order-bumps" element={<BumpsPage />} />
             <Route path="cupons" element={<CouponsPage />} />
             <Route path="area-de-membros" element={<MembersPage />} />
+            <Route path="financeiro" element={<FinancePage />} />
+            <Route path="plataforma" element={<SuperOnly><PlatformPage /></SuperOnly>} />
             <Route path="integracoes" element={<OwnerOnly><IntegrationsPage /></OwnerOnly>} />
             <Route path="configuracoes" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
@@ -239,6 +264,14 @@ function PrivacyToggle() {
       {priv.hidden ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
     </button>
   );
+}
+
+/** Plataforma (produtores, taxas, auditoria): só o Super Admin. */
+function SuperOnly({ children }: { children: ReactNode }) {
+  const me = useMe();
+  if (me.isLoading) return <PageLoader />;
+  if (me.data?.superAdmin) return <>{children}</>;
+  return <Navigate to="/admin" replace />;
 }
 
 /** Integrações: só o dono da conta. */

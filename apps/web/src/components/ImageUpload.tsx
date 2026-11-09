@@ -1,12 +1,14 @@
 import { Upload } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { IMAGE_SIZES, optimizeImage, type ImageKind } from '@/lib/image';
+import { useMe } from '@/lib/me';
 import { supabase } from '@/lib/supabase';
 import { Button, Field } from './ui';
 
 /** Upload para o Supabase Storage (bucket `media`, público) — exige usuário admin (RLS). */
 export function ImageUpload({ value, onChange, label, bucket = 'media', accept = 'image/*', kind }: { value?: string | null; onChange: (url: string) => void; label?: string; bucket?: string; accept?: string; kind?: ImageKind }) {
   const ref = useRef<HTMLInputElement>(null);
+  const me = useMe().data;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -21,7 +23,9 @@ export function ImageUpload({ value, onChange, label, bucket = 'media', accept =
       return setErr('Imagem acima de 5 MB');
     }
     const ext = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'bin';
-    const path = `${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}.${ext}`;
+    // produtor: arquivos ficam na pasta da própria organização (o Storage só deixa ele mexer nela)
+    const orgDir = me?.org && !me.org.owner ? `${me.org.id}/` : '';
+    const path = `${orgDir}${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}.${ext}`;
     const { error } = await supabase.storage.from(bucket).upload(path, file, { cacheControl: '31536000', upsert: false, contentType: file.type });
     setBusy(false);
     if (error) return setErr(error.message);

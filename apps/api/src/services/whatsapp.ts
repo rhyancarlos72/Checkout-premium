@@ -4,6 +4,7 @@ import { env } from '../config/env.js';
 import { fetchWithTimeout, logger, shortOrderCode, sleep, supabase } from '../lib/core.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { ensureMemberAccess } from './members.js';
+import { isOwnerOrg, orgOfOrder, ownerOrgId } from '../lib/tenant.js';
 
 /**
  * WhatsApp via Evolution API — porta em TypeScript do whatsapp_api.php /
@@ -743,6 +744,8 @@ export async function sendWhatsAppApproved(orderId: string, items: { name: strin
   try {
     const cfg = await getWhatsAppConfig();
     if (!cfg.enabled || !cfg.approved.enabled) return;
+    // os números da Evolution são da Prime: vendas de produtores não usam o WhatsApp da plataforma
+    if (!(await isOwnerOrg(await orgOfOrder(orderId)))) return;
     const { data: o } = await supabase.from('orders').select('id, number, checkout_id, total_cents, public_token, customer:customers(name, phone)').eq('id', orderId).maybeSingle();
     const order: any = o;
     if (!order?.customer?.phone) return;
@@ -798,7 +801,10 @@ export async function sendWhatsAppRecoveries(max = 10) {
   // várias cobranças pendentes da mesma pessoa (valores diferentes): lembra só da mais recente
   const latest = new Map<string, any>();
   for (const o of all) if (!latest.has(o.customer_id) || latest.get(o.customer_id).created_at < o.created_at) latest.set(o.customer_id, o);
-  const orders = all.filter((o) => latest.get(o.customer_id) === o);
+  const latestOnly = all.filter((o) => latest.get(o.customer_id) === o);
+  // só vendas da Prime: o WhatsApp da plataforma não é usado para os produtores
+  const owner = await ownerOrgId();
+  const orders = owner ? (await Promise.all(latestOnly.map(async (o) => ((await orgOfOrder(o.id)) === owner ? o : null)))).filter(Boolean) : latestOnly;
   if (!orders.length) return;
   // uma consulta para as tentativas e outra para quem já comprou (antes eram 2 consultas por pedido)
   const [evRes, paidRes] = await Promise.all([

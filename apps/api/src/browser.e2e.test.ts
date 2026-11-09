@@ -334,6 +334,36 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
       if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-modulo-${label}.png` });
       ok(`[${label}] painel: aba Área de membros lista produtos, abre o curso, cria seção e mostra as aulas do módulo`);
       if (label === 'computador') {
+        // marketplace ligado: Plataforma (Super Admin) e Financeiro
+        const OWNER = '0a000000-0000-4000-8000-000000000001';
+        db.organizations = [
+          { id: OWNER, name: 'Prime Tecnologia', status: 'active', is_platform_owner: true, split_enabled: true, recipient: {}, created_at: new Date().toISOString() },
+          { id: '0b000000-0000-4000-8000-000000000002', name: 'Loja da Ana', document: '12.345.678/0001-90', status: 'active', is_platform_owner: false, split_enabled: false, recipient: {}, created_at: new Date().toISOString() },
+        ];
+        for (const t of ['products', 'checkouts', 'order_bumps', 'checkout_bumps', 'coupons', 'orders', 'events', 'upsells', 'member_sections', 'member_modules', 'member_lessons']) for (const r of db[t] ?? []) r.org_id ??= OWNER;
+        db.org_members = [{ org_id: '0b000000-0000-4000-8000-000000000002', user_id: 'x', role: 'owner', email: 'ana@loja.com' }];
+        db.fee_policies = [{ id: 'fp1', org_id: null, fixed_cents: 99, percent_bps: 0, bump_cents: 40, gateway_fee_payer: 'producer', refund_policy: 'keep_fee', created_at: new Date().toISOString() }];
+        db.ledger_entries = db.orders.filter((o) => o.status === 'paid').map((o) => ({ id: `l-${o.id}`, org_id: OWNER, order_id: o.id, type: 'sale', amount_cents: o.total_cents, data: { provider: 'woovi' }, created_at: new Date().toISOString() }));
+        const t = await import('./lib/tenant.js');
+        t.clearOwnerCache();
+        (await import('./middleware/auth.js')).clearAuthCache();
+        await p.goto(`${base}/admin/plataforma`);
+        await p.getByText('Loja da Ana').waitFor({ timeout: 15_000 });
+        await p.waitForTimeout(300);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-plataforma.png` });
+        await p.getByRole('button', { name: 'Taxas' }).click();
+        await p.getByText('Nova tabela de taxas').waitFor();
+        await p.waitForTimeout(300);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-taxas.png` });
+        await p.goto(`${base}/admin/financeiro`);
+        await p.getByText('Conta proprietária · isenta de taxas da plataforma').waitFor({ timeout: 15_000 });
+        await p.waitForTimeout(300);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-financeiro.png` });
+        ok('[computador] Plataforma (produtores, taxas) e Financeiro com isenção da conta proprietária');
+        delete db.organizations;
+        t.clearOwnerCache();
+        (await import('./middleware/auth.js')).clearAuthCache();
+
         // vitrine de produtos adicionais: escolhe o Kit Convites, muda o título e salva
         await p.goto(`${base}/admin/area-de-membros`);
         await p.getByRole('button', { name: 'Produtos adicionais' }).click();

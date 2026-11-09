@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
+import { runAsOrg, withOrderOrg } from '../lib/tenant.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
 
 export const publicRouter = Router();
@@ -44,7 +45,7 @@ publicRouter.get('/brand', async (_req, res) => {
 /** Dados públicos do checkout (também embutidos no HTML da página para abrir sem esperar a API). */
 export async function publicCheckoutData(slug: string) {
   const c = await loadCheckout(slug);
-  const s = await getSettings();
+  const s = await runAsOrg(c.org_id ?? null, () => getSettings()); // nome/CNPJ da loja do produtor dono do checkout
   return {
     id: c.id,
     slug: c.slug,
@@ -124,7 +125,7 @@ async function publicOrder(token: string) {
     purchase_event_id: o.tracking?.purchase_event_id ?? null,
     delivery: o.status === 'paid' ? await deliveryItems(o.id) : [],
     // quem recebe o pagamento (dá segurança a quem vai pagar)
-    store: await getSettings().then((st) => ({ name: st.store.pixReceiver || (st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null), document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),
+    store: await withOrderOrg(o.id, () => getSettings()).then((st) => ({ name: st.store.pixReceiver || (st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null), document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),
     upsell: o.status === 'paid' ? await upsellOfferFor(o).catch(() => null) : null,
     is_upsell: Boolean(o.tracking?.upsell_of),
     _id: o.id,

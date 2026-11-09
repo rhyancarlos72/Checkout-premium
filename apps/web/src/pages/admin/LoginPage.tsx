@@ -19,7 +19,7 @@ export default function LoginPage() {
   }, []);
 
   const go = (m: Mode) => (setError(null), setMode(m));
-  const [reg, setReg] = useState({ name: '', phone: '', company: '', message: '', website: '' });
+  const [reg, setReg] = useState({ name: '', phone: '', company: '', document: '', message: '', website: '', terms: false });
 
   async function signup(e: React.FormEvent) {
     e.preventDefault();
@@ -170,7 +170,7 @@ export default function LoginPage() {
           <div>
             <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-2xl bg-sky-400/15"><UserPlus className="h-5 w-5 text-sky-300" /></div>
             <h2 className="text-2xl font-bold tracking-tight">Criar cadastro</h2>
-            <p className="mt-1 text-sm text-zinc-400">Preencha seus dados. Seu pedido é analisado pelo administrador e, aprovado, você recebe por e-mail o link para criar sua senha.</p>
+            <p className="mt-1 text-sm text-zinc-400">Venda seus produtos com o nosso checkout. Preencha seus dados: seu cadastro é analisado e, aprovado, você recebe por e-mail o link para criar sua senha.</p>
           </div>
           <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-300">Nome completo</span>
@@ -197,11 +197,22 @@ export default function LoginPage() {
             </label>
           </div>
           <label className="block">
+            <span className="mb-1.5 block text-sm font-medium text-zinc-300">CPF ou CNPJ <span className="text-zinc-500">(do titular dos recebimentos)</span></span>
+            <div className="relative">
+              <ShieldCheck className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+              <input className="input-dark" inputMode="numeric" value={reg.document} onChange={(e) => setReg({ ...reg, document: e.target.value.replace(/[^\d./-]/g, '').slice(0, 18) })} placeholder="000.000.000-00" />
+            </div>
+          </label>
+          <label className="block">
             <span className="mb-1.5 block text-sm font-medium text-zinc-300">Mensagem <span className="text-zinc-500">(opcional)</span></span>
-            <textarea className="input-dark h-20 resize-none py-2.5 !pl-3.5" maxLength={600} value={reg.message} onChange={(e) => setReg({ ...reg, message: e.target.value })} placeholder="Conte por que precisa de acesso" />
+            <textarea className="input-dark h-20 resize-none py-2.5 !pl-3.5" maxLength={600} value={reg.message} onChange={(e) => setReg({ ...reg, message: e.target.value })} placeholder="O que você vende? (opcional)" />
           </label>
           {/* armadilha anti-robô: invisível para pessoas */}
           <input type="text" tabIndex={-1} autoComplete="off" value={reg.website} onChange={(e) => setReg({ ...reg, website: e.target.value })} className="absolute -left-[9999px] h-0 w-0 opacity-0" aria-hidden />
+          <label className="flex items-start gap-2.5 text-sm text-zinc-300">
+            <input type="checkbox" required checked={reg.terms} onChange={(e) => setReg({ ...reg, terms: e.target.checked })} className="mt-0.5 h-4 w-4 shrink-0 accent-sky-400" />
+            <span>Li e aceito os termos de uso da plataforma e a cobrança da comissão por venda aprovada.</span>
+          </label>
           {errorBox}
           <DarkButton type="submit" loading={loading}>Enviar cadastro</DarkButton>
           <p className="flex items-center justify-center gap-1.5 text-center text-[11px] text-zinc-500"><ShieldCheck className="h-3.5 w-3.5 text-sky-400" /> Nenhum acesso é liberado sem aprovação do administrador.</p>

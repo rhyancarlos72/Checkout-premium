@@ -10,6 +10,7 @@ import { GatewayCards } from './GatewayCards';
 import { WebhooksCard } from './WebhooksCard';
 import { WhatsAppCard } from './WhatsAppCard';
 import { InvoicesCard } from './InvoicesCard';
+import { useMe } from '@/lib/me';
 
 interface Integrations {
   providers: { name: string; configured: boolean }[];
@@ -77,7 +78,31 @@ function DeliverabilityCheck() {
   );
 }
 
+/** Super Admin vê tudo (gateways, WhatsApp, e-mail); produtor vê só o que é dele (PayTracking/webhooks e nota fiscal). */
 export default function IntegrationsPage() {
+  const me = useMe();
+  if (me.isLoading) return <PageLoader />;
+  return me.data?.superAdmin ? <PlatformIntegrations /> : <ProducerIntegrations />;
+}
+
+function ProducerIntegrations() {
+  const toast = useToast();
+  return (
+    <>
+      <PageHeader title="Integrações" subtitle="Rastreamento (PayTracking / Meta) e nota fiscal do seu negócio. Seus tokens ficam protegidos no servidor e só valem para os seus produtos." />
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <WebhooksCard toast={toast} />
+        <InvoicesCard toast={toast} />
+        <Card title="Pagamentos" className="lg:col-span-2">
+          <p className="text-sm text-zinc-600">Pix (e cartão, quando liberado) é processado pela plataforma, com o valor da venda dividido automaticamente: a sua parte vai direto para a sua conta de recebimento e a comissão da plataforma para a Prime. A conta de recebimento é configurada pela equipe da plataforma junto com você.</p>
+        </Card>
+      </div>
+      {toast.node}
+    </>
+  );
+}
+
+function PlatformIntegrations() {
   const qc = useQueryClient();
   const toast = useToast();
   const { data, isLoading } = useQuery({ queryKey: ['integrations'], queryFn: () => adminApi.get<Integrations>('/integrations') });

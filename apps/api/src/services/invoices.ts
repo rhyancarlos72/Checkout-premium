@@ -1,3 +1,4 @@
+import { orgKey, withOrderOrg } from '../lib/tenant.js';
 import { z } from 'zod';
 import { fetchWithTimeout, logger, onlyDigits, phoneE164BR, supabase } from '../lib/core.js';
 
@@ -52,12 +53,15 @@ export const invoiceSettingsSchema = z.object({
 export type InvoiceSettings = z.infer<typeof invoiceSettingsSchema>;
 
 const KEY = 'invoices';
-let cache: { value: InvoiceSettings; at: number } | null = null;
+// cada produtor emite nota no PRÓPRIO CNPJ, com a própria chave Spedy (a da Prime nunca é usada para eles)
+const cache = new Map<string, { value: InvoiceSettings; at: number }>();
 export async function getInvoiceSettings(): Promise<InvoiceSettings> {
-  if (cache && Date.now() - cache.at < 15_000) return cache.value;
-  const { data } = await supabase.from('settings').select('value').eq('key', KEY).maybeSingle();
+  const key = await orgKey(KEY);
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < 15_000) return hit.value;
+  const { data } = await supabase.from('settings').select('value').eq('key', key).maybeSingle();
   const value = invoiceSettingsSchema.parse((data as any)?.value ?? {});
-  cache = { value, at: Date.now() };
+  cache.set(key, { value, at: Date.now() });
   return value;
 }
 export async function saveInvoiceSettings(input: unknown) {
@@ -65,9 +69,9 @@ export async function saveInvoiceSettings(input: unknown) {
   const raw = invoiceSettingsSchema.parse(input);
   const value = { ...raw, apiKey: raw.apiKey || cur.apiKey }; // chave vazia = mantém a salva
   if (value.enabled && !value.apiKey) throw Object.assign(new Error('Informe a chave da API Spedy para ativar a emissão'), { status: 400 });
-  const { error } = await supabase.from('settings').upsert({ key: KEY, value, updated_at: new Date().toISOString() });
+  const { error } = await supabase.from('settings').upsert({ key: await orgKey(KEY), value, updated_at: new Date().toISOString() });
   if (error) throw new Error(error.message);
-  cache = null;
+  cache.clear();
   return value;
 }
 
@@ -228,6 +232,10 @@ async function loadOrder(orderId: string) {
  * `retry` permite reemitir uma nota que deu erro.
  */
 export async function emitInvoice(orderId: string, opts: { retry?: boolean; manual?: boolean } = {}) {
+  // nota no CNPJ do produtor dono da venda (a Prime só emite as dela)
+  return withOrderOrg(orderId, () => emitInvoiceImpl(orderId, opts));
+}
+async function emitInvoiceImpl(orderId: string, opts: { retry?: boolean; manual?: boolean } = {}) {
   const s = await getInvoiceSettings();
   if (!opts.manual && !s.enabled) return { ok: false, message: 'Emissão automática desativada' };
   if (!s.apiKey) return { ok: false, message: 'Informe a chave da API Spedy em Integrações → Notas fiscais' };
@@ -282,11 +290,14 @@ async function logInvoice(orderId: string, ok: boolean, message: string) {
 
 /** Atualiza notas em processamento (autorização da prefeitura/SEFAZ é assíncrona). */
 export async function refreshPendingInvoices(max = 20) {
-  const s = await getInvoiceSettings();
-  if (!s.apiKey) return;
   const since = new Date(Date.now() - 7 * 86400_000).toISOString();
   const { data } = await supabase.from('invoices').select('order_id, type, provider_id').eq('status', 'processing').not('provider_id', 'is', null).gt('created_at', since).limit(max);
-  for (const inv of (data ?? []) as any[]) await refreshInvoice(inv.order_id, inv.type, inv.provider_id, s).catch((e) => logger.warn({ err: e?.message }, 'Spedy: consulta falhou'));
+  // cada nota é consultada com a chave Spedy do produtor dono da venda
+  for (const inv of (data ?? []) as any[])
+    await withOrderOrg(inv.order_id, async () => {
+      const s = await getInvoiceSettings();
+      if (s.apiKey) await refreshInvoice(inv.order_id, inv.type, inv.provider_id, s);
+    }).catch((e) => logger.warn({ err: e?.message }, 'Spedy: consulta falhou'));
 }
 export async function refreshInvoice(orderId: string, type: 'service' | 'product', providerId: string, sIn?: InvoiceSettings) {
   const s = sIn ?? (await getInvoiceSettings());

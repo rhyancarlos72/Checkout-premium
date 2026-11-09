@@ -1,4 +1,7 @@
 import { ensureMemberAccess, membersLink } from './members.js';
+import { assertCanSell, orgInfo, orgOfOrder, runAsOrg, withOrderOrg } from '../lib/tenant.js';
+import { feeFieldsFor } from './fees.js';
+import { recordSale } from './ledger.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
@@ -97,9 +100,12 @@ async function loadCheckoutFresh(slug: string) {
   return { ...checkout, bumps, price_cents: checkout.price_cents ?? checkout.product.price_cents };
 }
 
-async function findCoupon(code: string | null | undefined): Promise<CouponRow | null> {
+async function findCoupon(code: string | null | undefined, orgId?: string | null): Promise<CouponRow | null> {
   if (!code) return null;
-  const { data } = await supabase.from('coupons').select('*').eq('code', code).maybeSingle();
+  // cupom vale só nos checkouts do produtor que o criou
+  let q = supabase.from('coupons').select('*').eq('code', code);
+  if (orgId) q = q.eq('org_id', orgId);
+  const { data } = await q.maybeSingle();
   return (data as CouponRow) ?? null;
 }
 
@@ -118,7 +124,7 @@ export async function quote(slug: string, bumpIds: string[], couponCode?: string
   let discount = 0;
   let couponError: string | null = null;
   if (couponCode) {
-    coupon = await findCoupon(couponCode);
+    coupon = await findCoupon(couponCode, checkout.org_id ?? null);
     const c = checkCoupon(coupon, checkout.id, subtotal);
     if (c.ok) discount = c.discountCents;
     else {
@@ -134,7 +140,12 @@ async function upsertCustomer(c: CreateOrderInput['customer']) {
   return must(await supabase.from('customers').upsert(row, { onConflict: 'email' }).select('id').single()) as { id: string };
 }
 
+/** Gera o pedido + Pix com as configurações do produtor dono do checkout (PayTracking, loja, taxas). */
 export async function createOrder(input: CreateOrderInput, meta: { ip: string | null; userAgent: string | null; geo?: Record<string, string> }) {
+  const ck = await loadCheckout(input.checkout_slug);
+  return runAsOrg(ck.org_id ?? null, () => createOrderImpl(input, meta));
+}
+async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | null; userAgent: string | null; geo?: Record<string, string> }) {
   const q = await quote(input.checkout_slug, input.bump_ids, input.coupon_code);
   if (q.couponError) throw new HttpError(400, q.couponError);
   const { checkout } = q;
@@ -144,8 +155,10 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
   // CPF não é pedido no checkout; se vier (API), só é usado quando válido
   if (fields.phone && onlyDigits(input.customer.phone).length < 10) throw new HttpError(400, 'Telefone inválido');
 
-  // gateway global (Integrações) vale para todos os produtos; senão, o do checkout
-  const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
+  // produtor só vende com conta ativa e recebimento (split) liberado; a Prime vende sempre
+  await assertCanSell(checkout.org_id);
+  // gateway: o definido pelo Super Admin para o produtor; senão o global (Integrações); senão o do checkout
+  const provider = getProvider(((await orgInfo(checkout.org_id))?.pix_provider ?? globalProvider() ?? checkout.provider) as ProviderName);
   const customer = await upsertCustomer(input.customer);
 
   // Sem cobrança duplicada: a mesma pessoa, no mesmo checkout, com o MESMO valor (e itens)
@@ -170,6 +183,8 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
         tracking,
         ip: meta.ip,
         user_agent: meta.userAgent?.slice(0, 400) ?? null,
+        // comissão da plataforma calculada no servidor e congelada no pedido (R$ 0,00 para a Prime)
+        ...(await feeFieldsFor(checkout.org_id ?? null, q.lines, q.totalCents)),
       })
       .select('id, number, public_token, created_at')
       .single(),
@@ -252,6 +267,9 @@ export async function loadOrderForTracking(orderId: string): Promise<OrderForTra
 }
 
 export async function dispatchTracking(orderId: string, event: PayTrackingEvent) {
+  return withOrderOrg(orderId, () => dispatchTrackingImpl(orderId, event));
+}
+async function dispatchTrackingImpl(orderId: string, event: PayTrackingEvent) {
   try {
     const o = await loadOrderForTracking(orderId);
     if (o) await sendPayTracking(o, event);
@@ -290,6 +308,9 @@ export async function deliveryItems(orderId: string): Promise<DeliveryItem[]> {
 }
 
 export async function fulfill(orderId: string) {
+  return withOrderOrg(orderId, () => fulfillImpl(orderId));
+}
+async function fulfillImpl(orderId: string) {
   const { data: o } = await supabase
     .from('orders')
     .select('id, number, public_token, total_cents, delivered_at, customer:customers(name, email), checkout:checkouts(theme)')
@@ -316,6 +337,9 @@ export async function fulfill(orderId: string) {
  * Idempotente: só a primeira chamada efetiva dispara entrega e tracking.
  */
 export async function syncOrderWithProvider(orderId: string): Promise<string> {
+  return withOrderOrg(orderId, () => syncOrderImpl(orderId));
+}
+async function syncOrderImpl(orderId: string): Promise<string> {
   const { data } = await supabase
     .from('orders')
     .select('id, status, provider, provider_charge_id, total_cents, checkout_id, tracking')
@@ -343,6 +367,7 @@ export async function syncOrderWithProvider(orderId: string): Promise<string> {
     if (transitioned) {
       await supabase.from('events').insert({ checkout_id: order.checkout_id, order_id: orderId, type: 'purchase', data: { total_cents: order.total_cents } });
       await Promise.allSettled([
+        recordSale(orderId), // livro-razão: venda + comissão (uma vez por pedido)
         fulfill(orderId),
         dispatchTracking(orderId, 'sale.approved'),
         emitInvoice(orderId), // uma nota por venda (produto + order bumps)
@@ -408,7 +433,9 @@ export async function renewOrder(token: string): Promise<{ token: string; renewe
   const { data: ck } = await supabase.from('checkouts').select('id, slug, name, provider, pix_expires_minutes, theme, tracking, product:products(name, number)').eq('id', old.checkout_id).maybeSingle();
   const checkout: any = ck;
   if (!checkout) throw new HttpError(404, 'Checkout não encontrado');
-  const provider = getProvider((globalProvider() ?? checkout.provider) as ProviderName);
+  const ckOrg = await orgOfOrder(old.id);
+  await assertCanSell(ckOrg);
+  const provider = getProvider(((await orgInfo(ckOrg))?.pix_provider ?? globalProvider() ?? checkout.provider) as ProviderName);
 
   const tracking = { ...(old.tracking ?? {}), renewed_from: old.id };
   const order = must(
@@ -426,6 +453,7 @@ export async function renewOrder(token: string): Promise<{ token: string; renewe
         ip: old.ip,
         user_agent: old.user_agent,
         recovery_sent_at: new Date().toISOString(), // a pessoa já voltou: sem novo e-mail de recuperação
+        ...(await feeFieldsFor(ckOrg, old.items ?? [], old.total_cents)),
       })
       .select('id, number, public_token')
       .single(),
@@ -527,6 +555,7 @@ export async function createUpsellOrder(parentToken: string): Promise<{ token: s
         ip: parent.ip,
         user_agent: parent.user_agent,
         recovery_sent_at: new Date().toISOString(), // upsell não entra na recuperação por e-mail
+        ...(await feeFieldsFor(await orgOfOrder(parent.id), [{ kind: 'main', price_cents: offer.price_cents }], offer.price_cents)),
       })
       .select('id, number, public_token')
       .single(),
