@@ -278,7 +278,8 @@ $$;
 
 -- equipe atual (tabela admins) = equipe da organização proprietária, com o MESMO user_id
 insert into public.org_members (org_id, user_id, role, email)
-select public.platform_owner_org(), a.user_id, case when coalesce(a.role, 'owner') = 'staff' then 'staff' else 'owner' end, a.email
+-- (to_jsonb: funciona mesmo se o banco ainda não tiver as colunas role/email da tabela admins)
+select public.platform_owner_org(), a.user_id, case when coalesce(to_jsonb(a)->>'role', 'owner') = 'staff' then 'staff' else 'owner' end, to_jsonb(a)->>'email'
 from public.admins a
 on conflict (org_id, user_id) do nothing;
 
@@ -407,8 +408,20 @@ create table if not exists public.audit_logs (
 create index if not exists audit_logs_created_idx on public.audit_logs(created_at desc);
 
 -- pedido de cadastro de produtor (tela "Criar cadastro")
-alter table public.access_requests add column if not exists document text;
-alter table public.access_requests add column if not exists terms_accepted_at timestamptz;
+-- (só se a tabela de pedidos de cadastro já existir: ela vem do SQL 20261108000000_access_requests.sql)
+do $$ begin
+  if to_regclass('public.access_requests') is not null then
+    alter table public.access_requests add column if not exists document text;
+    alter table public.access_requests add column if not exists terms_accepted_at timestamptz;
+  end if;
+end $$;
+
+-- função "é o dono?" (criada pelo SQL de equipe 20261105); se ainda não existir, todo admin é dono
+do $$ begin
+  if to_regprocedure('public.is_owner()') is null then
+    execute 'create function public.is_owner() returns boolean language sql stable security definer set search_path = public as $f$ select exists (select 1 from public.admins where user_id = auth.uid()) $f$';
+  end if;
+end $$;
 
 -- ---------------------------------------------------------------- RLS (o servidor usa a service role; o navegador não lê estas tabelas)
 do $$ declare t text; begin
