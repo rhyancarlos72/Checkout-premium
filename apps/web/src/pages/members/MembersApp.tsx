@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Download, LayoutGrid, Lock, LogOut, Mail, Play, PlayCircle, Sparkles } from 'lucide-react';
+import { ArrowLeft, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Download, Eye, EyeOff, KeyRound, LayoutGrid, Lock, LogIn, LogOut, Mail, Play, PlayCircle, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { cn } from '@/components/ui';
@@ -19,6 +19,7 @@ export default function MembersApp() {
       <Routes>
         <Route path="entrar" element={<EnterWithOrder />} />
         <Route path="login" element={<Login />} />
+        <Route path="senha" element={<RequireSession><ChangePassword /></RequireSession>} />
         <Route path="modulo/:id" element={<RequireSession><ModulePage /></RequireSession>} />
         <Route path="*" element={<RequireSession><HomePage /></RequireSession>} />
       </Routes>
@@ -85,34 +86,73 @@ const inputCls = 'h-12 w-full rounded-xl border border-white/10 bg-white/[.06] p
 function Login() {
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [show, setShow] = useState(false);
   const [code, setCode] = useState('');
-  const [step, setStep] = useState<'email' | 'code'>('email');
+  const [step, setStep] = useState<'password' | 'forgot' | 'code'>('password');
   const [error, setError] = useState<string | null>(null);
+  const fail = (e: unknown) => setError(e instanceof ApiError ? e.message : 'Tente novamente.');
+  const login = useMutation({
+    mutationFn: () => membersApi.post<{ token: string }>('/login', { email, password }),
+    onSuccess: (r) => {
+      memberSession.set(r.token);
+      navigate('/membros', { replace: true });
+    },
+    onError: fail,
+  });
   const ask = useMutation({
     mutationFn: () => membersApi.post('/login/code', { email }),
     onSuccess: () => (setStep('code'), setError(null)),
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Tente novamente.'),
+    onError: fail,
   });
   const verify = useMutation({
     mutationFn: () => membersApi.post<{ token: string }>('/login/verify', { email, code }),
     onSuccess: (r) => {
       memberSession.set(r.token);
-      navigate('/membros', { replace: true });
+      navigate('/membros/senha?nova=1', { replace: true }); // entrou pelo código: já cria uma senha nova
     },
-    onError: (e) => setError(e instanceof ApiError ? e.message : 'Tente novamente.'),
+    onError: fail,
   });
+  const go = (s: typeof step) => (setStep(s), setError(null));
   if (memberSession.get()) return <Navigate to="/membros" replace />;
-  return step === 'email' ? (
-    <AuthShell title="Área de membros" subtitle="Digite o e-mail usado na compra. Enviamos um código de acesso para você.">
-      <form className="space-y-3" onSubmit={(e) => (e.preventDefault(), ask.mutate())}>
-        <input className={inputCls} type="email" required autoComplete="email" inputMode="email" placeholder="seu@email.com" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="E-mail" />
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <button disabled={ask.isPending} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 font-semibold transition hover:bg-blue-500 disabled:opacity-60">
-          <Mail className="h-4 w-4" /> {ask.isPending ? 'Enviando…' : 'Receber código'}
-        </button>
-      </form>
-    </AuthShell>
-  ) : (
+
+  if (step === 'password')
+    return (
+      <AuthShell title="Área de membros" subtitle="Entre com o e-mail da compra e a senha que enviamos no seu e-mail e WhatsApp.">
+        <form className="space-y-3" onSubmit={(e) => (e.preventDefault(), login.mutate())}>
+          <input className={inputCls} type="email" required autoComplete="username" inputMode="email" placeholder="seu@email.com" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="E-mail" />
+          <div className="relative">
+            <input className={cn(inputCls, 'pr-12')} type={show ? 'text' : 'password'} required autoComplete="current-password" placeholder="Senha" value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Senha" />
+            <button type="button" onClick={() => setShow(!show)} className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-white/50 hover:text-white" aria-label={show ? 'Esconder senha' : 'Mostrar senha'}>
+              {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </button>
+          </div>
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          <button disabled={login.isPending} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 font-semibold transition hover:bg-blue-500 disabled:opacity-60">
+            <LogIn className="h-4 w-4" /> {login.isPending ? 'Entrando…' : 'Entrar'}
+          </button>
+          <button type="button" onClick={() => go('forgot')} className="w-full pt-1 text-sm text-white/60 hover:text-white">
+            Esqueci minha senha
+          </button>
+        </form>
+      </AuthShell>
+    );
+  if (step === 'forgot')
+    return (
+      <AuthShell title="Esqueceu a senha?" subtitle="Digite o e-mail da compra. Enviamos um código para você entrar e criar uma senha nova.">
+        <form className="space-y-3" onSubmit={(e) => (e.preventDefault(), ask.mutate())}>
+          <input className={inputCls} type="email" required autoComplete="email" inputMode="email" placeholder="seu@email.com" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="E-mail" />
+          {error && <p className="text-sm text-red-400">{error}</p>}
+          <button disabled={ask.isPending} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-blue-600 font-semibold transition hover:bg-blue-500 disabled:opacity-60">
+            <Mail className="h-4 w-4" /> {ask.isPending ? 'Enviando…' : 'Receber código'}
+          </button>
+          <button type="button" onClick={() => go('password')} className="w-full text-sm text-white/55 hover:text-white">
+            Voltar para o login
+          </button>
+        </form>
+      </AuthShell>
+    );
+  return (
     <AuthShell title="Confira seu e-mail" subtitle={`Se ${email} tiver uma compra, o código de 6 dígitos chega em instantes (veja também o spam).`}>
       <form className="space-y-3" onSubmit={(e) => (e.preventDefault(), verify.mutate())}>
         <input className={cn(inputCls, 'text-center text-2xl font-bold tracking-[.5em]')} inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="000000" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} aria-label="Código" autoFocus />
@@ -120,9 +160,40 @@ function Login() {
         <button disabled={verify.isPending || code.length !== 6} className="flex h-12 w-full items-center justify-center rounded-xl bg-blue-600 font-semibold transition hover:bg-blue-500 disabled:opacity-60">
           {verify.isPending ? 'Entrando…' : 'Entrar'}
         </button>
-        <button type="button" onClick={() => (setStep('email'), setCode(''), setError(null))} className="w-full text-sm text-white/55 hover:text-white">
-          Usar outro e-mail
+        <button type="button" onClick={() => (go('password'), setCode(''))} className="w-full text-sm text-white/55 hover:text-white">
+          Voltar para o login
         </button>
+      </form>
+    </AuthShell>
+  );
+}
+
+/** Trocar a senha (ou criar uma nova depois de entrar pelo código). */
+function ChangePassword() {
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const [password, setPassword] = useState('');
+  const [show, setShow] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: () => membersApi.post('/password', { password }),
+    onSuccess: () => navigate('/membros', { replace: true }),
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Tente novamente.'),
+  });
+  return (
+    <AuthShell title={params.get('nova') ? 'Crie sua nova senha' : 'Alterar senha'} subtitle="Use pelo menos 6 caracteres. Você vai usar esta senha com seu e-mail para entrar na área.">
+      <form className="space-y-3" onSubmit={(e) => (e.preventDefault(), save.mutate())}>
+        <div className="relative">
+          <input className={cn(inputCls, 'pr-12')} type={show ? 'text' : 'password'} required minLength={6} autoComplete="new-password" placeholder="Nova senha" value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Nova senha" autoFocus />
+          <button type="button" onClick={() => setShow(!show)} className="absolute inset-y-0 right-0 flex w-12 items-center justify-center text-white/50 hover:text-white" aria-label={show ? 'Esconder senha' : 'Mostrar senha'}>
+            {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          </button>
+        </div>
+        {error && <p className="text-sm text-red-400">{error}</p>}
+        <button disabled={save.isPending || password.trim().length < 6} className="flex h-12 w-full items-center justify-center rounded-xl bg-blue-600 font-semibold transition hover:bg-blue-500 disabled:opacity-60">
+          {save.isPending ? 'Salvando…' : 'Salvar senha'}
+        </button>
+        <Link to="/membros" className="block w-full text-center text-sm text-white/55 hover:text-white">{params.get('nova') ? 'Agora não' : 'Cancelar'}</Link>
       </form>
     </AuthShell>
   );
@@ -148,6 +219,10 @@ function TopBar({ store, back, overlay }: { store?: Store; back?: ReactNode; ove
           {back}
           {store?.logo_url ? <img src={store.logo_url} alt={store.name} className="h-8 w-auto max-w-[160px] object-contain" /> : <span className="truncate text-[18px] font-extrabold tracking-tight">{store?.name ?? 'Área de membros'}</span>}
         </div>
+        <div className="flex items-center gap-1">
+        <Link to="/membros/senha" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-white/70 transition hover:bg-white/10 hover:text-white" title="Alterar senha">
+          <KeyRound className="h-4 w-4" /> <span className="hidden sm:inline">Alterar senha</span>
+        </Link>
         <button
           onClick={() => {
             memberSession.clear();
@@ -158,6 +233,7 @@ function TopBar({ store, back, overlay }: { store?: Store; back?: ReactNode; ove
         >
           <LogOut className="h-4 w-4" /> Sair
         </button>
+        </div>
       </div>
     </header>
   );

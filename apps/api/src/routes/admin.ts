@@ -144,7 +144,7 @@ const productSchema = z.object({
   description: z.string().max(2000).nullable().optional(),
   price_cents: z.number().int().min(1),
   image_url: urlOrEmpty,
-  delivery_type: z.enum(['link', 'file', 'none']).default('link'),
+  delivery_type: z.enum(['link', 'file', 'none', 'members']).default('link'), // padrão: link (Drive)
   delivery_url: z.string().max(1000).nullable().optional(),
   delivery_note: z.string().max(1000).nullable().optional(),
   active: z.boolean().default(true),
@@ -186,10 +186,29 @@ async function createDefaultCheckout(product: { id: string; name: string; number
   throw new HttpError(500, 'Não foi possível gerar um código único');
 }
 
+/** "Área de membros" na forma de entrega = produto entregue pela área (members_enabled) e sem link. */
+function mapDelivery<T extends { delivery_type?: string }>(b: T) {
+  if (b.delivery_type === undefined) return b;
+  const members = b.delivery_type === 'members';
+  return { ...b, delivery_type: members ? 'none' : b.delivery_type, members_enabled: members };
+}
+/** Primeira vez como área de membros: cria a "Sessão 1" para o curso já aparecer pronto para configurar. */
+async function ensureCourse(productId: string) {
+  const { count } = await supabase.from('member_sections').select('id', { count: 'exact', head: true }).eq('product_id', productId);
+  if (!count) await supabase.from('member_sections').insert({ product_id: productId, title: 'Sessão 1', sort: 0 });
+}
+
 adminRouter.post('/products', async (req, res) => {
-  const product = must(await supabase.from('products').insert(productSchema.parse(req.body)).select().single()) as any;
+  const product = must(await supabase.from('products').insert(mapDelivery(productSchema.parse(req.body))).select().single()) as any;
+  if (product.members_enabled) await ensureCourse(product.id);
   const checkout = await createDefaultCheckout(product);
   res.status(201).json({ ...product, checkout });
+});
+adminRouter.put('/products/:id', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const product = must(await supabase.from('products').update(mapDelivery(productSchema.partial().parse(req.body))).eq('id', id).select().single()) as any;
+  if (product.members_enabled) await ensureCourse(id);
+  res.json(product);
 });
 adminRouter.post('/products/:id/checkout', async (req, res) => {
   const product = must(await supabase.from('products').select('id, name, number').eq('id', uuid.parse(req.params.id)).maybeSingle(), 'Produto não encontrado') as any;

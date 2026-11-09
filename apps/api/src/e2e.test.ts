@@ -530,6 +530,26 @@ describe('área de membros', () => {
       const pub = await api('GET', `/api/public/orders/${token}`);
       expect(pub.body.delivery[0].url).toBe(`https://checkout.loja.com/membros/entrar?o=${token}`);
 
+      // conta do aluno criada na hora: login (e-mail) + senha aleatória no WhatsApp de entrega
+      const wa = waSent.map((w) => String(w.body?.text ?? '')).find((t) => t.includes('lia@x.com'))!;
+      expect(wa).toMatch(/Senha: \*[A-Za-z2-9]{4}-[A-Za-z2-9]{4}\*/);
+      expect(wa).toContain('https://checkout.loja.com/membros/login');
+      const senha = wa.match(/Senha: \*([^*]+)\*/)![1];
+      expect(db.member_accounts.filter((a) => a.customer_id === o.customer_id)).toHaveLength(1);
+      expect(db.member_accounts[0].password_hash).not.toContain(senha); // só o hash fica salvo
+      expect((await mem('POST', '/login', undefined, { email: 'lia@x.com', password: 'errada-123' })).status).toBe(400);
+      const byPass = await mem('POST', '/login', undefined, { email: 'LIA@x.com', password: senha });
+      expect(byPass.status).toBe(200);
+      // nova compra com área de membros: mesma conta e mesma senha
+      const { ensureMemberAccess } = await import('./services/members.js');
+      expect((await ensureMemberAccess(o.id))!.password).toBe(senha);
+      // aluno troca a senha: a antiga para de funcionar e a nova entra
+      expect((await mem('POST', '/password', byPass.body.token, { password: '123' })).status).toBe(400);
+      expect((await mem('POST', '/password', byPass.body.token, { password: 'minhaSenhaNova' })).status).toBe(204);
+      expect((await mem('POST', '/login', undefined, { email: 'lia@x.com', password: senha })).status).toBe(400);
+      expect((await mem('POST', '/login', undefined, { email: 'lia@x.com', password: 'minhaSenhaNova' })).status).toBe(200);
+      expect((await ensureMemberAccess(o.id))!.password).toBeNull(); // não reenviamos senha que o aluno escolheu
+
       const login = await mem('POST', '/login/order', undefined, { token });
       expect(login.status).toBe(200);
       const s = login.body.token;

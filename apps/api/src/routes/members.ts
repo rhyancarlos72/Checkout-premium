@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { clientIp, HttpError, supabase } from '../lib/core.js';
 import { sendMemberCode } from '../services/email.js';
 import { getSettings } from '../services/settings.js';
-import { createMemberSession, hashCode, memberHome, memberModule, newCode, ownedProductIds, readMemberSession, setLessonDone } from '../services/members.js';
+import { createMemberSession, hashCode, loginWithPassword, memberHome, memberModule, newCode, ownedProductIds, readMemberSession, setLessonDone, setMemberPassword } from '../services/members.js';
 
 /** Área de membros do aluno: login por código no e-mail ou pelo link do pedido. */
 export const membersRouter = Router();
@@ -24,6 +24,23 @@ function customerOf(req: Request) {
   if (!id) throw new HttpError(401, 'Entre novamente na área de membros');
   return id;
 }
+
+const passwordLimiter = rl(15 * 60_000, 10, (req) => `${ipOf(req)}|${String(req.body?.email ?? '').trim().toLowerCase()}`);
+
+/** Login com e-mail + senha (a senha chega no e-mail e no WhatsApp de entrega). */
+membersRouter.post('/login', passwordLimiter, async (req, res) => {
+  const b = z.object({ email: emailSchema, password: z.string().min(1).max(200) }).parse(req.body);
+  const id = await loginWithPassword(b.email, b.password.trim());
+  if (!id) throw new HttpError(400, 'E-mail ou senha incorretos');
+  res.json({ token: createMemberSession(id) });
+});
+
+/** Aluno logado troca a senha. */
+membersRouter.post('/password', async (req, res) => {
+  const password = z.string().trim().min(6, 'A senha precisa ter pelo menos 6 caracteres').max(100).parse(req.body?.password);
+  await setMemberPassword(customerOf(req), password);
+  res.status(204).end();
+});
 
 /** Pede o código de acesso. Responde igual exista ou não o aluno (não revela quem é cliente). */
 membersRouter.post('/login/code', codeLimiter, async (req, res) => {

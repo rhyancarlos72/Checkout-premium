@@ -146,3 +146,92 @@ export async function setLessonDone(customerId: string, lessonId: string, done: 
   if (done) await supabase.from('member_progress').upsert({ customer_id: customerId, lesson_id: lessonId, completed_at: new Date().toISOString() }, { onConflict: 'customer_id,lesson_id' });
   else await supabase.from('member_progress').delete().eq('customer_id', customerId).eq('lesson_id', lessonId);
 }
+
+// ------------------------------------------------------------------ conta do aluno (e-mail + senha)
+const PASS_ALPHABET = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sem 0/O, 1/l/I
+/** Senha aleatória fácil de digitar no celular (ex.: "Kp7m-x3Qa"). */
+export function randomPassword() {
+  const pick = (n: number) => Array.from({ length: n }, () => PASS_ALPHABET[crypto.randomInt(PASS_ALPHABET.length)]).join('');
+  return `${pick(4)}-${pick(4)}`;
+}
+export function hashPassword(password: string) {
+  const salt = crypto.randomBytes(16);
+  const hash = crypto.scryptSync(password, salt, 32);
+  return `scrypt$${salt.toString('base64url')}$${hash.toString('base64url')}`;
+}
+export function verifyPassword(password: string, stored: string) {
+  const [alg, salt, hash] = stored.split('$');
+  if (alg !== 'scrypt' || !salt || !hash) return false;
+  const a = crypto.scryptSync(password, Buffer.from(salt, 'base64url'), 32);
+  const b = Buffer.from(hash, 'base64url');
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+const encKey = () => crypto.createHmac('sha256', env.SUPABASE_SERVICE_ROLE_KEY).update('members-password-enc-v1').digest();
+function encrypt(text: string) {
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv('aes-256-gcm', encKey(), iv);
+  const body = Buffer.concat([c.update(text, 'utf8'), c.final()]);
+  return `${iv.toString('base64url')}.${c.getAuthTag().toString('base64url')}.${body.toString('base64url')}`;
+}
+function decrypt(payload: string | null | undefined) {
+  try {
+    const [iv, tag, body] = String(payload ?? '').split('.');
+    const d = crypto.createDecipheriv('aes-256-gcm', encKey(), Buffer.from(iv, 'base64url'));
+    d.setAuthTag(Buffer.from(tag, 'base64url'));
+    return Buffer.concat([d.update(Buffer.from(body, 'base64url')), d.final()]).toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+export interface MemberAccess {
+  loginUrl: string;
+  email: string;
+  /** senha gerada pelo sistema; null quando o aluno já trocou a senha (não temos como reenviar) */
+  password: string | null;
+}
+
+/**
+ * Pedido com produto entregue pela área de membros → garante a conta do aluno (e-mail + senha aleatória)
+ * e devolve os dados de acesso para o e-mail e o WhatsApp de entrega. Idempotente: compras seguintes
+ * reaproveitam a mesma conta e a mesma senha (enquanto o aluno não trocar).
+ */
+export async function ensureMemberAccess(orderId: string): Promise<MemberAccess | null> {
+  const { data } = await supabase
+    .from('orders')
+    .select('customer_id, customer:customers(email), items:order_items(product:products(members_enabled))')
+    .eq('id', orderId)
+    .maybeSingle();
+  const o: any = data;
+  if (!o?.customer_id || !o.customer?.email) return null;
+  if (!(o.items ?? []).some((i: any) => i.product?.members_enabled)) return null;
+  const read = async () => (await supabase.from('member_accounts').select('password_hash, password_enc').eq('customer_id', o.customer_id).maybeSingle()).data as any;
+  let acc = await read();
+  if (!acc) {
+    const password = randomPassword();
+    // e-mail e WhatsApp rodam ao mesmo tempo: quem chegar primeiro cria, o outro reaproveita
+    await supabase.from('member_accounts').upsert({ customer_id: o.customer_id, password_hash: hashPassword(password), password_enc: encrypt(password) }, { onConflict: 'customer_id', ignoreDuplicates: true });
+    acc = await read();
+  }
+  return { loginUrl: `${env.PUBLIC_URL}/membros/login`, email: o.customer.email, password: decrypt(acc?.password_enc) };
+}
+
+/** Login do aluno: e-mail + senha → id do cliente (ou null). */
+export async function loginWithPassword(email: string, password: string) {
+  const { data: c } = await supabase.from('customers').select('id').eq('email', email).maybeSingle();
+  if (!c) {
+    hashPassword(password); // mesmo tempo de resposta com ou sem conta
+    return null;
+  }
+  const { data: acc } = await supabase.from('member_accounts').select('password_hash').eq('customer_id', (c as any).id).maybeSingle();
+  if (!acc || !verifyPassword(password, (acc as any).password_hash)) return null;
+  await supabase.from('member_accounts').update({ last_login_at: new Date().toISOString() }).eq('customer_id', (c as any).id);
+  return (c as any).id as string;
+}
+
+/** Aluno define a própria senha (depois disso a senha gerada deixa de existir). */
+export async function setMemberPassword(customerId: string, password: string) {
+  await supabase
+    .from('member_accounts')
+    .upsert({ customer_id: customerId, password_hash: hashPassword(password), password_enc: null, updated_at: new Date().toISOString() }, { onConflict: 'customer_id' });
+}

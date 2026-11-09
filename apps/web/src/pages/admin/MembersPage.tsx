@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowLeft, ArrowUp, ExternalLink, FileText, GraduationCap, Link2, Pencil, Plus, PlayCircle, Trash2, Video, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ImageUpload } from '@/components/ImageUpload';
-import { Badge, Button, Card, cn, EmptyState, Field, Input, Modal, PageLoader, Switch, Textarea, useToast } from '@/components/ui';
+import { Badge, Button, Card, cn, EmptyState, Field, Input, Modal, PageLoader, Textarea, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { videoSource } from '@/lib/video';
 import { PageHeader } from './AdminApp';
@@ -37,7 +37,7 @@ export default function MembersPage() {
         <Card><EmptyState icon={<GraduationCap className="h-6 w-6" />} title="Nenhum produto" text="Cadastre um produto em Produtos e depois monte o curso dele aqui." /></Card>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {list.data.map((p) => (
+          {[...list.data].sort((a, b) => Number(b.members_enabled) - Number(a.members_enabled)).map((p) => (
             <ProductCard key={p.id} p={p} onOpen={() => setSelected(p.id)} />
           ))}
         </div>
@@ -47,16 +47,8 @@ export default function MembersPage() {
 }
 
 function ProductCard({ p, onOpen }: { p: ProductRow; onOpen: () => void }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const toggle = useMutation({
-    mutationFn: (enabled: boolean) => adminApi.put(`/members/products/${p.id}/enabled`, { enabled }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['members-admin'] }),
-    onError: (e) => toast.err(errMsg(e)),
-  });
   return (
     <Card className="flex flex-col">
-      {toast.node}
       <div className="flex items-start gap-3">
         {p.image_url ? <img src={p.image_url} alt="" className="h-14 w-14 rounded-xl object-cover" /> : <div className="flex h-14 w-14 items-center justify-center rounded-xl bg-blue-50 text-blue-600"><GraduationCap className="h-6 w-6" /></div>}
         <div className="min-w-0 flex-1">
@@ -66,8 +58,8 @@ function ProductCard({ p, onOpen }: { p: ProductRow; onOpen: () => void }) {
         </div>
       </div>
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-zinc-100 pt-4">
-        <Switch checked={p.members_enabled} onChange={(v) => toggle.mutate(v)} label="Área ativa" />
-        <Button size="sm" className="whitespace-nowrap" onClick={onOpen}><Pencil className="h-3.5 w-3.5" /> Montar curso</Button>
+        <p className="text-xs leading-snug text-zinc-500">{p.members_enabled ? 'Entrega: área de membros' : 'Entrega por link. Para usar a área, escolha “Área de membros” em Produtos → editar → Entrega.'}</p>
+        <Button size="sm" className="shrink-0 whitespace-nowrap" variant={p.members_enabled ? 'primary' : 'secondary'} onClick={onOpen}><Pencil className="h-3.5 w-3.5" /> Montar curso</Button>
       </div>
     </Card>
   );
@@ -107,7 +99,7 @@ function CourseEditor({ productId, onBack }: { productId: string; onBack: () => 
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="sm" onClick={onBack}><ArrowLeft className="h-4 w-4" /> Produtos</Button>
         <h2 className="font-display text-xl font-bold tracking-tight">{d.name}</h2>
-        {d.members_enabled ? <Badge tone="paid">Área ativa</Badge> : <Badge tone="expired">Área desligada: ative no card do produto para liberar aos compradores</Badge>}
+        {d.members_enabled ? <Badge tone="paid">Entrega pela área de membros</Badge> : <Badge tone="expired">Entrega por link: escolha “Área de membros” em Produtos → Entrega para liberar aos compradores</Badge>}
       </div>
 
       <Card>

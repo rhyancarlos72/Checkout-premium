@@ -23,7 +23,9 @@ export interface Product {
   description: string | null;
   price_cents: number;
   image_url: string | null;
-  delivery_type: 'link' | 'file' | 'none';
+  delivery_type: 'link' | 'file' | 'none' | 'members';
+  /** entregue pela área de membros (forma de entrega "Área de membros") */
+  members_enabled?: boolean;
   delivery_url: string | null;
   delivery_note: string | null;
   active: boolean;
@@ -100,7 +102,7 @@ const schema = z.object({
   description: z.string().optional(),
   price: z.string().refine((v) => parseMoney(v) >= 1, 'Informe o preço'),
   image_url: z.string().optional(),
-  delivery_type: z.enum(['link', 'file', 'none']),
+  delivery_type: z.enum(['link', 'file', 'none', 'members']),
   delivery_url: z.string().optional(),
   delivery_note: z.string().optional(),
   active: z.boolean(),
@@ -156,7 +158,7 @@ export default function ProductsPage() {
                     <Badge tone={p.active ? 'on' : 'off'}>{p.active ? 'Ativo' : 'Inativo'}</Badge>
                   </div>
                   <p className="pv mt-1 text-lg font-bold tabular-nums">{brl(p.price_cents)}</p>
-                  <p className="text-xs text-zinc-500">Entrega: {{ link: 'link de acesso', file: 'arquivo', none: 'manual' }[p.delivery_type]}</p>
+                  <p className="text-xs text-zinc-500">Entrega: {p.members_enabled ? 'área de membros' : { link: 'link de acesso', file: 'arquivo', none: 'manual', members: 'área de membros' }[p.delivery_type]}</p>
                 </div>
               </div>
               <div>
@@ -220,7 +222,7 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
       description: product?.description ?? '',
       price: centsToInput(product?.price_cents),
       image_url: product?.image_url ?? '',
-      delivery_type: product?.delivery_type ?? 'link',
+      delivery_type: product?.members_enabled ? 'members' : (product?.delivery_type ?? 'link'), // padrão: link (Drive)
       delivery_url: product?.delivery_url ?? '',
       delivery_note: product?.delivery_note ?? '',
       active: product?.active ?? true,
@@ -248,11 +250,18 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
         <Controller control={control} name="image_url" render={({ field }) => <ImageUpload kind="thumb" label="Imagem do produto" value={field.value} onChange={field.onChange} />} />
         <Field label="Entrega">
           <Select {...register('delivery_type')}>
-            <option value="link">Link de acesso (área de membros, Drive, etc.)</option>
+            <option value="link">Link de entrega (Google Drive, etc.)</option>
+            <option value="members">Área de membros (cursos, módulos e aulas)</option>
             <option value="file">Arquivo (PDF, ZIP…) enviado ao Storage</option>
             <option value="none">Manual (sem link automático)</option>
           </Select>
         </Field>
+        {type === 'members' && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-3.5 text-[13px] leading-relaxed text-blue-900">
+            <p className="font-semibold">A área de membros deste produto é criada automaticamente.</p>
+            <p className="mt-1">Depois de salvar, monte o curso (seções, módulos e aulas) na aba <a href="/admin/area-de-membros" className="font-semibold underline">Área de membros</a>. Na compra, o cliente recebe no e-mail e no WhatsApp o login (e-mail dele) e uma senha gerada na hora.</p>
+          </div>
+        )}
         {type === 'link' && <Field label="Link de acesso" hint="Enviado por e-mail e mostrado após o pagamento"><Input {...register('delivery_url')} type="url" placeholder="https://" /></Field>}
         {type === 'file' && (
           <Controller control={control} name="delivery_url" render={({ field }) => <ImageUpload label="Arquivo do produto (privado, link temporário de 7 dias)" bucket="deliverables" accept="*/*" value={field.value} onChange={field.onChange} />} />

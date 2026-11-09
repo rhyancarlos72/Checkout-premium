@@ -277,6 +277,20 @@ describe.skipIf(!RUN)('área de membros no navegador', () => {
       ok(`[${label}] progresso do curso atualizado (33% concluído, botão vira "Continuar")`);
       await p.getByText('Continue assistindo').waitFor();
       if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/membros-continuar-${label}.png` });
+      // sai e entra de novo com e-mail + senha (a senha gerada na compra)
+      const { ensureMemberAccess } = await import('./services/members.js');
+      const acc = (await ensureMemberAccess(db.orders.find((o) => o.public_token === orderToken)!.id))!;
+      expect(acc.password).toMatch(/^[A-Za-z2-9]{4}-[A-Za-z2-9]{4}$/);
+      await p.getByRole('button', { name: /Sair/ }).click();
+      await p.getByLabel('E-mail').fill('aluno@x.com');
+      await p.getByLabel('Senha', { exact: true }).fill('senha-errada');
+      await p.getByRole('button', { name: /^Entrar$/ }).click();
+      await p.getByText('E-mail ou senha incorretos').waitFor();
+      await p.getByLabel('Senha', { exact: true }).fill(acc.password!);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/membros-login-${label}.png` });
+      await p.getByRole('button', { name: /^Entrar$/ }).click();
+      await p.getByText('Seu curso').waitFor();
+      ok(`[${label}] login do aluno com e-mail + senha gerada na compra (senha errada é recusada)`);
       expect(errors).toEqual([]);
       await ctx.close();
     }, 90_000);
@@ -305,7 +319,7 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
       await p.getByRole('heading', { name: 'Área de membros' }).waitFor({ timeout: 15_000 });
       await p.getByText('Pack Etiquetas Escolares').first().waitFor();
       if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-membros-${label}.png` });
-      await p.getByRole('button', { name: /Montar curso/ }).first().click();
+      await p.locator('.grid > *').filter({ hasText: 'Pack Etiquetas Escolares' }).getByRole('button', { name: /Montar curso/ }).click();
       await p.getByText('Banner de destaque').waitFor();
       await p.getByText('Sessão 1').first().waitFor();
       await p.waitForTimeout(300);
@@ -319,6 +333,24 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
       await p.waitForTimeout(300);
       if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-modulo-${label}.png` });
       ok(`[${label}] painel: aba Área de membros lista produtos, abre o curso, cria seção e mostra as aulas do módulo`);
+      if (label === 'computador') {
+        // Produtos: entrega padrão = link; escolher "Área de membros" cria o curso sozinho
+        await p.goto(`${base}/admin/produtos`);
+        await p.getByRole('button', { name: /Novo produto/ }).first().click();
+        expect(await p.locator('select').first().inputValue()).toBe('link');
+        await p.getByRole('dialog').locator('input').first().fill('Curso Novo de Teste');
+        await p.getByPlaceholder('97,00').fill('47,00');
+        await p.locator('select').first().selectOption('members');
+        await p.getByText('A área de membros deste produto é criada automaticamente.').waitFor();
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-produto-membros.png` });
+        await p.getByRole('button', { name: /^Salvar$/ }).click();
+        await p.getByText('Curso Novo de Teste').first().waitFor();
+        const np = db.products.find((x) => x.name === 'Curso Novo de Teste')!;
+        expect(np.members_enabled).toBe(true);
+        expect(np.delivery_type).toBe('none');
+        expect(db.member_sections.filter((x) => x.product_id === np.id).map((x) => x.title)).toEqual(['Sessão 1']);
+        ok('[computador] Produtos: entrega padrão é o link; "Área de membros" cria o curso automaticamente (Sessão 1)');
+      }
       expect(errors).toEqual([]);
       await ctx.close();
     }

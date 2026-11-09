@@ -109,6 +109,8 @@ export interface DeliveryEmailInput {
   accessUrl: string;
   totalCents?: number;
   accent?: string;
+  /** produto entregue pela área de membros: dados de login do aluno */
+  members?: { loginUrl: string; email: string; password: string | null } | null;
 }
 
 const prettyHost = (url: string) => {
@@ -175,6 +177,22 @@ export async function sendDeliveryEmail(p: DeliveryEmailInput) {
     <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#374151">Obrigado pela compra! Seu Pix foi confirmado e abaixo está tudo o que você adquiriu. Clique no botão para acessar.</p>
   </td></tr>
   <tr><td style="padding:0 28px">${cards}</td></tr>
+  ${
+    p.members
+      ? `<tr><td style="padding:0 28px 8px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:2px solid ${accent};border-radius:14px"><tr><td style="padding:18px">
+      <p style="margin:0;font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:${accent}">Área de membros</p>
+      <p style="margin:4px 0 12px;font-size:16px;font-weight:700;color:#111827">Seus dados de acesso</p>
+      <table role="presentation" cellpadding="0" cellspacing="0" style="font-size:15px;line-height:1.8;color:#111827">
+        <tr><td style="color:#6b7280;padding-right:12px">Site</td><td><a href="${escapeHtml(p.members.loginUrl)}" style="color:${accent};word-break:break-all">${escapeHtml(p.members.loginUrl)}</a></td></tr>
+        <tr><td style="color:#6b7280;padding-right:12px">E-mail</td><td><b>${escapeHtml(p.members.email)}</b></td></tr>
+        <tr><td style="color:#6b7280;padding-right:12px">Senha</td><td>${p.members.password ? `<b style="font-family:Menlo,Consolas,monospace;font-size:16px;letter-spacing:.04em">${escapeHtml(p.members.password)}</b>` : 'a mesma que você já usa'}</td></tr>
+      </table>
+      <p style="margin:12px 0 0;font-size:13px;line-height:1.5;color:#6b7280">Guarde estes dados. Você pode trocar a senha dentro da área de membros. Esqueceu? Na tela de login, toque em “Esqueci minha senha”.</p>
+    </td></tr></table>
+  </td></tr>`
+      : ''
+  }
   <tr><td style="padding:6px 28px 4px">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f9fafb;border-radius:12px"><tr><td style="padding:14px 16px;font-size:14px;line-height:1.7;color:#374151">
       <b style="color:#111827">Dicas para não perder seu acesso</b><br>
@@ -200,6 +218,7 @@ export async function sendDeliveryEmail(p: DeliveryEmailInput) {
     'Pagamento aprovado! Obrigado pela compra. Seus acessos:',
     '',
     ...p.items.flatMap((i) => [`> ${i.name}`, ...(i.note ? [i.note] : []), i.url ? `Acessar: ${i.url}` : 'O acesso será enviado em breve.', '']),
+    ...(p.members ? ['ÁREA DE MEMBROS', `Site: ${p.members.loginUrl}`, `E-mail: ${p.members.email}`, `Senha: ${p.members.password ?? 'a mesma que você já usa'}`, ''] : []),
     `Seus acessos também ficam nesta página: ${p.accessUrl}`,
     '',
     `Pedido ID: ${p.orderCode}${p.totalCents ? ` · ${formatBRL(p.totalCents)} no Pix` : ''}`,

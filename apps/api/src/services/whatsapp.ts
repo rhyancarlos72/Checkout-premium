@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { fetchWithTimeout, logger, shortOrderCode, sleep, supabase } from '../lib/core.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
+import { ensureMemberAccess } from './members.js';
 
 /**
  * WhatsApp via Evolution API — porta em TypeScript do whatsapp_api.php /
@@ -533,7 +534,7 @@ export async function diagnoseWhatsApp(extra: { jobsEnabled: boolean; lastJobRun
 // ------------------------------------------------------------------ mensagens
 const brl = (c: number) => (c / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function buildApprovedMessage(p: { phone: string; name: string; totalCents: number; items: { name: string; url: string | null; note?: string | null; kind?: string }[]; accessUrl?: string }) {
+export function buildApprovedMessage(p: { phone: string; name: string; totalCents: number; items: { name: string; url: string | null; note?: string | null; kind?: string }[]; accessUrl?: string; members?: { loginUrl: string; email: string; password: string | null } | null }) {
   const nome = firstName(p.name, 'tudo bem');
   const main = p.items.find((i) => i.kind === 'main') ?? p.items[0];
   const extras = p.items.filter((i) => i !== main);
@@ -638,6 +639,11 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
       acessos += `• *${it.name}*\n${it.note ? `  ${it.note}\n` : ''}${link ? `  ${link}\n` : ''}\n`;
     }
     acessos = acessos.trimEnd();
+  }
+  // área de membros: login (e-mail) e a senha gerada na compra
+  if (p.members) {
+    const titulo = pick(['🎓 *Seu acesso à área de membros*', '🎓 *Área de membros*', '🔐 *Seus dados de acesso*', '🎓 *Login da área de membros*'], 'ep_membros');
+    acessos += `\n\n${titulo}\nSite: ${p.members.loginUrl}\nE-mail: ${p.members.email}\nSenha: ${p.members.password ? `*${p.members.password}*` : 'a mesma que você já usa'}`;
   }
   const resumo = extras.length ? `${rotVal}: ${valor}` : `${rotProd}: *${main?.name ?? ''}*\n${rotVal}: ${valor}`;
 
@@ -744,7 +750,7 @@ export async function sendWhatsAppApproved(orderId: string, items: { name: strin
     if ((count ?? 0) > 0) return;
     await supabase.from('events').insert({ order_id: orderId, checkout_id: order.checkout_id, type: 'wa_approved', data: {} });
     const phone = normalizePhoneBR(order.customer.phone);
-    const r = await sendWhatsAppText(phone, buildApprovedMessage({ phone, name: order.customer.name ?? '', totalCents: order.total_cents, items, accessUrl: `${env.PUBLIC_URL}/p/${shortOrderCode(order.number)}` }), cfg);
+    const r = await sendWhatsAppText(phone, buildApprovedMessage({ phone, name: order.customer.name ?? '', totalCents: order.total_cents, items, accessUrl: `${env.PUBLIC_URL}/p/${shortOrderCode(order.number)}`, members: await ensureMemberAccess(orderId).catch(() => null) }), cfg);
     await logWa(orderId, 'approved', r);
   } catch (e) {
     logger.error({ err: e, orderId }, 'WhatsApp aprovado falhou');

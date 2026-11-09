@@ -14,7 +14,7 @@ process.env.SMTP_HOST = 'smtp.test';
 process.env.SMTP_USER = 'vendas@loja.com';
 process.env.SMTP_PASS = 'x';
 process.env.NODE_ENV = 'test';
-const { sendRecoveryEmail, unsubscribeSig } = await import('./email.js');
+const { sendRecoveryEmail, sendDeliveryEmail, unsubscribeSig } = await import('./email.js');
 
 describe('e-mail de recuperação', () => {
   it('sai com texto, Reply-To, descadastro de 1 clique e assunto pessoal', async () => {
@@ -29,5 +29,18 @@ describe('e-mail de recuperação', () => {
     expect(m.headers['List-Unsubscribe']).toContain(unsubscribeSig('maria@x.com'));
     expect(m.html).not.toMatch(/URGENTE|GRÁTIS|!!!/);
     if (process.env.EMAIL_PREVIEW) (await import('node:fs')).writeFileSync(process.env.EMAIL_PREVIEW, m.html);
+  });
+});
+
+describe('e-mail de entrega com área de membros', () => {
+  it('traz o site, o e-mail e a senha de acesso do aluno', async () => {
+    sent.length = 0;
+    await sendDeliveryEmail({ orderId: 'o2', orderCode: '8931442', to: 'lia@x.com', name: 'lia alves', items: [{ name: 'Curso X', url: 'https://checkout.loja.com/membros/entrar?o=abc', note: null, image: null, kind: 'main' } as any], accessUrl: 'https://checkout.loja.com/pedido/abc', members: { loginUrl: 'https://checkout.loja.com/membros/login', email: 'lia@x.com', password: 'Kp7m-x3Qa' } });
+    const m = sent[0];
+    expect(m.html).toContain('Seus dados de acesso');
+    expect(m.html).toContain('Kp7m-x3Qa');
+    expect(m.text).toContain('Senha: Kp7m-x3Qa');
+    expect(m.text).toContain('Site: https://checkout.loja.com/membros/login');
+    if (process.env.EMAIL_PREVIEW_DELIVERY) (await import('node:fs')).writeFileSync(process.env.EMAIL_PREVIEW_DELIVERY, m.html);
   });
 });

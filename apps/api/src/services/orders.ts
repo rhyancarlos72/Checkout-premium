@@ -1,4 +1,4 @@
-import { membersLink } from './members.js';
+import { ensureMemberAccess, membersLink } from './members.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
@@ -306,6 +306,7 @@ export async function fulfill(orderId: string) {
     items: await deliveryItems(orderId),
     accessUrl: `${env.PUBLIC_URL}/pedido/${order.public_token}`,
     accent: order.checkout?.theme?.primaryColor,
+    members: await ensureMemberAccess(orderId).catch(() => null), // login + senha da área de membros
   });
   if (ok) await supabase.from('orders').update({ delivered_at: new Date().toISOString() }).eq('id', orderId);
 }
