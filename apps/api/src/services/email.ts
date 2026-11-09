@@ -228,6 +228,8 @@ export interface RecoveryEmailInput {
   url: string;
   accent?: string;
   guaranteeDays?: number;
+  /** 2 ou 3 = lembrete seguinte (assunto diferente, para não parecer e-mail repetido) */
+  attempt?: number;
 }
 
 /**
@@ -322,7 +324,13 @@ export async function sendRecoveryEmail(p: RecoveryEmailInput) {
   ].join('\n');
 
   const from = env.MAIL_FROM ?? env.SMTP_USER ?? '';
-  return send(p.to, `${firstRaw ? `${firstRaw}, seu` : 'Seu'} pedido de ${p.productName} ficou pendente`, html, p.orderId, 'recovery', {
+  const subject =
+    p.attempt === 3
+      ? `Último lembrete: seu pedido de ${p.productName}`
+      : p.attempt === 2
+        ? `${firstRaw ? `${firstRaw}, ainda` : 'Ainda'} dá tempo de garantir ${p.productName}`
+        : `${firstRaw ? `${firstRaw}, seu` : 'Seu'} pedido de ${p.productName} ficou pendente`;
+  return send(p.to, subject, html, p.orderId, p.attempt && p.attempt > 1 ? `recovery_${p.attempt}` : 'recovery', {
     text,
     fromName: storeName,
     replyTo: store.supportEmail || undefined,
@@ -335,7 +343,7 @@ export async function sendRecoveryEmail(p: RecoveryEmailInput) {
 }
 
 /** Monta e envia a recuperação de um pedido (usado pela rotina automática e pelo botão manual). */
-export async function sendRecoveryForOrder(o: any) {
+export async function sendRecoveryForOrder(o: any, attempt = 1) {
   const main = o.items?.find((i: any) => i.kind === 'main');
   return sendRecoveryEmail({
     orderId: o.id,
@@ -348,6 +356,7 @@ export async function sendRecoveryForOrder(o: any) {
     url: `${env.PUBLIC_URL}/pedido/${o.public_token}?utm_source=recovery&utm_medium=email`,
     accent: o.checkout.theme?.primaryColor,
     guaranteeDays: o.checkout.theme?.guaranteeDays ?? 7,
+    attempt,
   });
 }
 

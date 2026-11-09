@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
 import { fetchWithTimeout, logger, shortOrderCode, sleep, supabase } from '../lib/core.js';
+import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 
 /**
  * WhatsApp via Evolution API — porta em TypeScript do whatsapp_api.php /
@@ -750,7 +751,32 @@ export async function sendWhatsAppApproved(orderId: string, items: { name: strin
   }
 }
 
-/** Recuperação de Pix pendente (até 2 tentativas espaçadas). Chamado pelo job a cada 2 min. */
+/** Falha de infraestrutura (Evolution fora do ar / não configurada), não do número do cliente. */
+export function isWaUnavailable(error?: string) {
+  return /tempo esgotado|timeout|ECONN|ENOTFOUND|EAI_AGAIN|fetch failed|não configurada|Nenhuma instância|recusou a conexão|não respondeu|HTTP 5\d\d/i.test(error ?? '');
+}
+
+/**
+ * WhatsApp falhou → o lembrete desta tentativa vai por e-mail (recuperação nunca fica parada).
+ * 1ª tentativa: só se o e-mail de recuperação ainda não saiu (evita dois e-mails iguais);
+ * 2ª e 3ª: e-mail com assunto de lembrete. Marca recovery_sent_at para a rotina de e-mail não repetir.
+ */
+export async function recoveryEmailFallback(orderId: string, customerId: string, attempt: number) {
+  try {
+    const { data: o } = await supabase.from('orders').select(`${RECOVERY_ORDER_SELECT}, recovery_sent_at`).eq('id', orderId).maybeSingle();
+    const order: any = o;
+    if (!order?.customer?.email || !order.checkout) return false;
+    if (attempt === 1 && order.recovery_sent_at) return false;
+    const now = new Date().toISOString();
+    await supabase.from('orders').update({ recovery_sent_at: now }).eq('customer_id', customerId).eq('status', 'pending').is('recovery_sent_at', null);
+    return await sendRecoveryForOrder(order, attempt);
+  } catch (e) {
+    logger.error({ err: e, orderId }, 'E-mail de recuperação (reserva do WhatsApp) falhou');
+    return false;
+  }
+}
+
+/** Recuperação de Pix pendente (até 3 tentativas espaçadas). Chamado pelo job a cada 2 min. */
 export async function sendWhatsAppRecoveries(max = 10) {
   const cfg = await getWhatsAppConfig();
   if (!cfg.enabled || !cfg.recovery.enabled) return;
@@ -778,6 +804,7 @@ export async function sendWhatsAppRecoveries(max = 10) {
   const buyers = new Set((paidRes.data ?? []).map((p: any) => p.customer_id));
 
   let sent = 0;
+  let waDown: string | null = null;
   for (const o of orders) {
     if (sent >= max) break;
     const minutes = (Date.now() - new Date(o.created_at).getTime()) / 60000;
@@ -794,10 +821,16 @@ export async function sendWhatsAppRecoveries(max = 10) {
     const pixValid = cfg.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
     // link direto para o Pix pendente (se vencer, a página gera outro com um toque, sem preencher nada)
     const link = `${env.PUBLIC_URL}/r/${shortOrderCode(o.number)}`; // link curto e exclusivo da venda
-    const r = await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: next, pixCode: pixValid ? o.pix_code : null, product: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? null, totalCents: o.total_cents }), cfg);
-    await logWa(o.id, `recovery_${next}`, r);
+    // Evolution fora do ar nesta rodada? não espera o tempo esgotar de novo: vai direto para o e-mail
+    const r: SendResult = waDown
+      ? { ok: false, error: waDown }
+      : await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: next, pixCode: pixValid ? o.pix_code : null, product: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? null, totalCents: o.total_cents }), cfg);
+    if (!r.ok && !waDown && isWaUnavailable(r.error)) waDown = r.error ?? 'WhatsApp indisponível';
+    let viaEmail = false;
+    if (!r.ok) viaEmail = await recoveryEmailFallback(o.id, o.customer_id, next);
+    await logWa(o.id, `recovery_${next}`, viaEmail ? { ...r, hint: `${r.hint ? `${r.hint} ` : ''}Lembrete enviado por e-mail no lugar.` } : r);
     sent++;
-    await sleep(3500); // pausa natural entre envios
+    if (r.ok) await sleep(3500); // pausa natural entre envios
   }
 }
 

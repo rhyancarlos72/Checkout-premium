@@ -15,6 +15,7 @@ const charges = new Map<string, { status: string; value: number }>();
 const spedyCalls: any[] = [];
 const ptCalls: { event: string; body: any; headers: http.IncomingHttpHeaders }[] = [];
 const waSent: { instance: string; body: any }[] = [];
+let evoDown = false; // simula a Evolution fora do ar
 const fake = http.createServer((req, res) => {
   let b = '';
   req.on('data', (c) => (b += c));
@@ -36,6 +37,7 @@ const fake = http.createServer((req, res) => {
     }
     if (req.url!.startsWith('/evo/instance/connectionState/')) return json(200, { instance: { state: 'open' } });
     if (req.url!.startsWith('/evo/message/sendText/')) {
+      if (evoDown) return json(502, { error: 'bad gateway' });
       waSent.push({ instance: decodeURIComponent(req.url!.split('/').pop()!), body });
       return json(201, { key: { id: 'x' } });
     }
@@ -288,6 +290,36 @@ describe('recuperação pelo WhatsApp', () => {
     o.created_at = new Date(Date.now() - 40 * 60 * 60_000).toISOString();
     await sendWhatsAppRecoveries();
     expect(mine()).toHaveLength(3); // nunca um 4º
+  }, 15_000);
+});
+
+describe('recuperação independente do WhatsApp', () => {
+  it('Evolution fora do ar: o lembrete vai por e-mail (um por tentativa, sem repetir)', async () => {
+    const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Bia Souza', email: 'bia@x.com', phone: '11955554444' }, bump_ids: [], tracking: {} });
+    const o = db.orders.find((x) => x.public_token === r.body.token)!;
+    o.created_at = new Date(Date.now() - 25 * 60_000).toISOString();
+    const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
+    const { sendRecoveries } = await import('./services/jobs.js');
+    const emails = () => db.integration_logs.filter((l) => l.integration === 'email' && l.order_id === o.id && String(l.event).startsWith('recovery'));
+    evoDown = true;
+    try {
+      await sendWhatsAppRecoveries();
+      expect(emails()).toHaveLength(1); // 1º lembrete foi por e-mail
+      expect(emails()[0].event).toBe('recovery');
+      expect(o.recovery_sent_at).toBeTruthy(); // a rotina de e-mail não manda outro igual
+      const wa = db.integration_logs.find((l) => l.integration === 'whatsapp' && l.order_id === o.id && l.event === 'recovery_1')!;
+      expect(wa.ok).toBe(false);
+      o.created_at = new Date(Date.now() - 40 * 60_000).toISOString();
+      await sendRecoveries();
+      await sendWhatsAppRecoveries();
+      expect(emails()).toHaveLength(1);
+      o.created_at = new Date(Date.now() - 200 * 60_000).toISOString(); // 3h20 → 2º lembrete
+      await sendWhatsAppRecoveries();
+      expect(emails()).toHaveLength(2);
+      expect(emails()[1].event).toBe('recovery_2');
+    } finally {
+      evoDown = false;
+    }
   }, 15_000);
 });
 
