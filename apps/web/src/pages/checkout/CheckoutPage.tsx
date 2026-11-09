@@ -47,6 +47,9 @@ export default function CheckoutPage() {
     queryKey: ['checkout', slug],
     queryFn: () => publicApi.get<PublicCheckout>(`/checkouts/${slug}`),
     initialData: () => embedded(slug),
+    // abre na hora com os dados do HTML e confirma em segundo plano: preço/bumps sempre atualizados,
+    // mesmo se a hospedagem ou o navegador servirem uma cópia antiga da página
+    initialDataUpdatedAt: 0,
     retry: 1,
   });
 

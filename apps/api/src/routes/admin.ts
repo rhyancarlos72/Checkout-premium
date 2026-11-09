@@ -269,8 +269,15 @@ adminRouter.post('/products', async (req, res) => {
 });
 adminRouter.put('/products/:id', async (req, res) => {
   const id = uuid.parse(req.params.id);
-  const product = must(await supabase.from('products').update(mapDelivery(productSchema.partial().parse(req.body))).eq('id', id).select().single()) as any;
+  const body = productSchema.partial().parse(req.body);
+  const { data: before } = await supabase.from('products').select('price_cents').eq('id', id).maybeSingle();
+  const product = must(await supabase.from('products').update(mapDelivery(body)).eq('id', id).select().single()) as any;
   if (product.members_enabled) await ensureCourse(id);
+  // mudou o preço do produto: os checkouts dele passam a usar o preço novo (sai o "preço neste checkout"
+  // antigo, que fazia o valor ficar parado). Quem quiser preço diferente define de novo no editor do checkout.
+  if (body.price_cents !== undefined && (before as any)?.price_cents !== body.price_cents && req.body?.keep_checkout_prices !== true) {
+    await supabase.from('checkouts').update({ price_cents: null }).eq('product_id', id).not('price_cents', 'is', null);
+  }
   res.json(product);
 });
 adminRouter.post('/products/:id/checkout', async (req, res) => {

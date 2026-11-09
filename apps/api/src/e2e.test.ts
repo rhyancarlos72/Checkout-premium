@@ -891,6 +891,23 @@ describe('marketplace multiusuário', () => {
     delete process.env.EFI_COBRANCAS_URL;
   });
 
+  it('editar o preço do produto muda o preço do checkout (mesmo com "preço neste checkout" antigo)', async () => {
+    const ck = db.checkouts.find((c) => c.slug === '8931442')!;
+    ck.price_cents = 100; // preço próprio antigo no checkout (R$ 1,00)
+    expect((await api('GET', '/api/public/checkouts/8931442')).body.price_cents).toBe(100);
+    const r = await as('owner', 'PUT', '/api/admin/products/00000000-0000-4000-8000-000000000001', { name: 'Pack Etiquetas', price_cents: 390 });
+    expect(r.status).toBe(200);
+    expect(ck.price_cents).toBeNull();
+    expect((await api('GET', '/api/public/checkouts/8931442')).body.price_cents).toBe(390);
+    expect((await api('POST', '/api/public/checkouts/8931442/quote', { bump_ids: [] })).body.total_cents).toBe(390);
+    // salvar o produto sem mudar o preço não mexe num preço próprio definido depois
+    ck.price_cents = 250;
+    await as('owner', 'PUT', '/api/admin/products/00000000-0000-4000-8000-000000000001', { name: 'Pack Etiquetas', price_cents: 390 });
+    expect(ck.price_cents).toBe(250);
+    ck.price_cents = null;
+    await as('owner', 'PUT', '/api/admin/products/00000000-0000-4000-8000-000000000001', { name: 'Pack Etiquetas', price_cents: 1999 });
+  });
+
   it('produtor suspenso perde o acesso na hora', async () => {
     expect((await as('owner', 'PUT', `/api/admin/platform/producers/${B_ORG}`, { status: 'suspended' })).status).toBe(200);
     const me = await as('b', 'GET', '/api/admin/me');
