@@ -296,7 +296,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         setPixelUser(checkout.tracking.metaPixelId, { email: o.customer?.email, phone: o.customer?.phone, name: o.customer?.name, externalId: o.external_id });
       }
       // Pix gerado = AddPaymentInfo (mesmo event_id enviado ao servidor → a Meta deduplica)
-      pixel('AddPaymentInfo', { value: subtotal / 100, currency: 'BRL', content_type: 'product', content_ids: contentIds, payment_type: 'pix' }, eventIds.api);
+      // valor = total cobrado (com cupom), o mesmo que o servidor envia
+      const charged = (r.order as { total_cents?: number } | undefined)?.total_cents ?? total;
+      pixel('AddPaymentInfo', { value: charged / 100, currency: 'BRL', content_type: 'product', content_ids: contentIds, payment_type: 'pix' }, eventIds.api);
       navigate(`/pedido/${r.token}`);
     },
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Não foi possível gerar o Pix. Tente novamente.'),

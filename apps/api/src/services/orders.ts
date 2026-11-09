@@ -170,9 +170,9 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
         ip: meta.ip,
         user_agent: meta.userAgent?.slice(0, 400) ?? null,
       })
-      .select('id, number, public_token')
+      .select('id, number, public_token, created_at')
       .single(),
-  ) as { id: string; number: number; public_token: string };
+  ) as { id: string; number: number; public_token: string; created_at: string };
 
   // itens gravados em paralelo com a geração do Pix (não precisa esperar um pelo outro)
   const itemsSaved = supabase.from('order_items').insert(q.lines.map((l) => ({ ...l, order_id: order.id })));
@@ -203,6 +203,7 @@ export async function createOrder(input: CreateOrderInput, meta: { ip: string | 
       .eq('status', 'pending')
       .eq('total_cents', q.totalCents)
       .neq('id', order.id)
+      .lt('created_at', order.created_at) // só as anteriores: dois envios simultâneos não se cancelam
       .then(() => {});
     void supabase.from('events').insert({ checkout_id: checkout.id, order_id: order.id, type: 'pix_generated', session_id: tracking.session_id ?? null, data: { total_cents: q.totalCents } }).then(() => {});
     // Rastreamento sem bloquear a resposta ao comprador
@@ -279,7 +280,7 @@ export async function deliveryItems(orderId: string): Promise<DeliveryItem[]> {
   return items;
 }
 
-async function fulfill(orderId: string) {
+export async function fulfill(orderId: string) {
   const { data: o } = await supabase
     .from('orders')
     .select('id, number, public_token, total_cents, delivered_at, customer:customers(name, email), checkout:checkouts(theme)')
@@ -315,6 +316,12 @@ export async function syncOrderWithProvider(orderId: string): Promise<string> {
   if (order.status === 'paid') return 'already_paid';
 
   const info = await getProvider(order.provider).getCharge(order.provider_charge_id);
+  if (info.status === 'paid' && order.status === 'canceled') {
+    // o cliente pagou um Pix que o sistema tinha substituído (ainda válido no banco): dinheiro recebido
+    // = acesso liberado. Reabre o pedido para a confirmação normal abaixo (entrega, nota, rastreamento).
+    await supabase.from('orders').update({ status: 'pending', error: null }).eq('id', orderId).eq('status', 'canceled');
+    logger.warn({ orderId }, 'Pix pago em pedido cancelado: pedido reaberto e confirmado');
+  }
   if (info.status === 'paid') {
     if (info.paidAmountCents !== undefined && info.paidAmountCents < order.total_cents) {
       logger.warn({ orderId, paid: info.paidAmountCents, expected: order.total_cents }, 'Valor pago menor que o pedido');

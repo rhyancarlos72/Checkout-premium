@@ -293,6 +293,21 @@ describe('recuperação pelo WhatsApp', () => {
   }, 15_000);
 });
 
+describe('Pix substituído e pago mesmo assim', () => {
+  it('pedido cancelado (Pix trocado) que recebe o pagamento é reaberto, pago e entregue', async () => {
+    const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Davi Reis', email: 'davi@x.com', phone: '11944443333' }, bump_ids: [], tracking: {} });
+    const o = db.orders.find((x) => x.public_token === r.body.token)!;
+    o.status = 'canceled';
+    o.error = 'Substituído pelo pedido 9999999';
+    charges.get(o.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } });
+    await settle();
+    expect(o.status).toBe('paid');
+    const pub = await api('GET', `/api/public/orders/${r.body.token}`);
+    expect(pub.body.delivery.length).toBeGreaterThan(0);
+  });
+});
+
 describe('recuperação independente do WhatsApp', () => {
   it('Evolution fora do ar: o lembrete vai por e-mail (um por tentativa, sem repetir)', async () => {
     const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Bia Souza', email: 'bia@x.com', phone: '11955554444' }, bump_ids: [], tracking: {} });

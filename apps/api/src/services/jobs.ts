@@ -2,7 +2,7 @@ import { env } from '../config/env.js';
 import { logger, sleep, supabase } from '../lib/core.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
-import { notifyPixExpired, syncOrderWithProvider } from './orders.js';
+import { fulfill, notifyPixExpired, syncOrderWithProvider } from './orders.js';
 import { getSettings } from './settings.js';
 import { refreshPendingInvoices } from './invoices.js';
 
@@ -17,7 +17,7 @@ export async function reconcilePending() {
   const { data } = await supabase
     .from('orders')
     .select('id')
-    .eq('status', 'pending')
+    .in('status', ['pending', 'canceled']) // cancelado = Pix substituído que ainda pode ter sido pago
     .not('provider_charge_id', 'is', null)
     .gte('created_at', since)
     .order('created_at', { ascending: false })
@@ -101,6 +101,30 @@ export async function sendRecoveries() {
   }
 }
 
+/**
+ * Venda paga sem e-mail de entrega (SMTP fora do ar na hora): tenta de novo, até 3 vezes no total,
+ * espaçado (a rotina roda a cada 2 min; só reenvia 10 min após a última tentativa).
+ */
+export async function retryDeliveries() {
+  const now = Date.now();
+  const { data } = await supabase
+    .from('orders')
+    .select('id')
+    .eq('status', 'paid')
+    .is('delivered_at', null)
+    .lt('paid_at', new Date(now - 3 * 60_000).toISOString())
+    .gt('paid_at', new Date(now - 24 * 3600_000).toISOString())
+    .limit(10);
+  for (const o of data ?? []) {
+    const { data: logs } = await supabase.from('integration_logs').select('created_at').eq('integration', 'email').eq('order_id', o.id).eq('event', 'delivery');
+    const tries = (logs ?? []) as { created_at: string }[];
+    if (tries.length >= 3) continue;
+    const last = Math.max(0, ...tries.map((l) => new Date(l.created_at).getTime() || 0));
+    if (last && now - last < 10 * 60_000) continue;
+    await fulfill(o.id).catch((e) => logger.warn({ orderId: o.id, err: e?.message }, 'Reenvio da entrega falhou'));
+  }
+}
+
 let running = false;
 /** Momento da última execução dos jobs (exibido no diagnóstico do WhatsApp). */
 export let lastJobRunAt: number | null = null;
@@ -114,6 +138,7 @@ export async function runJobs() {
     await expireOrders();
     await sendRecoveries();
     await sendWhatsAppRecoveries();
+    await retryDeliveries();
     await refreshPendingInvoices();
   } catch (e) {
     logger.error({ err: e }, 'Jobs falharam');

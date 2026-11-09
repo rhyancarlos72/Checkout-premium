@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import compression from 'compression';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
@@ -86,7 +87,9 @@ export function createApp() {
 
   // Link curto do pedido: /r/aZ3kQg8 (lembrete de recuperação) e /p/aZ3kQg8 (acesso).
   // Valida a assinatura e leva para a página do Pix/acesso do pedido; a origem fica nas UTMs.
-  app.get(/^\/(r|p)\/([0-9A-Za-z]{6,16})$/, async (req, res) => {
+  // limite por IP: um cliente abre o link poucas vezes; impede tentar adivinhar códigos em massa
+  const shortLinkLimiter = rateLimit({ windowMs: 10 * 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false, keyGenerator: (req) => ipKeyGenerator(req.ip ?? '0.0.0.0') });
+  app.get(/^\/(r|p)\/([0-9A-Za-z]{6,16})$/, shortLinkLimiter, async (req, res) => {
     const [, kind, code] = req.path.match(/^\/(r|p)\/([0-9A-Za-z]{6,16})$/)!;
     const n = parseShortOrderCode(code);
     res.setHeader('Cache-Control', 'no-store');
