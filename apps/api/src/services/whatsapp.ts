@@ -501,7 +501,7 @@ export async function diagnoseWhatsApp(extra: { jobsEnabled: boolean; lastJobRun
       label: 'Conexão com o servidor da Evolution',
       ok: false,
       detail: d.message,
-      hint: `${d.hint}${alt ? ` Atalho sem comprar domínio: rode o script docs/evolution-proxy.sh na VPS da Evolution; ele publica ${alt} com HTTPS grátis e o checkout passa a usar esse endereço sozinho.` : ''}`,
+      hint: `${d.hint}${alt ? ` Solução (1 comando, sem comprar domínio): entre na VPS da Evolution como root e rode: curl -fsSL https://raw.githubusercontent.com/rhyancarlos72/Checkout-premium/main/docs/evolution-proxy.sh | bash — ele publica ${alt} (HTTPS, porta 443, que a Hostinger libera) e o checkout passa a usar esse endereço sozinho. Depois clique em “Testar conexão” de novo.` : ''}`,
     });
   }
   const instances = await Promise.all(cfg.instances.map((i) => checkInstance(cfg, i)));

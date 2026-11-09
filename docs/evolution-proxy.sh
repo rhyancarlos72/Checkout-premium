@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Publica a Evolution API com HTTPS (porta 443) sem precisar comprar domínio.
 # Rode NA VPS DA EVOLUTION (Ubuntu/Debian), como root:
-#   curl -fsSL https://raw.githubusercontent.com/<seu-usuario>/<seu-repo>/main/docs/evolution-proxy.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/rhyancarlos72/Checkout-premium/main/docs/evolution-proxy.sh | bash
 #   (ou copie este arquivo para a VPS e rode: bash evolution-proxy.sh)
 # Porta da Evolution diferente de 8082?  EVOLUTION_PORT=8080 bash evolution-proxy.sh
 #
@@ -16,14 +16,25 @@ echo "IP público: $IP  →  domínio: $HOST  →  Evolution na porta $PORT"
 
 curl -fsS -m 5 "http://127.0.0.1:$PORT" >/dev/null || { echo "ERRO: nada respondendo em 127.0.0.1:$PORT. A Evolution está rodando nessa porta?"; exit 1; }
 
+# porta 80/443 já ocupada por outro programa (Traefik, Easypanel, Apache...)?
+for P in 80 443; do
+  OWNER="$(ss -ltnp "sport = :$P" 2>/dev/null | grep -o 'users:(("[^"]*' | head -1 | cut -d'"' -f2 || true)"
+  if [ -n "$OWNER" ] && [ "$OWNER" != "nginx" ]; then
+    echo "ERRO: a porta $P já está em uso por \"$OWNER\"."
+    echo "Se for um painel (Easypanel, Coolify, Traefik), crie nele um domínio para a Evolution apontando para a porta $PORT"
+    echo "e use esse domínio https:// no checkout. Ou pare o \"$OWNER\" e rode este script de novo."
+    exit 1
+  fi
+done
+
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y nginx certbot python3-certbot-nginx
 
 cat >/etc/nginx/sites-available/evolution <<NGINX
 server {
-  listen 80;
-  server_name $HOST;
+  listen 80 default_server;
+  server_name $HOST $IP;
   client_max_body_size 50m;
   location / {
     proxy_pass http://127.0.0.1:$PORT;
@@ -38,13 +49,19 @@ server {
   }
 }
 NGINX
+rm -f /etc/nginx/sites-enabled/default
 ln -sf /etc/nginx/sites-available/evolution /etc/nginx/sites-enabled/evolution
 nginx -t && systemctl reload nginx
 
 # libera 80/443 no firewall, se houver
 if command -v ufw >/dev/null && ufw status | grep -q active; then ufw allow 80/tcp; ufw allow 443/tcp; fi
 
-certbot --nginx -d "$HOST" --non-interactive --agree-tos --register-unsafely-without-email --redirect
+# HTTPS grátis. Sem --redirect: http://IP (porta 80) continua funcionando como reserva.
+if ! certbot --nginx -d "$HOST" --non-interactive --agree-tos --register-unsafely-without-email; then
+  echo "AVISO: não deu para emitir o HTTPS agora. A Evolution já responde em http://$IP (porta 80)."
+  echo "Use essa URL no checkout por enquanto e rode o script de novo mais tarde para ativar o HTTPS."
+  exit 0
+fi
 
 echo
 echo "Pronto! Teste: curl https://$HOST"
