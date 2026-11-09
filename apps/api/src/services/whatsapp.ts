@@ -578,7 +578,7 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
     'ep_lembretes',
   );
   const dica = pick(
-    ['Dica: salve este contato para o link ficar clicável e não se perder.', 'Dica: se o link não abrir, salve nosso número e toque de novo.', 'Dica: no Google Drive, entre com sua conta Google para baixar.', 'Dica: abra pelo navegador do celular ou do computador, como preferir.', 'Dica: baixe o material para ter acesso mesmo sem internet.', 'Dica: se aparecer "solicitar acesso", entre com uma conta Google e tente de novo.', 'Dica: guarde esta conversa para encontrar o link rapidinho depois.', 'Dica: no computador, a visualização dos arquivos fica ainda melhor.', 'Dica: marque esta mensagem com estrela para achar fácil depois.', 'Dica: se o arquivo for grande, aguarde alguns segundos para carregar.'],
+    ['Dica: salve este contato para não perder o link.', 'Dica: no Google Drive, entre com sua conta Google para baixar.', 'Dica: abra pelo navegador do celular ou do computador, como preferir.', 'Dica: baixe o material para ter acesso mesmo sem internet.', 'Dica: se aparecer "solicitar acesso", entre com uma conta Google e tente de novo.', 'Dica: guarde esta conversa para encontrar o link rapidinho depois.', 'Dica: no computador, a visualização dos arquivos fica ainda melhor.', 'Dica: marque esta mensagem com estrela para achar fácil depois.', 'Dica: se o arquivo for grande, aguarde alguns segundos para carregar.'],
     'ep_dicas',
   );
   const fechamento = pick(
@@ -604,6 +604,22 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
     ['— Se preferir não receber mensagens sobre esta compra, responda SAIR.', '— Para parar as mensagens sobre este pedido, responda SAIR.', '— Para não receber mais avisos sobre esta compra, responda SAIR.', '— Caso não queira mais mensagens por aqui, responda SAIR.', '— Prefere não receber mensagens? Basta que você responda SAIR.'],
     'ep_optout',
   );
+  // pedido curto e humano para a pessoa responder: com resposta, o WhatsApp deixa o link azul (clicável)
+  const pedeOi = pick(
+    [
+      'Me responde um *oi* aqui rapidinho pro link ficar azul 😉',
+      'Responde com um *oi* pra liberar o link (ele fica azul na hora).',
+      'Manda um *oi* aqui que o link fica azul e clicável 👇',
+      'Só responde *oi* pro link ficar azul, tá? 🙂',
+      'Me dá um *oi* aqui pro link aparecer azul certinho.',
+      'Antes de tudo: responde *oi* pro link ficar azul 😊',
+      'Se o link estiver cinza, é só responder *oi* que ele fica azul.',
+      'Responde um *oi* rapidinho? Assim o link fica azul pra você tocar.',
+      'Me manda um *oi* pra eu saber que chegou (e o link fica azul).',
+      'Dá um *oi* aqui que o link já fica azul e clicável 😉',
+    ],
+    'ep_pede_oi',
+  );
   const titulo = pick(['Seus acessos:', 'Itens liberados:', 'Produtos disponíveis:', 'Tudo o que você adquiriu:', 'Seus produtos:', 'Acessos liberados:'], 'ep_titulos');
   const linkOf = (it?: { url: string | null }) => it?.url || p.accessUrl || null;
 
@@ -628,12 +644,12 @@ export function buildApprovedMessage(p: { phone: string; name: string; totalCent
   const layout = pick(['a', 'b', 'c', 'd'], 'ep_layout');
   const partes =
     layout === 'a'
-      ? [saudacao, resumo, acessos, `${dica}\n${lembrete}`, fechamento]
+      ? [saudacao, pedeOi, resumo, acessos, `${dica}\n${lembrete}`, fechamento]
       : layout === 'b'
-        ? [saudacao, acessos, resumo, lembrete, `${dica}\n\n${fechamento}`]
+        ? [`${saudacao}\n${pedeOi}`, acessos, resumo, lembrete, `${dica}\n\n${fechamento}`]
         : layout === 'c'
-          ? [saudacao, `${resumo}\n\n${acessos}`, `${lembrete} ${fechamento}`]
-          : [saudacao, resumo, acessos, dica, `${lembrete}\n${fechamento}`];
+          ? [saudacao, `${resumo}\n\n${pedeOi}\n${acessos}`, `${lembrete} ${fechamento}`]
+          : [saudacao, resumo, pedeOi, acessos, dica, `${lembrete}\n${fechamento}`];
   return `${partes.filter(Boolean).join('\n\n')}\n\n${optout}`;
 }
 

@@ -90,6 +90,7 @@ describe('mensagens (porta do checkout antigo)', () => {
     expect(m).toContain('Curso X');
     expect(m).toContain('https://b');
     expect(m).toContain('responda SAIR');
+    expect(m).toMatch(/\*oi\*/); // pede resposta para o link ficar azul
   });
   it('aprovado: link do Drive do produto e nome do cliente com inicial maiúscula', () => {
     const m = wa.buildApprovedMessage({ phone: '5511900000009', name: 'rhyan carlos', totalCents: 1999, items: [{ name: 'Pack Etiquetas', url: 'https://drive.google.com/drive/folders/abc', note: 'Baixe a pasta inteira.', kind: 'main' }], accessUrl: 'https://loja.com/pedido/t' });
