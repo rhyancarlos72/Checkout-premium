@@ -208,7 +208,9 @@ export function createApp() {
         }
         body = body.replace('</head>', `    <link rel="canonical" href="${escapeHtml(seo.url)}" />\n  </head>`);
         // LCP: o navegador começa a baixar o banner junto com o HTML (antes esperava o JS + a API)
-        const preload = [`<link rel="preconnect" href="${supabaseHost}" crossorigin />`];
+        // sem "crossorigin": as imagens do Storage são baixadas sem CORS, e um preconnect com crossorigin
+        // abre uma conexão que as imagens não usam
+        const preload = [`<link rel="preconnect" href="${supabaseHost}" />`];
         if (seo.banner) preload.push(`<link rel="preload" as="image" href="${escapeHtml(seo.banner)}" fetchpriority="high" />`);
         body = body.replace('<head>', `<head>\n    ${preload.join('\n    ')}`);
         // dados do checkout já no HTML (bloco JSON, não executável): a página monta sem esperar a API

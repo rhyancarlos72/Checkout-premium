@@ -300,7 +300,7 @@ function BrandTab({ toast }: { toast: ReturnType<typeof useToast> }) {
         icon={<ImageIcon className="h-5 w-5" />}
         footer={<Button loading={save.isPending} onClick={() => save.mutate(b)}>Salvar logo</Button>}
       >
-        <ImageUpload label="Arquivo da logo" accept="image/png,image/svg+xml,image/webp,image/jpeg" value={b.logoUrl} onChange={(url) => setB({ ...b, logoUrl: url })} />
+        <ImageUpload kind="logo" label="Arquivo da logo" accept="image/png,image/svg+xml,image/webp,image/jpeg" value={b.logoUrl} onChange={(url) => setB({ ...b, logoUrl: url })} />
         <p className="-mt-2 text-xs text-zinc-500">Use uma imagem quadrada (ex.: 512×512), PNG ou SVG com fundo transparente. Até 5 MB.</p>
         <Field label="Nome do sistema" hint="Mostrado ao lado da logo."><Input value={b.name} maxLength={40} onChange={(e) => setB({ ...b, name: e.target.value })} placeholder={defaultBrand.name} /></Field>
         <Switch checked={b.logoBg} onChange={(v) => setB({ ...b, logoBg: v })} label="Fundo branco atrás da logo (melhor para logos escuras no painel escuro)" />

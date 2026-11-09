@@ -291,9 +291,9 @@ export function CheckoutEditor({ checkout, products, bumps, onClose, onSave }: {
                   <Segmented value={theme.radius ?? 'soft'} onChange={(v) => setT({ radius: v })} options={[{ value: 'sharp', label: 'Retos' }, { value: 'soft', label: 'Suaves' }, { value: 'round', label: 'Redondos' }]} />
                 </Group>
                 <Group title="Imagens" desc="Banner: 1600×900 px recomendado. Logo: PNG com fundo transparente.">
-                  <ImageUpload label="Logo" value={theme.logoUrl} onChange={(v) => setT({ logoUrl: v })} />
-                  <ImageUpload label="Banner" value={theme.bannerUrl} onChange={(v) => setT({ bannerUrl: v })} />
-                  <ImageUpload label="Mockup do produto (usado se não houver banner)" value={theme.mockupUrl} onChange={(v) => setT({ mockupUrl: v })} />
+                  <ImageUpload kind="logo" label="Logo" value={theme.logoUrl} onChange={(v) => setT({ logoUrl: v })} />
+                  <ImageUpload kind="banner" label="Banner" value={theme.bannerUrl} onChange={(v) => setT({ bannerUrl: v })} />
+                  <ImageUpload kind="banner" label="Mockup do produto (usado se não houver banner)" value={theme.mockupUrl} onChange={(v) => setT({ mockupUrl: v })} />
                 </Group>
               </>
             )}

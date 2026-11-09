@@ -245,7 +245,7 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
         <Field label="Nome" error={e.name?.message}><Input {...register('name')} /></Field>
         <Field label="Descrição curta"><Textarea {...register('description')} rows={3} /></Field>
         <Field label="Preço (R$)" error={e.price?.message}><Input {...register('price')} inputMode="decimal" placeholder="97,00" /></Field>
-        <Controller control={control} name="image_url" render={({ field }) => <ImageUpload label="Imagem do produto" value={field.value} onChange={field.onChange} />} />
+        <Controller control={control} name="image_url" render={({ field }) => <ImageUpload kind="thumb" label="Imagem do produto" value={field.value} onChange={field.onChange} />} />
         <Field label="Entrega">
           <Select {...register('delivery_type')}>
             <option value="link">Link de acesso (área de membros, Drive, etc.)</option>

@@ -7,6 +7,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
+import { imageDims } from '@/lib/image';
 import { brl, contrastText, digits, maskPhone, nationalPhone, productCode } from '@/lib/format';
 import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track, visitorExternalId } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
@@ -330,7 +331,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     <div className="space-y-3">
       <div className="flex items-start gap-3">
         {productImage ? (
-          <img src={productImage} alt="" className="h-14 w-14 shrink-0 rounded-[calc(var(--ck-r)*.6)] object-cover ring-1 ring-ck-border" />
+          <img src={productImage} alt="" width={56} height={56} decoding="async" className="h-14 w-14 shrink-0 rounded-[calc(var(--ck-r)*.6)] object-cover ring-1 ring-ck-border" />
         ) : (
           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-brand/10 text-brand"><Gift className="h-6 w-6" /></div>
         )}
@@ -470,14 +471,14 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
       <main className="mx-auto grid max-w-[1120px] gap-5 px-4 pb-10 pt-5 @4xl:grid-cols-[minmax(0,1fr)_380px] @4xl:gap-8 @4xl:pt-10 @5xl:grid-cols-[minmax(0,1fr)_400px]">
         <form id="ck-form" noValidate onSubmit={onSubmit} className="min-w-0 space-y-5">
           {/* Banner no topo (celular) */}
-          {banner && <img src={banner} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm @4xl:hidden" fetchPriority="high" />}
+          {banner && <img src={banner} {...imageDims(banner)} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm @4xl:hidden" fetchPriority="high" decoding="async" />}
 
           {/* Produto — compacto: imagem à esquerda, nome e preço ao lado */}
           <section className="ck-card overflow-hidden">
             <div className="flex items-center gap-4 p-4 @lg:gap-5 @lg:p-5">
               {productImage ? (
                 <div className="flex h-[84px] w-[84px] shrink-0 items-center justify-center overflow-hidden rounded-[calc(var(--ck-r)*.6)] border border-ck-border bg-[#fff] p-1 @lg:h-24 @lg:w-24">
-                  <img src={productImage} alt={checkout.product.name} className="h-full w-full object-contain" />
+                  <img src={productImage} alt={checkout.product.name} width={96} height={96} decoding="async" className="h-full w-full object-contain" />
                 </div>
               ) : (
                 <div className="flex h-[84px] w-[84px] shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg @lg:h-24 @lg:w-24"><Gift className="h-8 w-8" /></div>
@@ -596,7 +597,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                       <div className="flex gap-3 p-3.5 @lg:p-4">
                         <div className="relative shrink-0">
                           {b.image_url ? (
-                            <img src={b.image_url} alt="" className="h-16 w-16 rounded-[calc(var(--ck-r)*.5)] object-cover shadow-sm ring-1 ring-ck-border @md:h-[72px] @md:w-[72px]" loading="lazy" />
+                            <img src={b.image_url} alt="" width={72} height={72} decoding="async" className="h-16 w-16 rounded-[calc(var(--ck-r)*.5)] object-cover shadow-sm ring-1 ring-ck-border @md:h-[72px] @md:w-[72px]" loading="lazy" />
                           ) : (
                             <div className="flex h-16 w-16 items-center justify-center rounded-[calc(var(--ck-r)*.5)] bg-[#fff1b8] text-[#7a5200] shadow-sm @md:h-[72px] @md:w-[72px]"><Gift className="h-7 w-7" /></div>
                           )}
@@ -661,7 +662,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
         {/* Coluna lateral (desktop) */}
         <aside className="hidden min-w-0 @4xl:block">
           <div className="sticky top-6 space-y-5">
-            {banner && <img src={banner} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm" fetchPriority="high" />}
+            {banner && <img src={banner} {...imageDims(banner)} alt={checkout.product.name} className="h-auto w-full rounded-ck object-cover shadow-sm" fetchPriority="high" decoding="async" />}
             <section className="ck-card space-y-4 p-6">
               <h2 className="font-display text-[18px] font-semibold tracking-tight">Resumo do pedido</h2>
               {summaryLines}

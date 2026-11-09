@@ -127,7 +127,7 @@ function BumpForm({ bump, products, onClose, onSave }: { bump: Bump | null; prod
           <Field label="Preço da oferta (R$)" error={e.price?.message}><Input {...register('price')} inputMode="decimal" placeholder="19,90" /></Field>
           <Field label="Preço “de” (opcional)"><Input {...register('compare')} inputMode="decimal" placeholder="47,00" /></Field>
         </div>
-        <Controller control={control} name="image_url" render={({ field }) => <ImageUpload label="Imagem" value={field.value} onChange={field.onChange} />} />
+        <Controller control={control} name="image_url" render={({ field }) => <ImageUpload kind="thumb" label="Imagem" value={field.value} onChange={field.onChange} />} />
         <Controller control={control} name="active" render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Ativo" />} />
         {error && <p className="text-sm font-medium text-red-600">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">
