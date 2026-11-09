@@ -286,7 +286,7 @@ function HomePage() {
             ))}
           </div>
         ))}
-        {data.extras.length > 0 && <ExtrasRow extras={data.extras} />}
+        {data.extras.length > 0 && <ExtrasRow extras={data.extras} title={data.offers?.title} subtitle={data.offers?.subtitle} />}
       </main>
     </>
   );
@@ -414,17 +414,21 @@ function PosterCard({ module: m }: { module: ModuleCard }) {
   );
 }
 
-function ExtrasRow({ extras }: { extras: Extra[] }) {
+const brl = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+function ExtrasRow({ extras, title, subtitle }: { extras: Extra[]; title?: string; subtitle?: string }) {
   return (
     <div className="mt-14">
       <div className="mx-4 mb-2 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent sm:mx-10" />
-      <Row title="Cursos adicionais" count="Libere mais conteúdos" accent="bg-amber-400">
+      <Row title={title || 'Cursos adicionais'} count={subtitle ?? 'Libere mais conteúdos'} accent="bg-amber-400">
         {extras.map((x) => (
           <a key={x.id} href={x.checkout_url} className={cn(cardCls, 'group md:hover:ring-amber-300/60')}>
             <Cover src={x.cover_url} title={x.name} locked />
-            <span className="absolute left-2 top-2 rounded bg-amber-400 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-black">Exclusivo</span>
+            <span className="absolute left-2 top-2 rounded bg-amber-400 px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider text-black">{x.badge || 'Exclusivo'}</span>
             <div className="px-3 py-3 text-center">
               <p className="line-clamp-2 text-[13.5px] font-semibold leading-snug">{x.name}</p>
+              {x.description && <p className="mt-1 line-clamp-2 text-[11.5px] leading-snug text-white/50">{x.description}</p>}
+              {x.price_cents ? <p className="mt-1.5 text-[13px] font-bold text-amber-300">por {brl(x.price_cents)}</p> : null}
               <span className="mt-2.5 inline-flex items-center gap-1.5 rounded-md bg-gradient-to-r from-amber-300 to-amber-500 px-3 py-1.5 text-[12px] font-bold text-black shadow-md shadow-amber-500/20">
                 <Sparkles className="h-3.5 w-3.5" /> Desbloquear
               </span>

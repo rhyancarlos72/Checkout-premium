@@ -69,11 +69,15 @@ export interface Extra {
   modules: number;
   checkout_url: string;
   code: string | null;
+  badge?: string | null;
+  price_cents?: number | null;
 }
 export interface Home {
   customer: { name: string; email: string } | null;
   courses: Course[];
   extras: Extra[];
+  /** título e subtítulo da vitrine de produtos adicionais (definidos no painel) */
+  offers?: { title: string; subtitle: string };
 }
 export interface Lesson {
   id: string;

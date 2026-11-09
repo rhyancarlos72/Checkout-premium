@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError, must, productCode, supabase } from '../lib/core.js';
+import { getMembersConfig, saveMembersConfig } from '../services/members.js';
 
 /** Painel → Área de membros: seções, módulos e aulas de cada produto. (montado em /api/admin/members) */
 export const adminMembersRouter = Router();
@@ -124,4 +125,12 @@ adminMembersRouter.post('/reorder', async (req, res) => {
   const table = { sections: 'member_sections', modules: 'member_modules', lessons: 'member_lessons' }[b.kind];
   await Promise.all(b.ids.map((id, i) => supabase.from(table).update({ sort: i }).eq('id', id)));
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------- vitrine "Produtos adicionais" da área do aluno
+adminMembersRouter.get('/offers', async (_req, res) => {
+  res.json(await getMembersConfig());
+});
+adminMembersRouter.put('/offers', async (req, res) => {
+  res.json(await saveMembersConfig(req.body));
 });

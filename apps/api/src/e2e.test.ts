@@ -564,6 +564,14 @@ describe('área de membros', () => {
       expect(home.body.extras).toHaveLength(1);
       expect(home.body.extras[0]).toMatchObject({ name: 'Kit Convites', checkout_url: '/checkout?produto_id=7777777', cover_url: 'https://img/3.webp' });
 
+      // vitrine escolhida no painel: ordem, título, selo e preço próprios; quem já tem o produto não vê
+      db.settings.push({ key: 'members', value: { offersTitle: 'Leve também', offersSubtitle: 'Só para alunos', offers: [{ product_id: P3, title: 'Kit Convites VIP', badge: 'Novo', description: '+100 modelos' }, { product_id: P1, title: 'Já comprado' }] } });
+      const vit = await mem('GET', '/me', s);
+      expect(vit.body.offers).toEqual({ title: 'Leve também', subtitle: 'Só para alunos' });
+      expect(vit.body.extras).toHaveLength(1);
+      expect(vit.body.extras[0]).toMatchObject({ name: 'Kit Convites VIP', badge: 'Novo', description: '+100 modelos', price_cents: 2990, checkout_url: '/checkout?produto_id=7777777' });
+      db.settings = db.settings.filter((x) => x.key !== 'members');
+
       const mod = await mem('GET', '/modules/00000000-0000-4000-8000-00000000f001', s);
       expect(mod.body.lessons.map((l: any) => l.title)).toEqual(['Boas-vindas', 'Primeiros passos']);
       expect(mod.body.next_module.title).toBe('Facebook Ads');

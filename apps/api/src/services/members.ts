@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { env } from '../config/env.js';
+import { z } from 'zod';
 import { HttpError, productCode, supabase } from '../lib/core.js';
 
 // ------------------------------------------------------------------ sessão do aluno
@@ -52,8 +53,7 @@ export async function memberHome(customerId: string) {
     supabase.from('products').select('id, number, name, description, image_url, members_banner_url, active').eq('members_enabled', true),
   ]);
   const all = ((products ?? []) as any[]).filter((p) => owned.has(p.id) || p.active);
-  if (!all.length) return { customer, courses: [], extras: [] };
-  const ids = all.map((p) => p.id);
+  const ids = all.length ? all.map((p) => p.id) : ['00000000-0000-0000-0000-000000000000'];
   const [{ data: sections }, { data: modules }, { data: lessons }, { data: progress }, { data: checkouts }] = await Promise.all([
     supabase.from('member_sections').select('id, product_id, title, sort').in('product_id', ids).order('sort', { ascending: true }),
     supabase.from('member_modules').select('id, product_id, section_id, title, subtitle, cover_url, sort').in('product_id', ids).order('sort', { ascending: true }),
@@ -89,6 +89,9 @@ export async function memberHome(customerId: string) {
         sections: secs.map((s) => ({ id: s.id, title: s.title, modules: mods.filter((m) => m.section_id === s.id).sort(sort).map(moduleView) })).filter((s) => s.modules.length),
       };
     });
+  // vitrine escolhida no painel (Área de membros → Produtos adicionais); sem escolha: automática
+  const cfg = await getMembersConfig();
+  if (cfg.offers.length) return { customer, courses, extras: await manualExtras(owned, cfg), offers: { title: cfg.offersTitle, subtitle: cfg.offersSubtitle } };
   // cursos que a pessoa ainda não tem: aparecem bloqueados, com o link do checkout para liberar
   const extras = all
     .filter((p) => !owned.has(p.id) && p.active && checkoutOf.has(p.id))
@@ -102,9 +105,70 @@ export async function memberHome(customerId: string) {
         modules: ((modules ?? []) as ModuleRow[]).filter((m) => m.product_id === p.id).length,
         checkout_url: `/checkout?produto_id=${checkoutOf.get(p.id)}`,
         code: productCode(p.number),
+        badge: null as string | null,
+        price_cents: null as number | null,
       };
     });
-  return { customer, courses, extras };
+  return { customer, courses, extras, offers: { title: cfg.offersTitle, subtitle: cfg.offersSubtitle } };
+}
+
+// ------------------------------------------------------------------ vitrine de produtos adicionais
+const offerSchema = z.object({
+  product_id: z.string().uuid(),
+  title: z.string().trim().max(80).nullable().optional().transform((v) => v || null),
+  description: z.string().trim().max(300).nullable().optional().transform((v) => v || null),
+  cover_url: z.string().trim().url().max(1000).or(z.literal('')).nullable().optional().transform((v) => v || null),
+  badge: z.string().trim().max(20).nullable().optional().transform((v) => v || null),
+});
+export const membersConfigSchema = z.object({
+  offersTitle: z.string().trim().min(1).max(60).default('Cursos adicionais'),
+  offersSubtitle: z.string().trim().max(120).default('Libere mais conteúdos'),
+  offers: z.array(offerSchema).max(30).default([]),
+});
+export type MembersConfig = z.infer<typeof membersConfigSchema>;
+export async function getMembersConfig(): Promise<MembersConfig> {
+  const { data } = await supabase.from('settings').select('value').eq('key', 'members').maybeSingle();
+  const r = membersConfigSchema.safeParse((data as any)?.value ?? {});
+  return r.success ? r.data : membersConfigSchema.parse({});
+}
+export async function saveMembersConfig(input: unknown) {
+  const value = membersConfigSchema.parse(input);
+  const { error } = await supabase.from('settings').upsert({ key: 'members', value, updated_at: new Date().toISOString() });
+  if (error) throw new HttpError(500, error.message);
+  return value;
+}
+
+/** Produtos escolhidos no painel, na ordem definida, menos os que a pessoa já tem. */
+async function manualExtras(owned: Set<string>, cfg: MembersConfig) {
+  const ids = cfg.offers.map((o) => o.product_id).filter((id) => !owned.has(id));
+  if (!ids.length) return [];
+  const [{ data: products }, { data: checkouts }, { data: modules }] = await Promise.all([
+    supabase.from('products').select('id, number, name, description, image_url, price_cents, active').in('id', ids),
+    supabase.from('checkouts').select('slug, product_id, price_cents, active, created_at').in('product_id', ids).eq('active', true).order('created_at', { ascending: true }),
+    supabase.from('member_modules').select('product_id, cover_url, sort').in('product_id', ids).order('sort', { ascending: true }),
+  ]);
+  const prod = new Map(((products ?? []) as any[]).map((p) => [p.id, p]));
+  const ck = new Map<string, any>();
+  for (const c of (checkouts ?? []) as any[]) if (!ck.has(c.product_id)) ck.set(c.product_id, c);
+  const firstCover = new Map<string, string>();
+  for (const m of (modules ?? []) as any[]) if (m.cover_url && !firstCover.has(m.product_id)) firstCover.set(m.product_id, m.cover_url);
+  return cfg.offers
+    .filter((o) => !owned.has(o.product_id) && prod.get(o.product_id)?.active && ck.has(o.product_id))
+    .map((o) => {
+      const p = prod.get(o.product_id);
+      const c = ck.get(o.product_id);
+      return {
+        id: p.id,
+        name: o.title || p.name,
+        description: o.description || p.description,
+        cover_url: o.cover_url || firstCover.get(p.id) || p.image_url,
+        modules: 0,
+        checkout_url: `/checkout?produto_id=${c.slug}`,
+        code: productCode(p.number),
+        badge: o.badge,
+        price_cents: (c.price_cents ?? p.price_cents) as number | null,
+      };
+    });
 }
 
 /** Módulo com as aulas (só para quem tem o produto). */

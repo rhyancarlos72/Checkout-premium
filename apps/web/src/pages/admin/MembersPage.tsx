@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, ArrowUp, ExternalLink, FileText, GraduationCap, Link2, Pencil, Plus, PlayCircle, Trash2, Video, X } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, ExternalLink, Lock, Sparkles, FileText, GraduationCap, Link2, Pencil, Plus, PlayCircle, Trash2, Video, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ImageUpload } from '@/components/ImageUpload';
 import { Badge, Button, Card, cn, EmptyState, Field, Input, Modal, PageLoader, Textarea, useToast } from '@/components/ui';
@@ -17,6 +17,7 @@ const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : 'Não foi po
 
 export default function MembersPage() {
   const [selected, setSelected] = useState<string | null>(null);
+  const [tab, setTab] = useState<'cursos' | 'ofertas'>('cursos');
   const list = useQuery({ queryKey: ['members-admin', 'products'], queryFn: () => adminApi.get<ProductRow[]>('/members/products') });
   return (
     <>
@@ -29,8 +30,19 @@ export default function MembersPage() {
           </a>
         }
       />
+      {!selected && (
+        <div className="mb-6 inline-flex rounded-xl border border-zinc-200 bg-white p-1">
+          {([['cursos', 'Cursos'], ['ofertas', 'Produtos adicionais']] as const).map(([k, l]) => (
+            <button key={k} onClick={() => setTab(k)} className={cn('rounded-lg px-4 py-2 text-sm font-semibold transition', tab === k ? 'bg-blue-600 text-white shadow' : 'text-zinc-500 hover:text-zinc-800')}>
+              {l}
+            </button>
+          ))}
+        </div>
+      )}
       {selected ? (
         <CourseEditor productId={selected} onBack={() => setSelected(null)} />
+      ) : tab === 'ofertas' ? (
+        <OffersEditor products={list.data ?? []} />
       ) : list.isLoading ? (
         <PageLoader />
       ) : !list.data?.length ? (
@@ -356,5 +368,112 @@ function LessonModal({ moduleId, lesson, onClose, onSaved }: { moduleId: string;
         </div>
       </form>
     </Modal>
+  );
+}
+
+// ------------------------------------------------------------------ vitrine de produtos adicionais
+interface Offer { product_id: string; title: string | null; description: string | null; cover_url: string | null; badge: string | null }
+interface OffersConfig { offersTitle: string; offersSubtitle: string; offers: Offer[] }
+
+function OffersEditor({ products }: { products: ProductRow[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ['members-admin', 'offers'], queryFn: () => adminApi.get<OffersConfig>('/members/offers') });
+  const [cfg, setCfg] = useState<OffersConfig | null>(null);
+  const [pick, setPick] = useState('');
+  useEffect(() => {
+    if (q.data && !cfg) setCfg(q.data);
+  }, [q.data, cfg]);
+  const save = useMutation({
+    mutationFn: (v: OffersConfig) => adminApi.put<OffersConfig>('/members/offers', v),
+    onSuccess: (v) => (setCfg(v), qc.setQueryData(['members-admin', 'offers'], v), toast.ok('Vitrine salva')),
+    onError: (e) => toast.err(errMsg(e)),
+  });
+  if (!cfg) return <PageLoader />;
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const set = (patch: Partial<OffersConfig>) => setCfg({ ...cfg, ...patch });
+  const setOffer = (i: number, patch: Partial<Offer>) => set({ offers: cfg.offers.map((o, j) => (j === i ? { ...o, ...patch } : o)) });
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= cfg.offers.length) return;
+    const next = [...cfg.offers];
+    [next[i], next[j]] = [next[j], next[i]];
+    set({ offers: next });
+  };
+  const available = products.filter((p) => p.active && !cfg.offers.some((o) => o.product_id === p.id));
+
+  return (
+    <div className="space-y-6">
+      {toast.node}
+      <Card>
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><Sparkles className="h-5 w-5" /></span>
+          <div>
+            <p className="font-semibold">Vitrine de produtos adicionais</p>
+            <p className="mt-1 text-sm text-zinc-500">Escolha o que oferecer embaixo dos cursos do aluno. Cada produto aparece bloqueado, com o botão “Desbloquear” que leva ao checkout dele. Quem já comprou não vê a oferta. Sem nenhum produto escolhido, a vitrine mostra automaticamente os cursos com área de membros que a pessoa ainda não tem.</p>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+          <Field label="Título da vitrine"><Input value={cfg.offersTitle} onChange={(e) => set({ offersTitle: e.target.value })} placeholder="Cursos adicionais" /></Field>
+          <Field label="Subtítulo"><Input value={cfg.offersSubtitle} onChange={(e) => set({ offersSubtitle: e.target.value })} placeholder="Libere mais conteúdos" /></Field>
+        </div>
+      </Card>
+
+      {cfg.offers.map((o, i) => {
+        const p = byId.get(o.product_id);
+        return (
+          <Card key={o.product_id}>
+            <div className="grid gap-5 md:grid-cols-[150px_minmax(0,1fr)]">
+              <div className="mx-auto w-[150px] overflow-hidden rounded-xl bg-[#101219] text-white ring-1 ring-zinc-800">
+                <div className="relative aspect-[2/3] bg-gradient-to-b from-[#0b2a8a] to-black">
+                  {(o.cover_url || p?.image_url) && <img src={(o.cover_url || p?.image_url)!} alt="" className="h-full w-full object-cover brightness-[.45]" />}
+                  <span className="absolute left-2 top-2 rounded bg-amber-400 px-1.5 py-0.5 text-[9px] font-black uppercase text-black">{o.badge || 'Exclusivo'}</span>
+                  <span className="absolute inset-0 flex items-center justify-center"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-black/60 ring-1 ring-amber-300/50"><Lock className="h-4 w-4 text-amber-300" /></span></span>
+                </div>
+                <div className="px-2 py-2.5 text-center">
+                  <p className="line-clamp-2 text-[12px] font-semibold">{o.title || p?.name || 'Produto'}</p>
+                  <span className="mt-1.5 inline-block rounded bg-amber-400 px-2 py-0.5 text-[10px] font-bold text-black">Desbloquear</span>
+                </div>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="min-w-0 truncate font-semibold">{p ? `${p.name}${p.code ? ` · ID: ${p.code}` : ''}` : 'Produto removido'}</p>
+                  <div className="flex shrink-0">
+                    <IconBtn label="Subir" onClick={() => move(i, -1)}><ArrowUp className="h-4 w-4" /></IconBtn>
+                    <IconBtn label="Descer" onClick={() => move(i, 1)}><ArrowDown className="h-4 w-4" /></IconBtn>
+                    <IconBtn label="Remover da vitrine" danger onClick={() => set({ offers: cfg.offers.filter((_, j) => j !== i) })}><Trash2 className="h-4 w-4" /></IconBtn>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
+                  <Field label="Título (vazio = nome do produto)"><Input value={o.title ?? ''} onChange={(e) => setOffer(i, { title: e.target.value })} placeholder={p?.name} /></Field>
+                  <Field label="Selo"><Input value={o.badge ?? ''} onChange={(e) => setOffer(i, { badge: e.target.value })} placeholder="Exclusivo" maxLength={20} /></Field>
+                </div>
+                <Field label="Frase curta (opcional)"><Input value={o.description ?? ''} onChange={(e) => setOffer(i, { description: e.target.value })} placeholder="Ex.: +300 modelos prontos para vender mais" maxLength={300} /></Field>
+                <ImageUpload kind="poster" label="Capa vertical (vazio = capa do curso ou imagem do produto)" value={o.cover_url} onChange={(url) => setOffer(i, { cover_url: url })} />
+              </div>
+            </div>
+          </Card>
+        );
+      })}
+
+      <Card>
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <select value={pick} onChange={(e) => setPick(e.target.value)} className="h-11 flex-1 rounded-xl border border-zinc-200 bg-white px-3 text-sm" aria-label="Produto para oferecer">
+            <option value="">Escolha um produto para oferecer…</option>
+            {available.map((p) => (
+              <option key={p.id} value={p.id}>{p.name}{p.code ? ` · ID: ${p.code}` : ''}{p.members_enabled ? ' (área de membros)' : ''}</option>
+            ))}
+          </select>
+          <Button type="button" disabled={!pick} onClick={() => (set({ offers: [...cfg.offers, { product_id: pick, title: null, description: null, cover_url: null, badge: null }] }), setPick(''))}>
+            <Plus className="h-4 w-4" /> Adicionar à vitrine
+          </Button>
+        </div>
+        {!cfg.offers.length && <p className="mt-3 text-sm text-zinc-500">Nenhum produto escolhido: a vitrine está no modo automático.</p>}
+      </Card>
+
+      <div className="sticky bottom-4 z-10 flex justify-end">
+        <Button size="lg" loading={save.isPending} onClick={() => save.mutate(cfg)} className="shadow-xl">Salvar vitrine</Button>
+      </div>
+    </div>
   );
 }

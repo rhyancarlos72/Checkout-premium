@@ -334,6 +334,25 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
       if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-modulo-${label}.png` });
       ok(`[${label}] painel: aba Área de membros lista produtos, abre o curso, cria seção e mostra as aulas do módulo`);
       if (label === 'computador') {
+        // vitrine de produtos adicionais: escolhe o Kit Convites, muda o título e salva
+        await p.goto(`${base}/admin/area-de-membros`);
+        await p.getByRole('button', { name: 'Produtos adicionais' }).click();
+        await p.getByText('Vitrine de produtos adicionais').waitFor();
+        const opt = await p.getByLabel('Produto para oferecer').locator('option', { hasText: 'Kit Convites' }).getAttribute('value');
+        await p.getByLabel('Produto para oferecer').selectOption(opt!);
+        await p.getByRole('button', { name: /Adicionar à vitrine/ }).click();
+        await p.getByPlaceholder('Kit Convites').fill('Kit Convites VIP');
+        await p.getByPlaceholder('Exclusivo').fill('Novo');
+        await p.waitForTimeout(300);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-vitrine.png` });
+        await p.getByRole('button', { name: 'Salvar vitrine' }).click();
+        await p.getByText('Vitrine salva').waitFor();
+        const cfg = db.settings.find((x) => x.key === 'members')!.value;
+        expect(cfg.offers).toHaveLength(1);
+        expect(cfg.offers[0]).toMatchObject({ title: 'Kit Convites VIP', badge: 'Novo' });
+        ok('[computador] painel: vitrine de produtos adicionais escolhida e salva');
+        db.settings = db.settings.filter((x) => x.key !== 'members');
+
         // Produtos: entrega padrão = link; escolher "Área de membros" cria o curso sozinho
         await p.goto(`${base}/admin/produtos`);
         await p.getByRole('button', { name: /Novo produto/ }).first().click();
