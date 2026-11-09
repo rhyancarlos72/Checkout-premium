@@ -910,6 +910,7 @@ adminRouter.get('/gateways', async (_req, res) => {
   res.json({
     defaultProvider: g.globalProvider(),
     pixExpiresMinutes: g.pixExpiresMinutes(),
+    card: g.cardConfig(),
     woovi: {
       configured: Boolean(w.appId),
       source: w.source,
@@ -937,6 +938,16 @@ adminRouter.put('/gateways/pix-expiration', async (req, res) => {
   await patchGateways((g) => ({ ...g, pixExpiresMinutes: minutes }));
   const h = minutes / 60;
   res.json({ ok: true, message: `Pix válido por ${Number.isInteger(h) ? `${h} hora${h > 1 ? 's' : ''}` : `${minutes} minutos`} em todos os produtos (vale para os próximos Pix gerados)` });
+});
+
+/** Cartão de crédito: liga/desliga, gateway e parcelas (só o Super Admin). */
+adminRouter.put('/gateways/card', async (req, res) => {
+  const b = z.object({ enabled: z.boolean(), provider: z.enum(['woovi', 'efi']).default('woovi'), maxInstallments: z.number().int().min(1).max(12).default(1) }).parse(req.body);
+  if (b.provider === 'efi') throw new HttpError(400, 'Cartão pela Efí ainda não está disponível. Use a Woovi para cartão.');
+  if (b.enabled && !wooviConfig().appId) throw new HttpError(400, 'Configure a Woovi (AppID) antes de ligar o cartão');
+  await patchGateways((g) => ({ ...g, card: b }));
+  clearCheckoutCache();
+  res.json({ ok: true, message: b.enabled ? `Cartão ligado${b.maxInstallments > 1 ? ` em até ${b.maxInstallments}x sem juros` : ''}. Confirme na Woovi que o cartão (e o parcelamento) estão habilitados na sua conta.` : 'Cartão desligado' });
 });
 
 adminRouter.put('/gateways/default', async (req, res) => {

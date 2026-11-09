@@ -12,6 +12,18 @@ export interface CreateChargeInput {
     phone?: string | null;
     document?: string | null; // CPF ou CNPJ (só dígitos)
   };
+  /** 'card' = cartão de crédito (página segura do gateway); padrão Pix */
+  method?: 'pix' | 'card';
+  /** máximo de parcelas oferecidas no cartão (sem juros para o cliente) */
+  cardInstallments?: number;
+  /** venda de produtor: parte dele vai direto para o recebedor; a comissão fica com a Prime */
+  split?: SplitSpec | null;
+}
+
+export interface SplitSpec {
+  producerCents: number;
+  platformCents: number;
+  recipient: { pixKey?: string; account?: string; document?: string; name?: string };
 }
 
 export interface CreatedCharge {
@@ -19,6 +31,10 @@ export interface CreatedCharge {
   pixCode: string; // copia e cola (BR Code)
   qrImage: string | null; // URL ou data URI da imagem
   expiresAt: Date;
+  /** cartão: página segura do gateway para o cliente digitar o cartão */
+  cardUrl?: string | null;
+  /** o que foi enviado ao gateway para dividir a venda */
+  splitInfo?: Record<string, unknown> | null;
 }
 
 export type ChargeStatus = 'pending' | 'paid' | 'expired' | 'refunded' | 'unknown';

@@ -20,6 +20,12 @@ const fake = http.createServer((req, res) => {
   req.on('end', () => {
     const body = b ? JSON.parse(b) : null;
     const json = (s: number, v: unknown) => res.writeHead(s, { 'Content-Type': 'application/json' }).end(JSON.stringify(v));
+    const sf = req.url!.match(/^\/woovi\/api\/v1\/charge\/([^/]+)\/card\/smartform$/);
+    if (req.method === 'POST' && sf) return json(200, { checkoutUrl: `https://woovi.test/card/${sf[1]}` });
+    if (req.method === 'POST' && req.url === '/woovi/api/v1/charge' && body.type === 'CREDIT_CARD') {
+      charges.set(body.correlationID, { status: 'ACTIVE', value: body.value, body } as any);
+      return json(200, { charge: { correlationID: body.correlationID, expiresDate: new Date(Date.now() + body.expiresIn * 1000).toISOString() } });
+    }
     if (req.method === 'POST' && req.url === '/woovi/api/v1/charge') {
       charges.set(body.correlationID, { status: 'ACTIVE', value: body.value });
       return json(200, { charge: { correlationID: body.correlationID, brCode: `00020101021226PIX${body.correlationID.slice(0, 8)}5204000053039865802BR6304ABCD`, expiresDate: new Date(Date.now() + body.expiresIn * 1000).toISOString() } });
@@ -404,4 +410,53 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
       await ctx.close();
     }
   }, 90_000);
+});
+
+describe.skipIf(!RUN)('cartão de crédito no checkout', () => {
+  for (const [label, viewport] of [['computador', { width: 1366, height: 900 }], ['celular', { width: 390, height: 844 }]] as const) {
+    it(`cliente escolhe Cartão, informa o CPF e vai para a página segura (${label})`, async () => {
+      const g = db.settings.find((x) => x.key === 'gateways')!;
+      g.value = { ...g.value, card: { enabled: true, provider: 'woovi', maxInstallments: 3 } };
+      const { refreshGateways } = await import('./services/gateways.js');
+      await refreshGateways(true);
+      (await import('./services/orders.js')).clearCheckoutCache();
+      const ctx = await browser.newContext({ viewport, locale: 'pt-BR' });
+      const p = await ctx.newPage();
+      const errors: string[] = [];
+      p.on('pageerror', (e: Error) => errors.push(e.message));
+      await p.route('https://woovi.test/**', (r: any) => r.fulfill({ contentType: 'text/html', body: '<h1>Página segura da Woovi</h1>' }));
+      await p.goto(`${base}/checkout?produto_id=8931442`);
+      await p.getByRole('button', { name: 'Cartão' }).click();
+      await p.getByText('Em até 3x sem juros').waitFor();
+      await p.getByPlaceholder('Seu nome completo').fill('Carlos Cartão');
+      await p.getByPlaceholder('Seu melhor e-mail').fill(`carlos-${label}@x.com`);
+      await p.getByPlaceholder('(00) 00000-0000').fill('11977776666');
+      const cpf = p.getByPlaceholder('000.000.000-00');
+      await cpf.scrollIntoViewIfNeeded();
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/cartao-checkout-${label}.png` });
+      // sem CPF: barrado
+      await p.locator('button[type="submit"]:visible').first().click();
+      await p.getByText('Informe seu CPF').waitFor();
+      await cpf.fill('52998224725');
+      expect(await cpf.inputValue()).toBe('529.982.247-25');
+      await p.locator('button[type="submit"]:visible').first().click();
+      await p.waitForURL(/woovi\.test\/card\//, { timeout: 15_000 });
+      const order = db.orders.find((o) => o.customer_id && db.customers.find((c) => c.id === o.customer_id)?.email === `carlos-${label}@x.com`)!;
+      expect(order.payment_method).toBe('card');
+      expect((charges.get(order.id) as any).body).toMatchObject({ type: 'CREDIT_CARD', cardInstallments: 3, customer: { taxID: '52998224725' } });
+      ok(`[${label}] cartão: botão ao lado do Pix, CPF obrigatório, cobrança CREDIT_CARD em até 3x e ida para a página segura da Woovi`);
+      // voltar: a página do pedido mostra "Pagar com cartão" e aprova sozinha
+      await p.goBack();
+      await p.getByText('Aguardando pagamento no cartão').waitFor({ timeout: 15_000 });
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/cartao-pedido-${label}.png` });
+      await pay(order.id);
+      await p.getByText(/Pagamento aprovado!|Espere! Seu pedido/).first().waitFor({ timeout: 15_000 });
+      ok(`[${label}] cartão aprovado: a página do pedido atualizou sozinha`);
+      expect(errors).toEqual([]);
+      await ctx.close();
+      g.value = { ...g.value, card: { enabled: false } };
+      await refreshGateways(true);
+      (await import('./services/orders.js')).clearCheckoutCache();
+    }, 90_000);
+  }
 });

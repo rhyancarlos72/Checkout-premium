@@ -1,5 +1,6 @@
 import { ensureMemberAccess, membersLink } from './members.js';
-import { assertCanSell, orgInfo, orgOfOrder, runAsOrg, withOrderOrg } from '../lib/tenant.js';
+import { assertCanSell, isOwnerOrg, orgInfo, orgOfOrder, runAsOrg, withOrderOrg } from '../lib/tenant.js';
+import type { SplitSpec } from '../providers/types.js';
 import { feeFieldsFor } from './fees.js';
 import { recordSale } from './ledger.js';
 import crypto from 'node:crypto';
@@ -7,7 +8,7 @@ import { z } from 'zod';
 import { env } from '../config/env.js';
 import { HttpError, logger, must, onlyDigits, productCode, supabase } from '../lib/core.js';
 import { getProvider, type ProviderName } from '../providers/index.js';
-import { globalProvider, pixExpiresMinutes } from './gateways.js';
+import { cardConfig, globalProvider, pixExpiresMinutes } from './gateways.js';
 import { pixQrDataUrl } from '../lib/qr.js';
 import { emitInvoice } from './invoices.js';
 import { sendDeliveryEmail, type DeliveryItem } from './email.js';
@@ -33,6 +34,8 @@ export const createOrderSchema = z.object({
   bump_ids: z.array(z.string().uuid()).max(10).default([]),
   coupon_code: z.string().trim().toUpperCase().max(40).optional().nullable(),
   tracking: z.record(z.string(), z.unknown()).optional().default({}),
+  /** forma de pagamento escolhida no checkout (padrão Pix) */
+  payment_method: z.enum(['pix', 'card']).optional().default('pix'),
 });
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
@@ -157,13 +160,16 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
 
   // produtor só vende com conta ativa e recebimento (split) liberado; a Prime vende sempre
   await assertCanSell(checkout.org_id);
-  // gateway: o definido pelo Super Admin para o produtor; senão o global (Integrações); senão o do checkout
-  const provider = getProvider(((await orgInfo(checkout.org_id))?.pix_provider ?? globalProvider() ?? checkout.provider) as ProviderName);
+  const method = input.payment_method ?? 'pix';
+  const card = method === 'card' ? await cardAllowed(checkout.org_id) : null;
+  if (card && onlyDigits(input.customer.document).length !== 11 && onlyDigits(input.customer.document).length !== 14) throw new HttpError(400, 'Informe um CPF válido para pagar com cartão');
+  // gateway: cartão → o do cartão (Super Admin); Pix → o do produtor, senão o global (Integrações), senão o do checkout
+  const provider = getProvider((card ? card.provider : ((await orgInfo(checkout.org_id))?.pix_provider ?? globalProvider() ?? checkout.provider)) as ProviderName);
   const customer = await upsertCustomer(input.customer);
 
   // Sem cobrança duplicada: a mesma pessoa, no mesmo checkout, com o MESMO valor (e itens)
   // e um Pix ainda válido recebe de volta esse Pix. Valor diferente = cobrança nova (a anterior continua).
-  const reuse = await findReusablePix(checkout.id, customer.id, q);
+  const reuse = method === 'pix' ? await findReusablePix(checkout.id, customer.id, q) : null;
   if (reuse) return reuse;
 
   // geo vem só do servidor (cabeçalhos da CDN), nunca do navegador
@@ -185,6 +191,7 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
         user_agent: meta.userAgent?.slice(0, 400) ?? null,
         // comissão da plataforma calculada no servidor e congelada no pedido (R$ 0,00 para a Prime)
         ...(await feeFieldsFor(checkout.org_id ?? null, q.lines, q.totalCents)),
+        ...(card ? { payment_method: 'card' } : {}),
       })
       .select('id, number, public_token, created_at')
       .single(),
@@ -200,13 +207,20 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
       description: `Pedido #${order.number} - ${checkout.product.name}`,
       expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
       customer: { name: input.customer.name, email: input.customer.email, phone: input.customer.phone, document: doc || null },
+      method,
+      cardInstallments: card?.maxInstallments,
+      split: await splitFor(order.id), // venda de produtor: a parte dele vai direto para o recebedor dele
     });
     // QR Code gerado aqui mesmo a partir do copia e cola: sai na hora, sem baixar imagem do gateway
-    const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
+    const qrImage = charge.pixCode ? ((await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage) : null;
     const expiresAt = charge.expiresAt.toISOString();
     await Promise.all([
       itemsSaved,
-      supabase.from('orders').update({ provider_charge_id: charge.chargeId, pix_code: charge.pixCode, pix_qr_image: qrImage, expires_at: expiresAt }).eq('id', order.id),
+      supabase
+        .from('orders')
+        .update({ provider_charge_id: charge.chargeId, pix_code: charge.pixCode || null, pix_qr_image: qrImage, expires_at: expiresAt, ...(charge.cardUrl ? { card_checkout_url: charge.cardUrl } : {}) })
+        .eq('id', order.id),
+      saveSplit(order.id, charge.splitInfo),
     ]);
 
     // MESMO valor (mesmo ticket) da mesma pessoa neste checkout: a cobrança anterior (ex.: Pix vencido)
@@ -234,8 +248,10 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
         total_cents: q.totalCents,
         subtotal_cents: q.subtotalCents,
         discount_cents: q.discountCents,
-        pix_code: charge.pixCode,
+        pix_code: charge.pixCode || null,
         pix_qr_image: qrImage,
+        payment_method: method,
+        card_url: charge.cardUrl ?? null,
         expires_at: expiresAt,
         paid_at: null,
         created_at: new Date().toISOString(),
@@ -467,7 +483,9 @@ export async function renewOrder(token: string): Promise<{ token: string; renewe
       description: `Pedido #${order.number} - ${checkout.product?.name ?? checkout.name}`,
       expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
       customer: { name: old.customer?.name ?? '', email: old.customer?.email ?? '', phone: old.customer?.phone ?? null, document: old.customer?.document ?? null },
+      split: await splitFor(order.id),
     });
+    void saveSplit(order.id, charge.splitInfo);
     const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
     const expiresAt = charge.expiresAt.toISOString();
     await Promise.all([
@@ -569,7 +587,9 @@ export async function createUpsellOrder(parentToken: string): Promise<{ token: s
       description: `Pedido #${order.number} - ${offer.title}`,
       expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
       customer: { name: parent.customer?.name ?? '', email: parent.customer?.email ?? '', phone: parent.customer?.phone ?? null, document: parent.customer?.document ?? null },
+      split: await splitFor(order.id),
     });
+    void saveSplit(order.id, charge.splitInfo);
     const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
     await Promise.all([
       itemsSaved,
@@ -589,6 +609,47 @@ export async function createUpsellOrder(parentToken: string): Promise<{ token: s
     logger.error({ orderId: order.id, err: e?.message }, 'Falha ao gerar Pix do upsell');
     throw e instanceof HttpError ? e : new HttpError(502, 'Não foi possível gerar o Pix agora. Tente novamente.');
   }
+}
+
+// ------------------------------------------------------------------ split e cartão (marketplace)
+/**
+ * Divisão da venda no gateway: produtor recebe (total − comissão) direto no recebedor dele; a comissão
+ * fica com a Prime. Vendas da Prime não têm split (recebe como sempre).
+ */
+async function splitFor(orderId: string): Promise<SplitSpec | null> {
+  const { data } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle(); // '*': funciona sem as colunas novas
+  const o: any = data;
+  if (!o?.org_id || (await isOwnerOrg(o.org_id))) return null;
+  const org = await orgInfo(o.org_id);
+  const r: any = org?.recipient ?? {};
+  const fee = Number(o.platform_fee_cents ?? 0);
+  const producerCents = o.total_cents - fee;
+  if (producerCents <= 0) return null; // comissão = venda inteira: nada a repassar
+  return { producerCents, platformCents: fee, recipient: { pixKey: r.pix_key ?? r.pixKey, account: r.account, document: r.document, name: r.name } };
+}
+async function saveSplit(orderId: string, info: Record<string, unknown> | null | undefined) {
+  if (!info) return;
+  const { error } = await supabase.from('orders').update({ split_info: info, split_status: 'pending' }).eq('id', orderId);
+  if (error) logger.warn({ orderId, err: error.message }, 'Split: não foi possível registrar no pedido (rode o SQL 20261113)');
+}
+
+/**
+ * Cartão: ligado pelo Super Admin e com gateway pronto. Para produtores, só com split de cartão
+ * habilitado (a Woovi não documenta split no cartão): sem isso, o dinheiro de terceiros cairia na conta da Prime.
+ */
+async function cardAllowed(orgId: string | null | undefined) {
+  const cc = cardConfig();
+  if (!cc.enabled) throw new HttpError(400, 'Pagamento com cartão indisponível no momento. Use o Pix.');
+  if (!(await isOwnerOrg(orgId)) && !(await orgInfo(orgId))?.card_split_enabled) throw new HttpError(400, 'Pagamento com cartão indisponível para este produto. Use o Pix.');
+  return cc;
+}
+
+/** Cartão aparece no checkout? (mesma regra do servidor, sem lançar erro) */
+export async function cardOptionFor(orgId: string | null | undefined) {
+  const cc = cardConfig();
+  if (!cc.enabled) return null;
+  if (!(await isOwnerOrg(orgId)) && !(await orgInfo(orgId))?.card_split_enabled) return null;
+  return { maxInstallments: cc.maxInstallments };
 }
 
 /** Pix pendente e ainda válido da mesma pessoa para a mesma compra (itens + valor), pronto para reaproveitar. */

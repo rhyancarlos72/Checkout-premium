@@ -15,6 +15,8 @@ export interface GatewaySettings {
   defaultProvider?: 'woovi' | 'efi' | null;
   /** Validade real do Pix para todos os produtos (minutos). Padrão: 120 (2 horas). */
   pixExpiresMinutes?: number;
+  /** Cartão de crédito (Super Admin): gateway e máximo de parcelas sem juros para o cliente */
+  card?: { enabled?: boolean; provider?: 'woovi' | 'efi'; maxInstallments?: number };
   woovi?: { appId?: string; webhookSecret?: string };
   efi?: {
     clientId?: string;
@@ -61,6 +63,13 @@ export async function patchGateways(fn: (cur: GatewaySettings) => GatewaySetting
 
 /** Gateway global escolhido em Integrações (null = cada checkout escolhe o seu). */
 export const globalProvider = (): 'woovi' | 'efi' | null => snap.defaultProvider ?? null;
+/** Cartão ligado no painel e o gateway escolhido está configurado (hoje: Woovi). */
+export const cardConfig = () => {
+  const c = snap.card ?? {};
+  const provider = c.provider ?? 'woovi';
+  const ready = provider === 'woovi' ? Boolean(wooviConfig().appId) : false; // cartão Efí: próxima etapa
+  return { enabled: Boolean(c.enabled) && ready, configured: Boolean(c.enabled), provider, maxInstallments: Math.min(12, Math.max(1, Number(c.maxInstallments) || 1)) };
+};
 
 /** Validade real do Pix em minutos (configurada em Integrações; padrão 2 horas). */
 export const pixExpiresMinutes = (): number => {

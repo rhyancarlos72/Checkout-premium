@@ -106,8 +106,33 @@ export class EfiProvider implements PixProvider {
     return orderId.replace(/-/g, ''); // 32 chars alfanuméricos (regra: 26–35)
   }
 
+  /**
+   * Split Pix Efí (dev.efipay.com.br/docs/api-pix/split-de-pagamento-pix): só entre contas Efí.
+   * Valores FIXOS: comissão da Prime ("minhaParte") + parte do produtor ("repasses") = valor da cobrança.
+   */
+  private async createSplitConfig(input: CreateChargeInput) {
+    const sp = input.split!;
+    const doc = onlyDigits(sp.recipient.document);
+    if (!sp.recipient.account || (doc.length !== 11 && doc.length !== 14)) throw new HttpError(400, 'Recebedor Efí do produtor incompleto (conta e CPF/CNPJ)');
+    if (sp.producerCents <= 0 || sp.producerCents + sp.platformCents !== input.amountCents) throw new HttpError(400, 'Valores do split não fecham com o total da cobrança');
+    const body = {
+      descricao: input.description.slice(0, 80),
+      lancamento: { imediato: true },
+      split: {
+        divisaoTarifa: 'assumir_total',
+        minhaParte: { tipo: 'fixo', valor: centsToBRL(sp.platformCents) },
+        repasses: [{ tipo: 'fixo', valor: centsToBRL(sp.producerCents), favorecido: { [doc.length === 14 ? 'cnpj' : 'cpf']: doc, conta: sp.recipient.account } }],
+      },
+    };
+    const cfg = await this.authed<any>('POST', '/v2/gn/split/config', body);
+    if (!cfg?.id) throw new HttpError(502, 'A Efí não criou a configuração de split');
+    return { id: String(cfg.id), body };
+  }
+
   async createCharge(input: CreateChargeInput): Promise<CreatedCharge> {
+    if (input.method === 'card') throw new HttpError(400, 'Cartão pela Efí ainda não está disponível. Use a Woovi para cartão.');
     const txid = EfiProvider.txidFromOrder(input.orderId);
+    const split = input.split ? await this.createSplitConfig(input) : null;
     const doc = onlyDigits(input.customer.document);
     const devedor = isValidCpf(doc)
       ? { cpf: doc, nome: input.customer.name.slice(0, 200) }
@@ -122,6 +147,16 @@ export class EfiProvider implements PixProvider {
       chave: efiConfig().pixKey,
       solicitacaoPagador: input.description.slice(0, 140),
     });
+
+    if (split) {
+      try {
+        await this.authed('PUT', `/v2/gn/split/cob/${txid}/vinculo/${split.id}`);
+      } catch (e: any) {
+        // sem o vínculo o dinheiro do produtor cairia todo na conta da Prime: cancela a cobrança e não mostra o Pix
+        await this.authed('PATCH', `/v2/cob/${txid}`, { status: 'REMOVIDA_PELO_USUARIO_RECEBEDOR' }).catch(() => {});
+        throw new HttpError(502, `A Efí recusou o split desta venda: ${e?.message ?? 'erro'}`);
+      }
+    }
 
     let pixCode: string | undefined = cob.pixCopiaECola;
     let qrImage: string | null = null;
@@ -141,6 +176,7 @@ export class EfiProvider implements PixProvider {
       pixCode,
       qrImage,
       expiresAt: new Date(Date.now() + input.expiresInSeconds * 1000),
+      splitInfo: split ? { gateway: 'efi', splitConfigId: split.id, config: split.body } : null,
     };
   }
 

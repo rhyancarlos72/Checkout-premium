@@ -11,7 +11,7 @@ import { createFakeClient, db } from './test/fakeSupabase.js';
 vi.mock('@supabase/supabase-js', () => ({ createClient: () => createFakeClient() }));
 
 // ---------- serviços externos falsos
-const charges = new Map<string, { status: string; value: number }>();
+const charges = new Map<string, { status: string; value: number; body?: any }>();
 const spedyCalls: any[] = [];
 const ptCalls: { event: string; body: any; headers: http.IncomingHttpHeaders }[] = [];
 const waSent: { instance: string; body: any }[] = [];
@@ -24,9 +24,12 @@ const fake = http.createServer((req, res) => {
     const body = b ? JSON.parse(b) : null;
     const json = (s: number, v: unknown) => res.writeHead(s, { 'Content-Type': 'application/json' }).end(JSON.stringify(v));
     if (req.method === 'POST' && req.url === '/woovi/api/v1/charge') {
-      charges.set(body.correlationID, { status: 'ACTIVE', value: body.value });
-      return json(200, { charge: { correlationID: body.correlationID, brCode: `00020101PIX-${body.correlationID}`, qrCodeImage: 'https://x/qr.png', expiresDate: new Date(Date.now() + body.expiresIn * 1000).toISOString() } });
+      charges.set(body.correlationID, { status: 'ACTIVE', value: body.value, body });
+      // cartão (type CREDIT_CARD): a Woovi não devolve brCode
+      return json(200, { charge: { correlationID: body.correlationID, ...(body.type === 'CREDIT_CARD' ? {} : { brCode: `00020101PIX-${body.correlationID}`, qrCodeImage: 'https://x/qr.png' }), expiresDate: new Date(Date.now() + body.expiresIn * 1000).toISOString() } });
     }
+    const sf = req.url!.match(/^\/woovi\/api\/v1\/charge\/([^/]+)\/card\/smartform$/);
+    if (req.method === 'POST' && sf) return json(200, { checkoutUrl: `https://woovi.test/card/${sf[1]}` });
     if (req.method === 'GET' && req.url!.startsWith('/woovi/api/v1/charge/')) {
       const id = decodeURIComponent(req.url!.split('/').pop()!);
       const c = charges.get(id);
@@ -703,6 +706,10 @@ describe('marketplace multiusuário', () => {
     expect(o.total_cents).toBe(1480);
     expect(o.platform_fee_cents).toBe(99 + 40);
     expect(o.fee_snapshot).toMatchObject({ owner_exempt: false, fixedCents: 99, bumpCents: 40 });
+    // split na Woovi: a parte do produtor (total − comissão) vai direto para a chave Pix dele
+    expect(charges.get(o.id)!.body.splits).toEqual([{ pixKey: 'b@produtor.com', value: 1480 - 139 }]);
+    expect(o.split_status).toBe('pending');
+    expect(o.split_info).toMatchObject({ gateway: 'woovi' });
     charges.get(o.id)!.status = 'COMPLETED';
     await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } });
     await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } }); // repetido
@@ -730,6 +737,7 @@ describe('marketplace multiusuário', () => {
     await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } });
     await settle();
     expect(db.ledger_entries.filter((l) => l.order_id === o.id).map((l) => l.type)).toEqual(['sale']);
+    expect(charges.get(o.id)!.body.splits).toBeUndefined(); // venda da Prime: sem split, recebe como sempre
     const fin = await as('owner', 'GET', '/api/admin/finance');
     expect(fin.body.owner).toBe(true);
     expect(fin.body.platform_fees_cents).toBe(0);
@@ -753,6 +761,35 @@ describe('marketplace multiusuário', () => {
     expect((await api('POST', `/api/public/checkouts/${bSlug}/quote`, { bump_ids: [], coupon_code: 'BFIVE' })).body.discount_cents).toBe(500);
     expect((await api('POST', '/api/public/checkouts/8931442/quote', { bump_ids: [], coupon_code: 'BFIVE' })).body.coupon_error).toBeTruthy();
     expect((await api('POST', `/api/public/checkouts/${bSlug}/quote`, { bump_ids: [], coupon_code: 'DEZ' })).body.coupon_error).toBeTruthy();
+  });
+
+  it('cartão de crédito (Woovi): só quando o Super Admin liga; CPF obrigatório; página segura da Woovi; produtor sem split de cartão não vende no cartão', async () => {
+    // desligado: não aparece e não é aceito
+    expect((await api('GET', '/api/public/checkouts/8931442')).body.payment.card).toBeNull();
+    expect((await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Lia Card', email: 'lia-card@x.com', phone: '11944445555', document: '52998224725' }, bump_ids: [], tracking: {}, payment_method: 'card' })).status).toBe(400);
+    // produtor não liga o cartão
+    expect((await as('b', 'PUT', '/api/admin/gateways/card', { enabled: true, provider: 'woovi', maxInstallments: 3 })).status).toBe(403);
+    const on = await as('owner', 'PUT', '/api/admin/gateways/card', { enabled: true, provider: 'woovi', maxInstallments: 3 });
+    expect(on.status).toBe(200);
+    expect((await api('GET', '/api/public/checkouts/8931442')).body.payment.card).toEqual({ maxInstallments: 3 });
+    expect((await api('GET', `/api/public/checkouts/${bSlug}`)).body.payment.card).toBeNull(); // produtor: sem split de cartão
+    // sem CPF: recusado
+    expect((await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Lia Card', email: 'lia-card@x.com', phone: '11944445555' }, bump_ids: [], tracking: {}, payment_method: 'card' })).status).toBe(400);
+    const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Lia Card', email: 'lia-card@x.com', phone: '11944445555', document: '529.982.247-25' }, bump_ids: [], tracking: {}, payment_method: 'card' });
+    expect(r.status).toBe(201);
+    expect(r.body.order).toMatchObject({ payment_method: 'card', pix_code: null });
+    expect(r.body.order.card_url).toBe(`https://woovi.test/card/${db.orders.find((x) => x.public_token === r.body.token)!.id}`);
+    const o = db.orders.find((x) => x.public_token === r.body.token)!;
+    expect(charges.get(o.id)!.body).toMatchObject({ type: 'CREDIT_CARD', cardInstallments: 3, customer: { taxID: '52998224725' } });
+    expect((await api('GET', `/api/public/orders/${r.body.token}`)).body).toMatchObject({ payment_method: 'card', card_url: o.card_checkout_url });
+    charges.get(o.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } });
+    await settle();
+    expect(o.status).toBe('paid');
+    expect(db.ledger_entries.find((l) => l.order_id === o.id && l.type === 'sale')!.data).toMatchObject({ method: 'card' });
+    // produtor no cartão: recusado (sem split de cartão)
+    expect((await api('POST', '/api/public/orders', { checkout_slug: bSlug, customer: { name: 'Rui Card', email: 'rui-card@x.com', phone: '11944446666', document: '52998224725' }, bump_ids: [], tracking: {}, payment_method: 'card' })).status).toBe(400);
+    await as('owner', 'PUT', '/api/admin/gateways/card', { enabled: false, provider: 'woovi', maxInstallments: 1 });
   });
 
   it('produtor suspenso perde o acesso na hora', async () => {

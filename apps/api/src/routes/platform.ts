@@ -67,7 +67,11 @@ platformRouter.put('/producers/:id', async (req, res) => {
   if (b.split_enabled && !(cur as any).is_platform_owner) {
     const rec = b.recipient ?? ((await supabase.from('organizations').select('recipient, pix_provider').eq('id', id).maybeSingle()).data as any)?.recipient;
     const provider = b.pix_provider ?? ((await supabase.from('organizations').select('pix_provider').eq('id', id).maybeSingle()).data as any)?.pix_provider;
-    if (!provider || !rec || !(rec.account || rec.pix_key)) throw new HttpError(400, 'Defina o gateway e o recebedor (conta/chave) do produtor antes de liberar as vendas');
+    // Woovi: split vai para a CHAVE PIX do produtor; Efí: split só entre contas Efí (nº da conta + CPF/CNPJ do titular)
+    if (!provider) throw new HttpError(400, 'Defina o gateway do produtor antes de liberar as vendas');
+    if (provider === 'woovi' && !rec?.pix_key) throw new HttpError(400, 'Woovi: informe a chave Pix do produtor para o split');
+    const doc = String(rec?.document ?? '').replace(/\D/g, '');
+    if (provider === 'efi' && (!rec?.account || (doc.length !== 11 && doc.length !== 14))) throw new HttpError(400, 'Efí: informe o número da conta Efí e o CPF/CNPJ do titular para o split');
   }
   const row = must(await supabase.from('organizations').update({ ...b, updated_at: new Date().toISOString() }).eq('id', id).select('*').single());
   clearOrgCache();

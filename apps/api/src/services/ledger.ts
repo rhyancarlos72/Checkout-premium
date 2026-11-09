@@ -14,10 +14,11 @@ async function insertOnce(row: { org_id: string; order_id: string; type: string;
 /** Venda aprovada: valor bruto + comissão da plataforma (zero para a Prime). */
 export async function recordSale(orderId: string) {
   if (!(await ownerOrgId())) return; // banco sem marketplace
-  const { data } = await supabase.from('orders').select('id, org_id, total_cents, platform_fee_cents, provider').eq('id', orderId).maybeSingle();
+  const { data } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
   const o: any = data;
   if (!o?.org_id) return;
-  await insertOnce({ org_id: o.org_id, order_id: o.id, type: 'sale', amount_cents: o.total_cents, data: { provider: o.provider } });
+  await insertOnce({ org_id: o.org_id, order_id: o.id, type: 'sale', amount_cents: o.total_cents, data: { provider: o.provider, method: o.payment_method ?? 'pix', split: o.split_info?.gateway ?? null } });
+  if (o.split_status === 'pending') await supabase.from('orders').update({ split_status: 'done' }).eq('id', o.id); // pago com split: o gateway dividiu
   if (o.platform_fee_cents > 0) await insertOnce({ org_id: o.org_id, order_id: o.id, type: 'platform_fee', amount_cents: -o.platform_fee_cents });
 }
 

@@ -121,7 +121,8 @@ function ProducerModal({ p, onClose }: { p: Producer; onClose: () => void }) {
           </Select>
         </Field>
         <div className="rounded-xl border border-zinc-200 p-4">
-          <p className="mb-3 text-sm font-semibold">Recebedor no gateway (split)</p>
+          <p className="mb-1 text-sm font-semibold">Recebedor no gateway (split)</p>
+          <p className="mb-3 text-xs text-zinc-500">{f.pix_provider === 'efi' ? 'Efí: o split só funciona entre contas Efí. Informe o número da conta Efí do produtor e o CPF/CNPJ do titular.' : f.pix_provider === 'woovi' ? 'Woovi: a parte do produtor vai direto para a chave Pix dele. A Woovi precisa ter o Split habilitado na sua conta.' : 'Escolha o gateway para ver o que é necessário.'}</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Conta / identificador no gateway"><Input value={f.recipient.account} onChange={(e) => setR('account', e.target.value)} placeholder="Nº da conta Efí ou id da subconta" /></Field>
             <Field label="Chave Pix"><Input value={f.recipient.pix_key} onChange={(e) => setR('pix_key', e.target.value)} /></Field>
@@ -130,7 +131,7 @@ function ProducerModal({ p, onClose }: { p: Producer; onClose: () => void }) {
           </div>
         </div>
         <Switch checked={f.split_enabled} onChange={(v) => setF({ ...f, split_enabled: v })} label="Liberar vendas deste produtor (com split)" />
-        <p className="text-xs text-zinc-500">As vendas só são liberadas com gateway e recebedor definidos. O split automático no gateway entra na próxima fase, após a habilitação da sua conta Woovi/Efí.</p>
+        <p className="text-xs text-zinc-500">Com as vendas liberadas, cada Pix deste produtor sai com split: a parte dele (venda − comissão) vai direto para o recebedor e a comissão fica na conta da Prime. Se o gateway recusar o split, o Pix não é gerado (o dinheiro dele nunca cai na sua conta).</p>
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
           <Button type="submit" loading={save.isPending}>Salvar</Button>

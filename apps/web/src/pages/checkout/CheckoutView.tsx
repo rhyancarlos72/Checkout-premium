@@ -8,11 +8,11 @@ import { z } from 'zod';
 import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
 import { imageDims } from '@/lib/image';
-import { brl, contrastText, digits, maskPhone, nationalPhone, productCode } from '@/lib/format';
+import { brl, contrastText, digits, maskDocument, maskPhone, nationalPhone, productCode } from '@/lib/format';
 import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track, visitorExternalId } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
 
-function makeSchema(fields: PublicCheckout['fields']) {
+function makeSchema(fields: PublicCheckout['fields'], card = false) {
   return z.object({
     name: z
       .string()
@@ -21,6 +21,8 @@ function makeSchema(fields: PublicCheckout['fields']) {
       .refine((v) => v.split(/\s+/).length >= 2, 'Informe nome e sobrenome'),
     email: z.string().trim().toLowerCase().email('Digite um e-mail válido'),
     phone: fields.phone ? z.string().refine((v) => digits(v).length >= 10, 'Informe o celular com DDD') : z.string().optional(),
+    // CPF só é pedido no cartão (exigência do gateway); no Pix o checkout continua igual
+    document: card ? z.string().refine((v) => [11, 14].includes(digits(v ?? '').length), 'Informe seu CPF') : z.string().optional(),
   });
 }
 type FormValues = z.infer<ReturnType<typeof makeSchema>>;
@@ -195,7 +197,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const startedRef = useRef(false);
   const eventIds = useMemo(() => ({ ic: `ic_${crypto.randomUUID()}`, api: `api_${crypto.randomUUID()}`, purchase: `purchase_${crypto.randomUUID()}` }), []);
 
-  const schema = useMemo(() => makeSchema(checkout.fields), [checkout.fields]);
+  const cardOption = checkout.payment?.card ?? null;
+  const [method, setMethod] = useState<'pix' | 'card'>('pix');
+  const schema = useMemo(() => makeSchema(checkout.fields, method === 'card'), [checkout.fields, method]);
   const { register, handleSubmit, setValue, formState, watch, reset, getFieldState } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onTouched',
@@ -284,7 +288,8 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     mutationFn: (v: FormValues) =>
       publicApi.post<{ token: string; order?: unknown }>('/orders', {
         checkout_slug: checkout.slug,
-        customer: { name: v.name, email: v.email, phone: v.phone ? nationalPhone(v.phone) : null, document: null },
+        customer: { name: v.name, email: v.email, phone: v.phone ? nationalPhone(v.phone) : null, document: method === 'card' ? digits(v.document ?? '') : null },
+        payment_method: method,
         bump_ids: bumps,
         coupon_code: coupon?.code ?? null,
         tracking: { ...collectTracking(), initiate_checkout_event_id: eventIds.ic, add_payment_info_event_id: eventIds.api, purchase_event_id: eventIds.purchase },
@@ -299,8 +304,11 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
       // Pix gerado = AddPaymentInfo (mesmo event_id enviado ao servidor → a Meta deduplica)
       // valor = total cobrado (com cupom), o mesmo que o servidor envia
       const charged = (r.order as { total_cents?: number } | undefined)?.total_cents ?? total;
-      pixel('AddPaymentInfo', { value: charged / 100, currency: 'BRL', content_type: 'product', content_ids: contentIds, payment_type: 'pix' }, eventIds.api);
+      pixel('AddPaymentInfo', { value: charged / 100, currency: 'BRL', content_type: 'product', content_ids: contentIds, payment_type: method === 'card' ? 'credit_card' : 'pix' }, eventIds.api);
       navigate(`/pedido/${r.token}`);
+      // cartão: segue para a página segura do gateway (o "voltar" do navegador cai na página do pedido)
+      const cardUrl = (r.order as { card_url?: string | null } | undefined)?.card_url;
+      if (cardUrl) window.location.assign(cardUrl);
     },
     onError: (e) => setServerError(e instanceof ApiError ? e.message : 'Não foi possível gerar o Pix. Tente novamente.'),
   });
@@ -540,12 +548,37 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
           <Section step={2} title="Pagamento" aside={<span className="hidden items-center gap-1 text-xs text-ck-muted @sm:flex"><Lock className="h-3.5 w-3.5" /> Ambiente seguro</span>}>
             <div className="flex flex-wrap gap-3">
-              <button type="button" aria-pressed="true" className="flex h-[84px] w-[112px] flex-col items-center justify-center gap-2 rounded-[calc(var(--ck-r)*.8)] border-2 border-brand bg-brand/[.07] shadow-[0_0_0_4px_color-mix(in_srgb,var(--brand)_10%,transparent)]">
+              <button type="button" aria-pressed={method === 'pix'} onClick={() => setMethod('pix')} className={cn('flex h-[84px] w-[112px] flex-col items-center justify-center gap-2 rounded-[calc(var(--ck-r)*.8)] border-2', method === 'pix' ? 'border-brand bg-brand/[.07] shadow-[0_0_0_4px_color-mix(in_srgb,var(--brand)_10%,transparent)]' : 'border-ck-border bg-ck-surface')}>
                 <PixIcon className="h-7 w-7" />
                 <span className="text-[13px] font-bold text-ck-text">Pix</span>
               </button>
+              {cardOption && (
+                <button type="button" aria-pressed={method === 'card'} onClick={() => setMethod('card')} className={cn('flex h-[84px] w-[112px] flex-col items-center justify-center gap-2 rounded-[calc(var(--ck-r)*.8)] border-2', method === 'card' ? 'border-brand bg-brand/[.07] shadow-[0_0_0_4px_color-mix(in_srgb,var(--brand)_10%,transparent)]' : 'border-ck-border bg-ck-surface')}>
+                  <CreditCard className="h-7 w-7 text-ck-text" strokeWidth={1.7} />
+                  <span className="text-[13px] font-bold text-ck-text">Cartão</span>
+                </button>
+              )}
             </div>
+            {method === 'card' && cardOption && (
+              <div className="mt-4 space-y-3">
+                <CkField
+                  label="CPF do titular"
+                  icon={<CreditCard strokeWidth={1.9} />}
+                  reg={{ ...register('document'), onChange: async (e) => setValue('document', maskDocument(e.target.value), { shouldValidate: formState.isSubmitted }) }}
+                  error={err.document?.message}
+                  valid={isValid('document')}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="000.000.000-00"
+                />
+                <p className="flex items-start gap-2 text-[13px] font-medium text-ck-muted">
+                  <Lock className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+                  {cardOption.maxInstallments > 1 ? `Em até ${cardOption.maxInstallments}x sem juros. ` : ''}Você digita o cartão numa página segura do pagamento, com verificação do seu banco.
+                </p>
+              </div>
+            )}
             {/* celular: uma linha só (os passos completos já aparecem na página do Pix) */}
+            {method === 'pix' && <>
             <p className="mt-3 flex items-center gap-2 text-[13px] font-medium text-ck-muted @4xl:hidden">
               <Zap className="h-4 w-4 shrink-0 text-brand" /> Pix gerado na hora · acesso liberado automaticamente
             </p>
@@ -564,6 +597,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                 </li>
               ))}
             </ol>
+            </>}
           </Section>
 
           {/* Order bumps */}

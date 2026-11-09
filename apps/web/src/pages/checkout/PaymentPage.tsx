@@ -17,6 +17,9 @@ interface PublicOrder {
   subtotal_cents: number;
   discount_cents: number;
   pix_code: string | null;
+  payment_method?: 'pix' | 'card';
+  /** cartão: página segura do gateway (enquanto pendente) */
+  card_url?: string | null;
   pix_qr_image: string | null;
   expires_at: string | null;
   created_at: string;
@@ -377,6 +380,36 @@ export default function PaymentPage() {
   const guarantee = (theme as any)?.guaranteeDays ?? 7;
   const storeName = order.store?.name;
   const pctLeft = Math.min(100, (shown / CYCLE) * 100);
+
+  // cartão pendente: o cliente paga na página segura do gateway; aqui a tela atualiza sozinha quando aprovar
+  if (order.payment_method === 'card' && order.status === 'pending')
+    return (
+      <Shell theme={theme}>
+        <Steps current={2} />
+        <section className="ck-card overflow-hidden text-center">
+          <div className="p-6 sm:p-8">
+            <span className="inline-flex items-center gap-2 rounded-full bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-600">
+              <span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-500 opacity-75" /><span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" /></span>
+              Aguardando pagamento no cartão
+            </span>
+            <p className="mt-3 text-sm text-ck-muted">Valor a pagar</p>
+            <p className="text-[34px] font-bold leading-tight tracking-tight tabular-nums">{brl(order.total_cents)}</p>
+            {storeName && <p className="mt-1 text-xs text-ck-muted">Pagamento para <b className="text-ck-text">{storeName}</b>{order.store?.document ? ` · ${order.store.document}` : ''}</p>}
+            {order.card_url ? (
+              <a href={order.card_url} className="ck-cta mx-auto mt-6 flex h-[56px] max-w-sm items-center justify-center gap-2 text-[16px] font-bold">
+                <Lock className="h-[18px] w-[18px]" /> Pagar com cartão
+              </a>
+            ) : (
+              <p className="mt-6 text-sm text-ck-muted">Estamos preparando a página do cartão…</p>
+            )}
+            <p className="mx-auto mt-4 flex max-w-sm items-start justify-center gap-2 text-[13px] text-ck-muted">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> Página segura do pagamento, com verificação do seu banco. Esta tela atualiza sozinha quando o pagamento for aprovado.
+            </p>
+          </div>
+        </section>
+        {summary}
+      </Shell>
+    );
 
   return (
     <Shell theme={theme}>

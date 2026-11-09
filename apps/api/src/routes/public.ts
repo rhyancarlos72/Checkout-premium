@@ -3,7 +3,7 @@ import { Router } from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
-import { createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
+import { cardOptionFor, createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
 import { runAsOrg, withOrderOrg } from '../lib/tenant.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
@@ -64,6 +64,8 @@ export async function publicCheckoutData(slug: string) {
       image_url: b.image_url,
     })),
     store: { name: s.store.name, supportEmail: s.store.supportEmail, document: s.store.document },
+    // formas de pagamento além do Pix (cartão só quando liberado pelo Super Admin para este produtor)
+    payment: { card: await cardOptionFor(c.org_id ?? null) },
   };
 }
 
@@ -101,7 +103,7 @@ async function publicOrder(token: string) {
   const o: any = must(
     await supabase
       .from('orders')
-      .select('id, number, status, customer_id, total_cents, subtotal_cents, discount_cents, pix_code, pix_qr_image, expires_at, paid_at, provider, created_at, customer:customers(name, email, phone), checkout:checkouts(slug, name, theme, tracking), items:order_items(kind, name, price_cents, product_id, product:products(number)), tracking')
+      .select('*, customer:customers(name, email, phone), checkout:checkouts(slug, name, theme, tracking), items:order_items(kind, name, price_cents, product_id, product:products(number))')
       .eq('public_token', token)
       .maybeSingle(),
     'Pedido não encontrado',
@@ -114,6 +116,8 @@ async function publicOrder(token: string) {
     discount_cents: o.discount_cents,
     pix_code: o.status === 'pending' ? o.pix_code : null,
     pix_qr_image: o.status === 'pending' ? o.pix_qr_image : null,
+    payment_method: o.payment_method ?? 'pix',
+    card_url: o.status === 'pending' ? (o.card_checkout_url ?? null) : null,
     expires_at: o.expires_at,
     paid_at: o.paid_at,
     created_at: o.created_at,
