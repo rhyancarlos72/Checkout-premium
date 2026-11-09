@@ -150,7 +150,22 @@ export async function runJobs() {
   }
 }
 
+/** Ao ligar o servidor: deixa em memória o que toda visita ao checkout usa (a 1ª visita não espera o banco). */
+export async function warmCaches() {
+  try {
+    const { ownerOrgId } = await import('../lib/tenant.js');
+    await ownerOrgId();
+    await getSettings();
+    const { loadCheckout } = await import('./orders.js');
+    const { data } = await supabase.from('checkouts').select('slug').eq('active', true).order('updated_at', { ascending: false }).limit(30);
+    await Promise.allSettled(((data ?? []) as any[]).map((c) => loadCheckout(c.slug)));
+  } catch (e) {
+    logger.warn({ err: (e as Error)?.message }, 'Aquecimento do cache falhou (segue normal)');
+  }
+}
+
 export function startJobs() {
+  if (env.NODE_ENV !== 'test') setTimeout(() => void warmCaches(), 1_000).unref();
   // roda uma vez ao iniciar, mesmo com os jobs desligados
   setTimeout(() => void restoreExpiredToPending().catch(() => {}), 5_000).unref();
   if (!env.JOBS_ENABLED || env.NODE_ENV === 'test') return;

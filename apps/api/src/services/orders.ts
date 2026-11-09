@@ -80,22 +80,42 @@ export function visibleBumps(rows: any[] | null | undefined) {
     }));
 }
 
-// Cache curto da configuração do checkout (cada visita evitava 1 consulta pesada ao banco).
-// Limpo a cada alteração feita no painel, então mudanças aparecem na hora.
+// Cache da configuração do checkout. Cada consulta ao Supabase é uma ida e volta pela internet:
+// a página abre com o que está em memória e, se estiver "velho", atualiza em segundo plano
+// (stale-while-revalidate). Qualquer alteração no painel limpa o cache na hora.
 const checkoutCache = new Map<string, { at: number; data: any }>();
-const CHECKOUT_TTL = 15_000;
+const refreshing = new Map<string, Promise<any>>();
+const CHECKOUT_FRESH = 60_000; // até 1 min: usa direto
+const CHECKOUT_STALE = 10 * 60_000; // até 10 min: usa e atualiza por trás; depois disso espera o banco
 export function clearCheckoutCache() {
   checkoutCache.clear();
 }
 
-/** Carrega checkout ativo com produto e bumps vinculados (com cache de 15s). */
+function refreshCheckout(slug: string) {
+  let p = refreshing.get(slug);
+  if (!p) {
+    p = loadCheckoutFresh(slug)
+      .then((data) => {
+        checkoutCache.set(slug, { at: Date.now(), data });
+        if (checkoutCache.size > 500) checkoutCache.delete(checkoutCache.keys().next().value!);
+        return data;
+      })
+      .finally(() => refreshing.delete(slug));
+    refreshing.set(slug, p);
+  }
+  return p;
+}
+
+/** Carrega checkout ativo com produto e bumps vinculados (em memória, atualizado em segundo plano). */
 export async function loadCheckout(slug: string) {
   const hit = checkoutCache.get(slug);
-  if (hit && Date.now() - hit.at < CHECKOUT_TTL) return hit.data;
-  const data = await loadCheckoutFresh(slug);
-  checkoutCache.set(slug, { at: Date.now(), data });
-  if (checkoutCache.size > 500) checkoutCache.delete(checkoutCache.keys().next().value!);
-  return data;
+  const age = hit ? Date.now() - hit.at : Infinity;
+  if (hit && age < CHECKOUT_FRESH) return hit.data;
+  if (hit && age < CHECKOUT_STALE) {
+    void refreshCheckout(slug).catch(() => {}); // responde já; o próximo visitante pega o novo
+    return hit.data;
+  }
+  return refreshCheckout(slug);
 }
 
 async function loadCheckoutFresh(slug: string) {
@@ -178,7 +198,8 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
     if (onlyDigits(input.customer.document).length !== 11) throw new HttpError(400, 'Informe o CPF do titular do cartão');
   }
   // gateway: cartão → o do cartão (Super Admin); Pix → o do produtor, senão o global (Integrações), senão o do checkout
-  const providerName = (card ? card.provider : ((await orgInfo(checkout.org_id))?.pix_provider ?? globalProvider() ?? checkout.provider)) as ProviderName;
+  const ownerSale = await isOwnerOrg(checkout.org_id); // em memória: venda da Prime não consulta produtor nem split
+  const providerName = (card ? card.provider : ((ownerSale ? null : (await orgInfo(checkout.org_id))?.pix_provider) ?? globalProvider() ?? checkout.provider)) as ProviderName;
   // cartão Efí usa a API de Cobranças (sem certificado/chave Pix): não exige o Pix da Efí configurado
   const provider = card?.provider === 'efi' ? null : getProvider(providerName);
   const customer = await upsertCustomer(input.customer);
@@ -221,7 +242,7 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
     if (card?.provider === 'efi') {
       const cc = input.card!;
       const cpf = onlyDigits(input.customer.document);
-      const sp = await splitFor(order.id);
+      const sp = ownerSale ? null : await splitFor(order.id);
       const r = await createEfiCardCharge({
         orderId: order.id,
         publicToken: order.public_token,
@@ -282,7 +303,7 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
       customer: { name: input.customer.name, email: input.customer.email, phone: input.customer.phone, document: doc || null },
       method,
       cardInstallments: card?.maxInstallments,
-      split: await splitFor(order.id), // venda de produtor: a parte dele vai direto para o recebedor dele
+      split: ownerSale ? null : await splitFor(order.id), // venda de produtor: a parte dele vai direto para o recebedor dele
     });
     // QR Code gerado aqui mesmo a partir do copia e cola: sai na hora, sem baixar imagem do gateway
     const qrImage = charge.pixCode ? ((await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage) : null;

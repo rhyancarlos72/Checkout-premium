@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { cardOptionFor, createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
-import { runAsOrg, withOrderOrg } from '../lib/tenant.js';
+import { ownerOrgId, runAsOrg } from '../lib/tenant.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
 
 export const publicRouter = Router();
@@ -44,7 +44,8 @@ publicRouter.get('/brand', async (_req, res) => {
 
 /** Dados públicos do checkout (também embutidos no HTML da página para abrir sem esperar a API). */
 export async function publicCheckoutData(slug: string) {
-  const c = await loadCheckout(slug);
+  // checkout e organização proprietária em paralelo (menos idas e voltas ao banco na primeira visita)
+  const [c] = await Promise.all([loadCheckout(slug), ownerOrgId().catch(() => null)]);
   const s = await runAsOrg(c.org_id ?? null, () => getSettings()); // nome/CNPJ da loja do produtor dono do checkout
   return {
     id: c.id,
@@ -129,7 +130,7 @@ async function publicOrder(token: string) {
     purchase_event_id: o.tracking?.purchase_event_id ?? null,
     delivery: o.status === 'paid' ? await deliveryItems(o.id) : [],
     // quem recebe o pagamento (dá segurança a quem vai pagar)
-    store: await withOrderOrg(o.id, () => getSettings()).then((st) => ({ name: st.store.pixReceiver || (st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null), document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),
+    store: await runAsOrg(o.org_id ?? null, () => getSettings()).then((st) => ({ name: st.store.pixReceiver || (st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null), document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),
     upsell: o.status === 'paid' ? await upsellOfferFor(o).catch(() => null) : null,
     is_upsell: Boolean(o.tracking?.upsell_of),
     _id: o.id,
@@ -192,7 +193,8 @@ const eventSchema = z.object({
 
 publicRouter.post('/events', eventLimiter, async (req, res) => {
   const e = eventSchema.parse(req.body);
-  const { data: c } = await supabase.from('checkouts').select('id').eq('slug', e.checkout_slug).maybeSingle();
+  // id do checkout vem da memória (sem consultar o banco a cada evento)
+  const c = await loadCheckout(e.checkout_slug).catch(() => null);
   if (c) {
     const data = JSON.stringify(e.data).length <= 2000 ? e.data : {};
     await supabase.from('events').insert({ checkout_id: c.id, type: e.type, session_id: e.session_id ?? null, data });

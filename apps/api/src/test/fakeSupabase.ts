@@ -251,9 +251,11 @@ class Query implements PromiseLike<any> {
   }
 }
 
+/** Registro das consultas (para medir quantas idas ao banco cada rota faz). */
+export const queryLog: string[] = [];
 export function createFakeClient() {
   return {
-    from: (t: string) => new Query(t),
+    from: (t: string) => (queryLog.push(t), new Query(t)),
     rpc: async (fn: string, args: any) => {
       if (fn === 'mark_order_paid') {
         const o = table('orders').find((r) => r.id === args.p_order_id && ['pending', 'expired'].includes(r.status));

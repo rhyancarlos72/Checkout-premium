@@ -40,6 +40,15 @@ export async function getSettings(): Promise<Settings> {
   const key = await orgKey('general');
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < 30_000) return hit.value;
+  // até 10 min: responde com o que tem e atualiza por trás (nome da loja/meta mudam pouco; salvar limpa o cache)
+  if (hit && Date.now() - hit.at < 10 * 60_000) {
+    void loadSettings(key).catch(() => {});
+    return hit.value;
+  }
+  return loadSettings(key);
+}
+
+async function loadSettings(key: string): Promise<Settings> {
   const { data } = await supabase.from('settings').select('value').eq('key', key).maybeSingle();
   let value = settingsSchema.parse((data as any)?.value ?? {});
   if (key !== 'general') {

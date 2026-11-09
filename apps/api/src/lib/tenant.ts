@@ -22,6 +22,14 @@ let ownerCache: { id: string | null; at: number } | null = null;
  */
 export async function ownerOrgId(): Promise<string | null> {
   if (ownerCache && Date.now() - ownerCache.at < 5 * 60_000) return ownerCache.id;
+  // a organização proprietária praticamente nunca muda: responde já e confere por trás
+  if (ownerCache && ownerCache.id) {
+    void loadOwner().catch(() => {});
+    return ownerCache.id;
+  }
+  return loadOwner();
+}
+async function loadOwner(): Promise<string | null> {
   const { data, error } = await supabase.from('organizations').select('id').eq('is_platform_owner', true).maybeSingle();
   const id = error ? null : ((data as any)?.id ?? null);
   ownerCache = { id, at: Date.now() };
