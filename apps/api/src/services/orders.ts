@@ -1,3 +1,4 @@
+import { membersLink } from './members.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
@@ -261,15 +262,23 @@ export async function dispatchTracking(orderId: string, event: PayTrackingEvent)
 
 /** Links de entrega (arquivos privados viram URL assinada de 7 dias). */
 export async function deliveryItems(orderId: string): Promise<DeliveryItem[]> {
-  const { data } = await supabase
-    .from('order_items')
-    .select('name, kind, product:products(image_url, delivery_type, delivery_url, delivery_note)')
-    .eq('order_id', orderId)
-    .order('kind', { ascending: false }); // "main" antes de "bump"
+  const [{ data }, { data: ord }] = await Promise.all([
+    supabase
+      .from('order_items')
+      .select('name, kind, product:products(image_url, delivery_type, delivery_url, delivery_note, members_enabled)')
+      .eq('order_id', orderId)
+      .order('kind', { ascending: false }), // "main" antes de "bump"
+    supabase.from('orders').select('public_token').eq('id', orderId).maybeSingle(),
+  ]);
   const items: DeliveryItem[] = [];
   for (const it of (data ?? []) as any[]) {
     const p = it.product;
     let url: string | null = null;
+    // produto com área de membros: o acesso é a própria área (entra direto, sem senha, pelo link do pedido)
+    if (p?.members_enabled && (ord as any)?.public_token) {
+      items.push({ name: it.name, url: membersLink((ord as any).public_token), note: p?.delivery_note ?? null, image: p?.image_url ?? null, kind: it.kind });
+      continue;
+    }
     if (p?.delivery_type === 'link') url = p.delivery_url ?? null;
     if (p?.delivery_type === 'file' && p.delivery_url) {
       const { data: s } = await supabase.storage.from('deliverables').createSignedUrl(p.delivery_url, 60 * 60 * 24 * 7);

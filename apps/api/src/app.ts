@@ -14,6 +14,7 @@ import { publicCheckoutData } from './routes/public.js';
 import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
+import { membersRouter } from './routes/members.js';
 import { webhookRouter } from './routes/webhooks.js';
 import { refreshGateways } from './services/gateways.js';
 import { runJobs } from './services/jobs.js';
@@ -38,7 +39,9 @@ export function createApp() {
           'connect-src': ["'self'", supabaseHost, supabaseHost.replace('https://', 'wss://'), 'https://www.facebook.com', 'https://connect.facebook.net'],
           'style-src': ["'self'", "'unsafe-inline'"],
           'font-src': ["'self'", 'data:'],
-          'frame-src': ["'self'", 'https://www.facebook.com'],
+          // aulas da área de membros: vídeos do YouTube, Vimeo, Panda, Drive etc. (links cadastrados pelo admin)
+          'frame-src': ["'self'", 'https:'],
+          'media-src': ["'self'", 'https:', 'blob:'],
           'frame-ancestors': ["'none'"],
         },
       },
@@ -63,6 +66,7 @@ export function createApp() {
   app.use('/api/webhooks', webhookRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/admin', adminRouter);
+  app.use('/api/members', membersRouter);
 
   // Cron externo (opcional): Hostinger/cron-job.org → POST /api/jobs/run com header x-cron-secret
   app.post('/api/jobs/run', async (req, res) => {
@@ -171,7 +175,7 @@ export function createApp() {
     // painel e páginas de Pix de cada cliente ficam fora do Google (dados pessoais)
     const seoFor = async (req: Request) => {
       const p = req.path;
-      if (/^\/(admin|pedido)(\/|$)/.test(p)) return { noindex: true } as const;
+      if (/^\/(admin|pedido|membros)(\/|$)/.test(p)) return { noindex: true } as const;
       const slug = p === '/checkout' ? String(req.query.produto_id ?? '') : (p.match(/^\/c\/([a-z0-9-]{3,60})$/)?.[1] ?? '');
       if (!/^[a-z0-9-]{3,60}$/.test(slug)) return null;
       try {

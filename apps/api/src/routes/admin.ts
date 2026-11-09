@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { Router } from 'express';
+import { adminMembersRouter } from './adminMembers.js';
 import { z } from 'zod';
 import { env, features, isProd } from '../config/env.js';
 import { HttpError, must, productCode, supabase } from '../lib/core.js';
@@ -27,6 +28,8 @@ adminRouter.use((req, _res, next) => {
   if (req.method !== 'GET') clearCheckoutCache();
   next();
 });
+
+adminRouter.use('/members', adminMembersRouter);
 
 const uuid = z.string().uuid();
 const urlOrEmpty = z.string().url().or(z.literal('')).nullable().optional().transform((v) => v || null);

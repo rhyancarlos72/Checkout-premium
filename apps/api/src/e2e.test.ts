@@ -483,3 +483,93 @@ describe('cobranças de valores diferentes da mesma pessoa', () => {
     expect(db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === oa.id)).toHaveLength(0);
   }, 20_000);
 });
+
+describe('área de membros', () => {
+  const P1 = '00000000-0000-4000-8000-000000000001';
+  const P2 = '00000000-0000-4000-8000-000000000002';
+  const P3 = '00000000-0000-4000-8000-000000000003';
+  const mem = async (method: string, path: string, session?: string, body?: unknown) => {
+    const r = await fetch(`${base}/api/members${path}`, { method, headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.10.20.99', ...(session ? { Authorization: `Member ${session}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const text = await r.text();
+    return { status: r.status, body: text ? JSON.parse(text) : null };
+  };
+
+  it('comprou o produto + order bump: entra pelo link do pedido, vê os 2 cursos e o terceiro bloqueado em "Cursos adicionais"', async () => {
+    const saved = db.products.map((p) => ({ ...p }));
+    const savedCk = [...db.checkouts];
+    try {
+      for (const p of db.products) p.members_enabled = true;
+      db.checkouts.push({ id: '00000000-0000-4000-8000-0000000000c3', product_id: P3, slug: '7777777', name: 'Kit', price_cents: 2990, active: true, provider: 'woovi', theme: {}, fields: {}, tracking: {}, created_at: new Date().toISOString() });
+      const now = new Date().toISOString();
+      db.member_sections = [
+        { id: '00000000-0000-4000-8000-00000000e001', product_id: P1, title: 'Sessão 1', sort: 0, created_at: now },
+        { id: '00000000-0000-4000-8000-00000000e002', product_id: P2, title: 'Bônus', sort: 0, created_at: now },
+        { id: '00000000-0000-4000-8000-00000000e003', product_id: P3, title: 'Convites', sort: 0, created_at: now },
+      ];
+      db.member_modules = [
+        { id: '00000000-0000-4000-8000-00000000f001', product_id: P1, section_id: '00000000-0000-4000-8000-00000000e001', title: 'Comece aqui', subtitle: 'Preparando a base', cover_url: 'https://img/1.webp', sort: 0, created_at: now },
+        { id: '00000000-0000-4000-8000-00000000f002', product_id: P1, section_id: '00000000-0000-4000-8000-00000000e001', title: 'Facebook Ads', subtitle: null, cover_url: null, sort: 1, created_at: now },
+        { id: '00000000-0000-4000-8000-00000000f003', product_id: P2, section_id: '00000000-0000-4000-8000-00000000e002', title: 'Capas', subtitle: null, cover_url: null, sort: 0, created_at: now },
+        { id: '00000000-0000-4000-8000-00000000f004', product_id: P3, section_id: '00000000-0000-4000-8000-00000000e003', title: 'Convites', subtitle: null, cover_url: 'https://img/3.webp', sort: 0, created_at: now },
+      ];
+      db.member_lessons = [
+        { id: '00000000-0000-4000-8000-00000000a001', product_id: P1, module_id: '00000000-0000-4000-8000-00000000f001', title: 'Boas-vindas', video_url: 'https://youtu.be/abc', attachments: [{ name: 'PDF', url: 'https://x/a.pdf' }], sort: 0, created_at: now },
+        { id: '00000000-0000-4000-8000-00000000a002', product_id: P1, module_id: '00000000-0000-4000-8000-00000000f001', title: 'Primeiros passos', video_url: null, attachments: [], sort: 1, created_at: now },
+        { id: '00000000-0000-4000-8000-00000000a003', product_id: P3, module_id: '00000000-0000-4000-8000-00000000f004', title: 'Secreta', video_url: 'https://youtu.be/zzz', attachments: [], sort: 0, created_at: now },
+      ];
+
+      const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Lia Alves', email: 'lia@x.com', phone: '11922221111' }, bump_ids: ['00000000-0000-4000-8000-0000000000b1'], tracking: {} });
+      const token = r.body.token;
+      // antes de pagar: sem acesso
+      expect((await mem('POST', '/login/order', undefined, { token })).status).toBe(403);
+      const o = db.orders.find((x) => x.public_token === token)!;
+      charges.get(o.id)!.status = 'COMPLETED';
+      await api('POST', '/api/webhooks/woovi', { charge: { correlationID: o.id } });
+      await settle();
+      // a entrega aponta para a área de membros
+      const pub = await api('GET', `/api/public/orders/${token}`);
+      expect(pub.body.delivery[0].url).toBe(`https://checkout.loja.com/membros/entrar?o=${token}`);
+
+      const login = await mem('POST', '/login/order', undefined, { token });
+      expect(login.status).toBe(200);
+      const s = login.body.token;
+      expect((await mem('GET', '/me')).status).toBe(401);
+      expect((await mem('GET', '/me', 'falso.token')).status).toBe(401);
+      const home = await mem('GET', '/me', s);
+      expect(home.status).toBe(200);
+      expect(home.body.courses.map((c: any) => c.name).sort()).toEqual(['Bônus Capas', 'Pack Etiquetas']); // bump vira curso
+      const main = home.body.courses.find((c: any) => c.id === P1);
+      expect(main.sections[0].modules.map((m: any) => m.title)).toEqual(['Comece aqui', 'Facebook Ads']);
+      expect(main.progress).toEqual({ total: 2, completed: 0 });
+      expect(home.body.extras).toHaveLength(1);
+      expect(home.body.extras[0]).toMatchObject({ name: 'Kit Convites', checkout_url: '/checkout?produto_id=7777777', cover_url: 'https://img/3.webp' });
+
+      const mod = await mem('GET', '/modules/00000000-0000-4000-8000-00000000f001', s);
+      expect(mod.body.lessons.map((l: any) => l.title)).toEqual(['Boas-vindas', 'Primeiros passos']);
+      expect(mod.body.next_module.title).toBe('Facebook Ads');
+      // curso não comprado: bloqueado
+      expect((await mem('GET', '/modules/00000000-0000-4000-8000-00000000f004', s)).status).toBe(403);
+      expect((await mem('POST', '/lessons/00000000-0000-4000-8000-00000000a003/progress', s, { done: true })).status).toBe(403);
+
+      expect((await mem('POST', '/lessons/00000000-0000-4000-8000-00000000a001/progress', s, { done: true })).status).toBe(204);
+      const after = await mem('GET', '/me', s);
+      expect(after.body.courses.find((c: any) => c.id === P1).progress).toEqual({ total: 2, completed: 1 });
+
+      // login por código: só gera código para quem é aluno; código errado é recusado
+      expect((await mem('POST', '/login/code', undefined, { email: 'lia@x.com' })).status).toBe(200);
+      expect((db.member_login_codes ?? []).filter((c) => c.email === 'lia@x.com')).toHaveLength(1);
+      expect((await mem('POST', '/login/code', undefined, { email: 'ninguem@x.com' })).status).toBe(200);
+      expect((db.member_login_codes ?? []).filter((c) => c.email === 'ninguem@x.com')).toHaveLength(0);
+      const { hashCode } = await import('./services/members.js');
+      db.member_login_codes.find((c) => c.email === 'lia@x.com')!.code_hash = hashCode('lia@x.com', '482913'); // código "recebido" no e-mail
+      expect((await mem('POST', '/login/verify', undefined, { email: 'lia@x.com', code: '000000' })).status).toBe(400);
+      const ok = await mem('POST', '/login/verify', undefined, { email: 'LIA@x.com', code: '482913' });
+      expect(ok.status).toBe(200);
+      expect((await mem('GET', '/me', ok.body.token)).body.courses).toHaveLength(2);
+      expect((await mem('POST', '/login/verify', undefined, { email: 'lia@x.com', code: '482913' })).status).toBe(400); // uso único
+    } finally {
+      db.products = saved;
+      db.checkouts = savedCk;
+    }
+  }, 15_000);
+});

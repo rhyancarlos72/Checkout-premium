@@ -402,3 +402,23 @@ export async function sendAccessRequestNotice(to: string, r: { name: string; ema
     return false;
   }
 }
+
+/** Código de acesso da área de membros (6 dígitos, vale 15 min). */
+export async function sendMemberCode(to: string, name: string, code: string) {
+  const { store } = await getSettings();
+  const storeName = store.name && store.name !== 'Minha Loja' ? store.name : env.MAIL_FROM_NAME;
+  const first = escapeHtml((name.trim().split(/\s+/)[0] ?? '').replace(/^./, (c) => c.toUpperCase()));
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Seu código de acesso</title></head>
+<body style="margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f7"><tr><td align="center" style="padding:28px 12px">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;border-radius:16px;border:1px solid #e5e7eb">
+<tr><td style="padding:28px">
+  <p style="margin:0 0 6px;font-size:13px;color:#6b7280">${escapeHtml(storeName)}</p>
+  <h1 style="margin:0 0 12px;font-size:20px;color:#111827">${first ? `${first}, seu` : 'Seu'} código de acesso</h1>
+  <p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#374151">Use o código abaixo para entrar na área de membros. Ele vale por 15 minutos.</p>
+  <p style="margin:0 0 18px;font-size:32px;font-weight:700;letter-spacing:8px;color:#111827;text-align:center">${escapeHtml(code)}</p>
+  <p style="margin:0;font-size:13px;color:#6b7280">Se você não pediu este código, pode ignorar este e-mail.</p>
+</td></tr></table></td></tr></table></body></html>`;
+  const text = `${first ? `${first}, seu` : 'Seu'} código de acesso à área de membros: ${code}\nEle vale por 15 minutos.\nSe você não pediu este código, ignore este e-mail.\n\n--\n${storeName}`;
+  return send(to, `Seu código de acesso: ${code}`, html, null as any, 'member_code', { text, fromName: storeName, replyTo: store.supportEmail || undefined });
+}

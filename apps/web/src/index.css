@@ -227,3 +227,23 @@ html.privacy-on .pv-chart { filter: blur(9px); pointer-events: none; }
 /* Checkout e página do Pix: uma família só (Poppins) nos títulos e textos; Inter só nos campos.
    O painel admin continua com Outfit/Inter. Como o Outfit deixa de ser usado aqui, nem é baixado. */
 .font-checkout .font-display { font-family: var(--font-checkout); }
+
+/* Área de membros: fundo escuro já no carregamento e fileiras sem barra de rolagem */
+html.members-dark,
+html.members-dark body {
+  background: #07080c;
+  color-scheme: dark;
+}
+.members-row {
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.members-row::-webkit-scrollbar {
+  display: none;
+}
+@keyframes members-float {
+  0%, 100% { transform: translateY(-55%) rotate(3deg); }
+  50% { transform: translateY(-57%) rotate(2deg); }
+}
+.members-float { animation: members-float 7s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .members-float { animation: none; } }

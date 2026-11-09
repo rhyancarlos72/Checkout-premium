@@ -34,6 +34,7 @@ export const IMAGE_SIZES = {
   thumb: [480, 480], // produto, order bump, upsell (aparecem com até ~100 px)
   logo: [600, 200],
   avatar: [160, 160],
+  poster: [600, 900], // capa vertical dos módulos da área de membros
 } as const;
 export type ImageKind = keyof typeof IMAGE_SIZES;
 

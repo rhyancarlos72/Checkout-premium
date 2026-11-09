@@ -25,6 +25,8 @@ import CheckoutPage from './pages/checkout/CheckoutPage';
 const AdminApp = lazy(() => import('./pages/admin/AdminApp'));
 // Página do Pix em arquivo separado: o checkout baixa menos código na primeira visita
 const PaymentPage = lazy(() => import('./pages/checkout/PaymentPage'));
+// Área de membros do aluno (estilo Netflix), também sob demanda
+const MembersApp = lazy(() => import('./pages/members/MembersApp'));
 
 // Links de e-mail do Supabase (recuperação/convite) podem cair na raiz: leva para a tela de nova senha mantendo o token.
 function RootRedirect() {
@@ -57,6 +59,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/c/:slug" element={<CheckoutPage />} />
             <Route path="/pedido/:token" element={<PaymentPage />} />
             <Route path="/admin/*" element={<AdminApp />} />
+            <Route path="/membros/*" element={<MembersApp />} />
             <Route path="*" element={<RootRedirect />} />
           </Routes>
         </Suspense>

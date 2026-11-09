@@ -323,7 +323,7 @@ export default function PaymentPage() {
                 </div>
                 {d.url && (
                   <a href={d.url} target="_blank" rel="noopener noreferrer" className="ck-cta inline-flex h-11 shrink-0 items-center justify-center gap-2 px-5 text-sm font-bold">
-                    Acessar agora <ExternalLink className="h-4 w-4" />
+                    {d.url.includes('/membros/entrar') ? 'Entrar na área de membros' : 'Acessar agora'} <ExternalLink className="h-4 w-4" />
                   </a>
                 )}
               </div>

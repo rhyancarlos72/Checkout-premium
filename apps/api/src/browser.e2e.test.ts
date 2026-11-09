@@ -90,7 +90,7 @@ describe.skipIf(!RUN)('checkup do checkout no navegador', () => {
       const ctx = await browser.newContext({ viewport, locale: 'pt-BR' });
       const p = await ctx.newPage();
       const errors: string[] = [];
-      p.on('pageerror', (e: Error) => errors.push(e.message));
+      p.on('pageerror', (e: Error) => errors.push(e.message + ' @ ' + (e.stack ?? '').split('\n').slice(0, 4).join(' / ')));
       p.on('console', (m: any) => m.type() === 'error' && !/favicon|fbevents|ERR_/.test(m.text()) && errors.push(m.text()));
       const email = `cliente.${label}@teste.com`;
 
@@ -187,4 +187,140 @@ describe.skipIf(!RUN)('checkup do checkout no navegador', () => {
       await ctx.close();
     }, 90_000);
   }
+});
+
+// pôster SVG (capa 2:3) servido no lugar das imagens externas
+const poster = (n: number, label: string, color = '#0b2a8a') =>
+  `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${color}"/><stop offset=".55" stop-color="#050816"/><stop offset="1" stop-color="#000"/></linearGradient></defs><rect width="600" height="900" fill="url(#g)"/><text x="300" y="250" fill="#fff" font-family="sans-serif" font-size="34" letter-spacing="10" text-anchor="middle">TEMA</text><text x="300" y="520" fill="#fff" font-family="sans-serif" font-size="260" text-anchor="middle">${n}</text><text x="300" y="690" fill="#fff" font-family="sans-serif" font-size="34" letter-spacing="8" text-anchor="middle">${label}</text></svg>`;
+
+describe.skipIf(!RUN)('área de membros no navegador', () => {
+  const P1 = '00000000-0000-4000-8000-000000000001';
+  const P2 = '00000000-0000-4000-8000-000000000002';
+  const P3 = '00000000-0000-4000-8000-000000000003';
+  let orderToken = '';
+
+  beforeAll(async () => {
+    const now = new Date().toISOString();
+    for (const p of db.products) p.members_enabled = true;
+    db.checkouts.push({ id: '00000000-0000-4000-8000-0000000000c3', product_id: P3, slug: '7777777', name: 'Kit', price_cents: 2990, active: true, provider: 'woovi', pix_expires_minutes: 120, theme: {}, fields: { phone: true }, tracking: {}, created_at: now });
+    const sec = (id: string, product_id: string, title: string, sort: number) => ({ id, product_id, title, sort, created_at: now });
+    db.member_sections = [sec('00000000-0000-4000-8000-00000000e001', P1, 'Sessão 1', 0), sec('00000000-0000-4000-8000-00000000e002', P1, 'Sessão 2', 1), sec('00000000-0000-4000-8000-00000000e003', P2, 'Bônus', 0), sec('00000000-0000-4000-8000-00000000e004', P3, 'Convites', 0)];
+    const labels = ['COMECE AQUI', 'FACEBOOK ADS', 'NICHOS EM ALTA', 'OFERTA LOWTICKET', 'CRIATIVOS', 'ESCALA', 'BÔNUS'];
+    const subs = ['Preparando a base', 'Facebook ads', 'Nichos que vendem + hacks', 'lowticket rápido + escala', 'Criação de criativos', 'Escala com segurança', 'Bônus exclusivos'];
+    db.member_modules = [
+      ...labels.map((l, i) => ({ id: `00000000-0000-4000-8000-00000000f0${String(i + 10)}`, product_id: P1, section_id: '00000000-0000-4000-8000-00000000e001', title: l, subtitle: subs[i], cover_url: `https://img.test/p${i + 1}.svg`, sort: i, created_at: now })),
+      ...[0, 1, 2].map((i) => ({ id: `00000000-0000-4000-8000-00000000f0${String(i + 20)}`, product_id: P1, section_id: '00000000-0000-4000-8000-00000000e002', title: `Avançado ${i + 1}`, subtitle: `Aula avançada ${i + 1}`, cover_url: i === 2 ? null : `https://img.test/q${i + 1}.svg`, sort: i, created_at: now })),
+      { id: '00000000-0000-4000-8000-00000000f030', product_id: P2, section_id: '00000000-0000-4000-8000-00000000e003', title: 'Capas prontas', subtitle: 'Bônus do order bump', cover_url: 'https://img.test/b1.svg', sort: 0, created_at: now },
+      { id: '00000000-0000-4000-8000-00000000f040', product_id: P3, section_id: '00000000-0000-4000-8000-00000000e004', title: 'Convites', subtitle: null, cover_url: 'https://img.test/x1.svg', sort: 0, created_at: now },
+    ];
+    db.member_lessons = [
+      { id: '00000000-0000-4000-8000-00000000a001', product_id: P1, module_id: '00000000-0000-4000-8000-00000000f010', title: 'Boas-vindas e como usar a área', description: 'Assista até o fim: aqui você entende o passo a passo do curso.', video_url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', duration: '6 min', attachments: [{ name: 'Checklist em PDF', url: 'https://x.test/a.pdf' }], sort: 0, created_at: now },
+      { id: '00000000-0000-4000-8000-00000000a002', product_id: P1, module_id: '00000000-0000-4000-8000-00000000f010', title: 'Configurando sua conta', description: null, video_url: 'https://vimeo.com/123456789', duration: '12 min', attachments: [], sort: 1, created_at: now },
+      { id: '00000000-0000-4000-8000-00000000a003', product_id: P1, module_id: '00000000-0000-4000-8000-00000000f010', title: 'Primeira campanha', description: null, video_url: null, duration: '9 min', attachments: [], sort: 2, created_at: now },
+    ];
+    // compra com order bump já paga
+    const r = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '10.1.1.1' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Rhyan Carlos', email: 'aluno@x.com', phone: '11977776655' }, bump_ids: ['00000000-0000-4000-8000-0000000000b1'], tracking: {} }) }).then((x) => x.json());
+    orderToken = r.token;
+    await pay(db.orders.find((o) => o.public_token === orderToken)!.id);
+    await new Promise((res) => setTimeout(res, 200));
+  });
+
+  for (const [label, viewport] of [['computador', { width: 1440, height: 900 }], ['celular', { width: 390, height: 844 }]] as const) {
+    it(`aluno entra pelo link da compra e assiste às aulas (${label})`, async () => {
+      db.member_progress = []; // cada tela começa do zero
+      const ctx = await browser.newContext({ viewport, locale: 'pt-BR' });
+      const p = await ctx.newPage();
+      const errors: string[] = [];
+      p.on('pageerror', (e: Error) => errors.push(e.message + ' @ ' + (e.stack ?? '').split('\n').slice(0, 4).join(' / ')));
+      p.on('console', (m: any) => m.type() === 'error' && !/Failed to load resource/.test(m.text()) && errors.push(m.text()));
+      const covers: Record<string, string> = { p1: poster(1, 'COMECE AQUI'), p2: poster(2, 'FACEBOOK ADS'), p3: poster(3, 'NICHOS'), p4: poster(4, 'LOWTICKET'), p5: poster(5, 'CRIATIVOS'), p6: poster(6, 'ESCALA'), p7: poster(7, 'BÔNUS'), q1: poster(1, 'AVANÇADO', '#14532d'), q2: poster(2, 'AVANÇADO', '#14532d'), b1: poster(1, 'CAPAS', '#7c2d12'), x1: poster(1, 'CONVITES', '#4c1d95') };
+      await p.route('https://img.test/**', (route: any) => route.fulfill({ contentType: 'image/svg+xml', body: covers[route.request().url().split('/').pop()!.replace('.svg', '')] ?? poster(0, '?') }));
+      await p.route(/youtube-nocookie|vimeo/, (route: any) => route.fulfill({ contentType: 'text/html', body: '<body style="margin:0;background:#111;color:#fff;display:flex;align-items:center;justify-content:center;font:20px sans-serif">▶ player do vídeo</body>' }));
+
+      // página de acesso: botão da área de membros
+      await p.goto(`${base}/pedido/${orderToken}`);
+      await p.getByText(/Espere! Seu pedido|Pagamento aprovado!/).first().waitFor({ timeout: 15_000 });
+      const no = p.getByRole('button', { name: /Não, obrigado/ });
+      if (await no.count()) await no.click();
+      const enter = p.getByRole('link', { name: /Entrar na área de membros/ }).first();
+      await enter.waitFor();
+      ok(`[${label}] página de acesso mostra "Entrar na área de membros"`);
+
+      await p.goto(`${base}/membros/entrar?o=${orderToken}`);
+      await p.getByText('Seu curso').waitFor({ timeout: 15_000 });
+      expect(await p.getByText('Pack Etiquetas Escolares').count()).toBeGreaterThan(0);
+      expect(await p.getByText('Bônus Capas').count()).toBeGreaterThan(0); // order bump vira curso
+      await p.getByText('Cursos adicionais').waitFor();
+      expect(await p.locator('a[href="/checkout?produto_id=7777777"]').count()).toBe(1);
+      ok(`[${label}] área de membros: curso principal + curso do order bump liberados, Kit Convites bloqueado em "Cursos adicionais"`);
+      await p.waitForTimeout(400);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/membros-${label}.png` });
+      await p.getByText('Cursos adicionais').scrollIntoViewIfNeeded();
+      await p.waitForTimeout(300);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/membros-extras-${label}.png` });
+      expect(await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)).toBe(false);
+
+      // abre o módulo 1, assiste e conclui
+      await p.evaluate(() => window.scrollTo(0, 0));
+      await p.getByRole('link', { name: /Assistir|Continuar/ }).first().click();
+      await p.getByRole('heading', { name: 'Boas-vindas e como usar a área' }).waitFor();
+      expect(await p.locator('iframe[src*="youtube-nocookie.com/embed/dQw4w9WgXcQ"]').count()).toBe(1);
+      await p.getByRole('link', { name: 'Checklist em PDF' }).waitFor();
+      await p.waitForTimeout(300);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/membros-aula-${label}.png` });
+      await p.getByRole('button', { name: /Próxima/ }).click();
+      await p.getByRole('heading', { name: 'Configurando sua conta' }).waitFor();
+      expect(await p.locator('iframe[src^="https://player.vimeo.com/video/123456789"]').count()).toBe(1);
+      ok(`[${label}] aula com YouTube e Vimeo incorporados, materiais e "Próxima" (marca a anterior como concluída)`);
+      await p.getByRole('link', { name: 'Voltar ao início' }).click();
+      await p.getByText('33% concluído').first().waitFor();
+      ok(`[${label}] progresso do curso atualizado (33% concluído, botão vira "Continuar")`);
+      await p.getByText('Continue assistindo').waitFor();
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/membros-continuar-${label}.png` });
+      expect(errors).toEqual([]);
+      await ctx.close();
+    }, 90_000);
+  }
+});
+
+describe.skipIf(!RUN)('painel: aba Área de membros', () => {
+  it('lista os produtos e abre o editor do curso com seções, módulos e aulas', async () => {
+    const { supabase } = await import('./lib/core.js');
+    const uid = '00000000-0000-4000-8000-0000000000ad';
+    db.admins = [{ user_id: uid, role: 'owner', email: 'dono@loja.com' }];
+    (supabase as any).auth.getUser = async (t: string) => (t.startsWith('eyJ') ? { data: { user: { id: uid, email: 'dono@loja.com', factors: [] } }, error: null } : { data: { user: null }, error: { message: 'x' } });
+    const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const jwt = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: uid, email: 'dono@loja.com', aal: 'aal1', exp, role: 'authenticated' })}.sig`;
+    const session = { access_token: jwt, refresh_token: 'r', token_type: 'bearer', expires_in: 3600, expires_at: exp, user: { id: uid, email: 'dono@loja.com', aud: 'authenticated', role: 'authenticated', app_metadata: {}, user_metadata: {}, factors: [] } };
+    for (const [label, viewport] of [['computador', { width: 1440, height: 1000 }], ['celular', { width: 390, height: 844 }]] as const) {
+      const ctx = await browser.newContext({ viewport, locale: 'pt-BR' });
+      await ctx.addInitScript((s: string) => localStorage.setItem('sb-fake-auth-token', s), JSON.stringify(session));
+      const p = await ctx.newPage();
+      await p.route('https://fake.supabase.co/**', (r: any) => r.fulfill({ json: {} }));
+      await p.route('https://img.test/**', (route: any) => route.fulfill({ contentType: 'image/svg+xml', body: poster(1, 'MÓDULO') }));
+      const errors: string[] = [];
+      p.on('pageerror', (e: Error) => errors.push(e.message));
+      await p.goto(`${base}/admin/area-de-membros`);
+      await p.getByRole('heading', { name: 'Área de membros' }).waitFor({ timeout: 15_000 });
+      await p.getByText('Pack Etiquetas Escolares').first().waitFor();
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-membros-${label}.png` });
+      await p.getByRole('button', { name: /Montar curso/ }).first().click();
+      await p.getByText('Banner de destaque').waitFor();
+      await p.getByText('Sessão 1').first().waitFor();
+      await p.waitForTimeout(300);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-curso-${label}.png`, fullPage: label === 'computador' });
+      // cria uma seção e abre um módulo
+      await p.getByLabel('Nome da nova seção').fill('Sessão Extra');
+      await p.getByRole('button', { name: /Nova seção/ }).click();
+      await p.getByText('Sessão Extra').first().waitFor();
+      await p.getByText('COMECE AQUI').first().click();
+      await p.getByText(/Aulas \(3\)/).waitFor();
+      await p.waitForTimeout(300);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-modulo-${label}.png` });
+      ok(`[${label}] painel: aba Área de membros lista produtos, abre o curso, cria seção e mostra as aulas do módulo`);
+      expect(errors).toEqual([]);
+      await ctx.close();
+    }
+  }, 90_000);
 });

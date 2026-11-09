@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Boxes, CreditCard, Eye, EyeOff, LayoutDashboard, LogOut, Menu, Moon, PlugZap, RefreshCw, Settings, ShoppingCart, Sun, Ticket, Users, X, Zap } from 'lucide-react';
+import { Boxes, CreditCard, GraduationCap, Eye, EyeOff, LayoutDashboard, LogOut, Menu, Moon, PlugZap, RefreshCw, Settings, ShoppingCart, Sun, Ticket, Users, X, Zap } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { cn, PageLoader } from '@/components/ui';
@@ -16,6 +16,7 @@ import CouponsPage from './CouponsPage';
 import CustomersPage from './CustomersPage';
 import DashboardPage from './DashboardPage';
 import IntegrationsPage from './IntegrationsPage';
+import MembersPage from './MembersPage';
 import LoginPage, { MfaChallenge } from './LoginPage';
 import NewPasswordPage from './NewPasswordPage';
 import OrdersPage from './OrdersPage';
@@ -30,6 +31,7 @@ const nav = [
   { to: '/admin/checkouts', label: 'Checkouts', icon: CreditCard },
   { to: '/admin/order-bumps', label: 'Order Bumps', icon: Zap },
   { to: '/admin/cupons', label: 'Cupons', icon: Ticket },
+  { to: '/admin/area-de-membros', label: 'Área de membros', icon: GraduationCap },
   { to: '/admin/integracoes', label: 'Integrações', icon: PlugZap, ownerOnly: true },
   { to: '/admin/configuracoes', label: 'Configurações', icon: Settings },
 ];
@@ -218,6 +220,7 @@ function AuthedShell({ email, name }: { email: string; name: string }) {
             <Route path="clientes" element={<CustomersPage />} />
             <Route path="order-bumps" element={<BumpsPage />} />
             <Route path="cupons" element={<CouponsPage />} />
+            <Route path="area-de-membros" element={<MembersPage />} />
             <Route path="integracoes" element={<OwnerOnly><IntegrationsPage /></OwnerOnly>} />
             <Route path="configuracoes" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/admin" replace />} />
