@@ -647,7 +647,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
               {busy ? (
                 <><span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" /> Gerando seu Pix…</>
               ) : (
-                <><Lock className="h-[18px] w-[18px]" /> {t.buttonText || 'Finalizar compra'} · {brl(total)}</>
+                <><Lock className="h-[18px] w-[18px]" /> {t.buttonText || 'Finalizar compra'}</>
               )}
             </button>
             <p className="flex items-center justify-center gap-1.5 text-center text-xs text-ck-muted"><ShieldCheck className="h-3.5 w-3.5" /> Ambiente seguro. Seus dados não são compartilhados.</p>
