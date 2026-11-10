@@ -1,20 +1,21 @@
 import crypto from 'node:crypto';
 import nodemailer, { type Transporter } from 'nodemailer';
-import { env, features } from '../config/env.js';
+import { env } from '../config/env.js';
+import { mailConfig } from './gateways.js';
 import { escapeHtml, formatBRL, logger, supabase } from '../lib/core.js';
 import { getSettings } from './settings.js';
 
-let transporter: Transporter | null = null;
+// SMTP vem do painel (Integrações → E-mail) ou das variáveis; trocar no painel recria a conexão
+let transporter: { t: Transporter; key: string } | null = null;
 function getTransporter() {
-  if (!features.email) return null;
-  transporter ??= nodemailer.createTransport({
-    host: env.SMTP_HOST,
-    port: env.SMTP_PORT,
-    secure: env.SMTP_SECURE,
-    auth: { user: env.SMTP_USER, pass: env.SMTP_PASS },
-  });
-  return transporter;
+  const m = mailConfig();
+  if (!m.configured) return null;
+  if (!transporter || transporter.key !== m.key) {
+    transporter = { key: m.key, t: nodemailer.createTransport({ host: m.host, port: m.port, secure: m.secure, auth: { user: m.user, pass: m.pass } }) };
+  }
+  return transporter.t;
 }
+export const emailConfigured = () => mailConfig().configured;
 
 function layout(title: string, inner: string, accent = '#0f766e') {
   return `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#f4f5f7;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1f2937">
@@ -41,9 +42,9 @@ async function send(to: string, subject: string, html: string, orderId: string, 
     return false;
   }
   try {
-    const fromAddr = env.MAIL_FROM ?? env.SMTP_USER!;
+    const fromAddr = mailConfig().from;
     await t.sendMail({
-      from: { name: extras.fromName || env.MAIL_FROM_NAME, address: fromAddr },
+      from: { name: extras.fromName || mailConfig().fromName, address: fromAddr },
       to,
       subject,
       html,
@@ -130,7 +131,7 @@ const prettyHost = (url: string) => {
  */
 export async function sendDeliveryEmail(p: DeliveryEmailInput) {
   const { store } = await getSettings();
-  const storeName = store.name && store.name !== 'Minha Loja' ? store.name : env.MAIL_FROM_NAME;
+  const storeName = store.name && store.name !== 'Minha Loja' ? store.name : mailConfig().fromName;
   const firstRaw = (p.name.trim().split(/\s+/)[0] ?? '').replace(/^./, (c) => c.toUpperCase());
   const first = escapeHtml(firstRaw);
   const accent = /^#[0-9a-f]{6}$/i.test(p.accent ?? '') ? p.accent! : '#16a34a';
@@ -263,7 +264,7 @@ export async function sendRecoveryEmail(p: RecoveryEmailInput) {
     return false;
   }
   const { store } = await getSettings();
-  const storeName = store.name && store.name !== 'Minha Loja' ? store.name : env.MAIL_FROM_NAME;
+  const storeName = store.name && store.name !== 'Minha Loja' ? store.name : mailConfig().fromName;
   const firstRaw = (p.name.trim().split(/\s+/)[0] ?? '').replace(/^./, (c) => c.toUpperCase());
   const first = escapeHtml(firstRaw);
   const product = escapeHtml(p.productName);
@@ -342,7 +343,7 @@ export async function sendRecoveryEmail(p: RecoveryEmailInput) {
     `Não quero mais receber estes e-mails: ${unsub}`,
   ].join('\n');
 
-  const from = env.MAIL_FROM ?? env.SMTP_USER ?? '';
+  const from = mailConfig().from;
   const subject =
     p.attempt === 3
       ? `Último lembrete: seu pedido de ${p.productName}`
@@ -387,7 +388,7 @@ export async function testEmail(to: string) {
   try {
     await t.verify();
     await t.sendMail({
-      from: { name: env.MAIL_FROM_NAME, address: env.MAIL_FROM ?? env.SMTP_USER! },
+      from: { name: mailConfig().fromName, address: mailConfig().from },
       to,
       subject: 'Teste de e-mail do checkout',
       html: layout('Tudo certo!', '<p>O envio de e-mails do seu checkout está funcionando.</p>'),
@@ -414,7 +415,7 @@ export async function sendAccessRequestNotice(to: string, r: { name: string; ema
     .join('');
   const html = layout('Novo pedido de cadastro', `<p style="font-size:15px;line-height:1.6">Alguém pediu acesso ao painel. Aprove ou recuse em <b>Configurações → Equipe</b>.</p><table role="presentation" style="font-size:14px;margin-top:12px">${rows}</table><p style="margin:24px 0">${button(`${env.PUBLIC_URL}/admin/configuracoes?tab=equipe`, 'Ver pedido', '#2563eb')}</p>`, '#2563eb');
   try {
-    await t.sendMail({ from: { name: env.MAIL_FROM_NAME, address: env.MAIL_FROM ?? env.SMTP_USER! }, to, subject: `Pedido de cadastro: ${r.name}`, html, replyTo: r.email });
+    await t.sendMail({ from: { name: mailConfig().fromName, address: mailConfig().from }, to, subject: `Pedido de cadastro: ${r.name}`, html, replyTo: r.email });
     return true;
   } catch (e: any) {
     logger.warn({ err: e?.message }, 'Aviso de cadastro não enviado');
@@ -425,7 +426,7 @@ export async function sendAccessRequestNotice(to: string, r: { name: string; ema
 /** Código de acesso da área de membros (6 dígitos, vale 15 min). */
 export async function sendMemberCode(to: string, name: string, code: string) {
   const { store } = await getSettings();
-  const storeName = store.name && store.name !== 'Minha Loja' ? store.name : env.MAIL_FROM_NAME;
+  const storeName = store.name && store.name !== 'Minha Loja' ? store.name : mailConfig().fromName;
   const first = escapeHtml((name.trim().split(/\s+/)[0] ?? '').replace(/^./, (c) => c.toUpperCase()));
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Seu código de acesso</title></head>
 <body style="margin:0;padding:0;background:#f4f5f7;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1f2937">

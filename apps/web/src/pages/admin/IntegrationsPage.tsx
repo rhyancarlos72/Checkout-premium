@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, CheckCircle2, Copy, Mail, PlugZap, RefreshCw, ShieldCheck, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Copy, Mail, PlugZap, RefreshCw, Server, ShieldCheck, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button, Card, cn, Field, Input, PageLoader, Switch, useToast } from '@/components/ui';
+import { Button, Card, cn, Field, Input, Modal, PageLoader, Select, Switch, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
 import { dateTime } from '@/lib/format';
 import { PageHeader } from './AdminApp';
@@ -107,6 +107,7 @@ function PlatformIntegrations() {
   const toast = useToast();
   const { data, isLoading } = useQuery({ queryKey: ['integrations'], queryFn: () => adminApi.get<Integrations>('/integrations') });
   const [testTo, setTestTo] = useState('');
+  const [smtpOpen, setSmtpOpen] = useState(false);
 
   const run = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) => adminApi.post<{ ok?: boolean; message?: string }>(path, body),
@@ -131,7 +132,7 @@ function PlatformIntegrations() {
 
         <Card title="E-mail (entrega e recuperação)" action={<Status ok={data.email.configured} />}>
           <div className="space-y-3 text-sm">
-            <p className="text-gray-600">SMTP da Hostinger: <code>SMTP_HOST=smtp.hostinger.com</code>, porta 465. Remetente: {data.email.from ?? '—'}</p>
+            <SmtpSummary onEdit={() => setSmtpOpen(true)} />
             <div className="flex gap-2">
               <Input type="email" placeholder="enviar teste para…" value={testTo} onChange={(e) => setTestTo(e.target.value)} className="h-10" />
               <Button size="sm" className="h-10 shrink-0" disabled={!data.email.configured || !testTo} loading={run.isPending && run.variables?.path.includes('email')} onClick={() => run.mutate({ path: '/integrations/email/test', body: { to: testTo } })}><Mail className="h-3.5 w-3.5" /> Testar</Button>
@@ -139,6 +140,7 @@ function PlatformIntegrations() {
             <DeliverabilityCheck />
           </div>
         </Card>
+        {smtpOpen && <SmtpModal onClose={() => setSmtpOpen(false)} onSaved={(m) => { toast.ok(m); qc.invalidateQueries({ queryKey: ['integrations'] }); }} />}
 
         <Card title="Conciliação de pagamentos" className="lg:col-span-2">
           <div className="flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
@@ -174,5 +176,97 @@ function PlatformIntegrations() {
       </div>
       {toast.node}
     </>
+  );
+}
+
+// ---------------------------------------------------------------- SMTP (servidor de e-mail)
+interface SmtpInfo { source: 'painel' | 'env' | null; host: string | null; port: number | null; secure: boolean; user: string | null; from: string | null; fromName: string | null; hasPassword: boolean; pass_hint: string | null }
+const smtpKey = ['integrations', 'smtp'];
+
+function SmtpSummary({ onEdit }: { onEdit: () => void }) {
+  const { data } = useQuery({ queryKey: smtpKey, queryFn: () => adminApi.get<SmtpInfo>('/integrations/email/smtp') });
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 text-gray-600">
+        {data?.host ? (
+          <>
+            <p className="truncate"><span className="font-medium text-gray-800">{data.host}</span>:{data.port} · {data.secure ? 'SSL' : 'STARTTLS'}</p>
+            <p className="truncate text-xs">Remetente: {data.fromName ? `${data.fromName} <${data.from ?? data.user}>` : (data.from ?? data.user ?? '—')} · {data.source === 'painel' ? 'configurado pelo painel' : 'pelas variáveis de ambiente'}</p>
+          </>
+        ) : (
+          <p>Nenhum servidor de e-mail configurado.</p>
+        )}
+      </div>
+      <Button size="sm" variant="secondary" className="shrink-0" onClick={onEdit}><Server className="h-3.5 w-3.5" /> {data?.host ? 'Alterar SMTP' : 'Configurar SMTP'}</Button>
+    </div>
+  );
+}
+
+const SMTP_PRESETS: Record<string, { host: string; port: number; secure: boolean }> = {
+  hostinger: { host: 'smtp.hostinger.com', port: 465, secure: true },
+  gmail: { host: 'smtp.gmail.com', port: 465, secure: true },
+  outlook: { host: 'smtp.office365.com', port: 587, secure: false },
+  zoho: { host: 'smtp.zoho.com', port: 465, secure: true },
+};
+
+function SmtpModal({ onClose, onSaved }: { onClose: () => void; onSaved: (msg: string) => void }) {
+  const qc = useQueryClient();
+  const { data, isLoading } = useQuery({ queryKey: smtpKey, queryFn: () => adminApi.get<SmtpInfo>('/integrations/email/smtp') });
+  const [f, setF] = useState<{ host: string; port: string; secure: boolean; user: string; pass: string; from: string; fromName: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const v = f ?? { host: data?.host ?? '', port: String(data?.port ?? 465), secure: data?.secure ?? true, user: data?.user ?? '', pass: '', from: data?.from ?? '', fromName: data?.fromName ?? '' };
+  const set = (patch: Partial<typeof v>) => setF({ ...v, ...patch });
+  const done = (msg: string) => { qc.invalidateQueries({ queryKey: smtpKey }); onSaved(msg); onClose(); };
+  const save = useMutation({
+    mutationFn: () => adminApi.put<{ message: string }>('/integrations/email/smtp', { host: v.host, port: Number(v.port), secure: v.secure, user: v.user, pass: v.pass || undefined, from: v.from, fromName: v.fromName }),
+    onSuccess: (r) => done(r.message),
+    onError: (e) => setError(e instanceof ApiError ? e.message : 'Erro ao salvar'),
+  });
+  const reset = useMutation({ mutationFn: () => adminApi.del('/integrations/email/smtp'), onSuccess: () => done('Voltou a usar as variáveis SMTP_* do servidor'), onError: (e) => setError(e instanceof ApiError ? e.message : 'Erro') });
+  const keepsPass = data?.source === 'painel' && data.hasPassword;
+
+  return (
+    <Modal open onClose={onClose} title="Servidor de e-mail (SMTP)">
+      {isLoading ? <PageLoader /> : (
+        <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); setError(null); save.mutate(); }}>
+          <p className="text-sm text-gray-600">Usado para enviar o acesso ao produto, os códigos da área de membros e a recuperação de vendas. Antes de salvar, o sistema testa a conexão com o servidor.</p>
+          <Field label="Provedor (atalho)">
+            <Select value="" onChange={(e) => { const p = SMTP_PRESETS[e.target.value]; if (p) set({ host: p.host, port: String(p.port), secure: p.secure }); }}>
+              <option value="">Preencher automaticamente…</option>
+              <option value="hostinger">Hostinger</option>
+              <option value="gmail">Gmail / Google Workspace</option>
+              <option value="outlook">Outlook / Microsoft 365</option>
+              <option value="zoho">Zoho Mail</option>
+            </Select>
+          </Field>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Servidor" className="col-span-2"><Input value={v.host} onChange={(e) => set({ host: e.target.value })} placeholder="smtp.hostinger.com" required /></Field>
+            <Field label="Porta"><Input value={v.port} onChange={(e) => set({ port: e.target.value.replace(/\D/g, '').slice(0, 5) })} inputMode="numeric" required /></Field>
+          </div>
+          <Field label="Segurança">
+            <Select value={v.secure ? 'ssl' : 'tls'} onChange={(e) => set({ secure: e.target.value === 'ssl', port: e.target.value === 'ssl' ? '465' : '587' })}>
+              <option value="ssl">SSL (porta 465)</option>
+              <option value="tls">STARTTLS (porta 587)</option>
+            </Select>
+          </Field>
+          <Field label="Usuário (e-mail da conta)"><Input value={v.user} onChange={(e) => set({ user: e.target.value })} type="email" autoComplete="off" placeholder="contato@seudominio.com" required /></Field>
+          <Field label="Senha" hint={keepsPass ? `Deixe em branco para manter a senha salva (${data?.pass_hint ?? '••••'})` : 'Senha do e-mail (no Gmail, use uma senha de app)'}>
+            <Input value={v.pass} onChange={(e) => set({ pass: e.target.value })} type="password" autoComplete="new-password" required={!keepsPass} />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="E-mail remetente" hint="Vazio = o usuário acima"><Input value={v.from} onChange={(e) => set({ from: e.target.value })} type="email" placeholder="contato@seudominio.com" /></Field>
+            <Field label="Nome do remetente"><Input value={v.fromName} onChange={(e) => set({ fromName: e.target.value })} placeholder="Sua Loja" maxLength={80} /></Field>
+          </div>
+          {error && <p className="text-sm font-medium text-red-600">{error}</p>}
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+            {data?.source === 'painel' ? <Button type="button" variant="ghost" size="sm" loading={reset.isPending} onClick={() => reset.mutate()}>Usar variáveis do servidor</Button> : <span />}
+            <div className="flex gap-2">
+              <Button type="button" variant="secondary" onClick={onClose}>Cancelar</Button>
+              <Button type="submit" loading={save.isPending}>Testar e salvar</Button>
+            </div>
+          </div>
+        </form>
+      )}
+    </Modal>
   );
 }

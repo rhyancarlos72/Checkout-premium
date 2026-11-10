@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { Router } from 'express';
 import { adminMembersRouter } from './adminMembers.js';
 import { z } from 'zod';
-import { env, features, isProd } from '../config/env.js';
+import { env, isProd } from '../config/env.js';
 import { HttpError, must, productCode } from '../lib/core.js';
 // todas as consultas do painel passam pelo filtro da organização (cada produtor só vê os próprios dados)
 import { ownerOrgId, tenantCtx, tenantDb as supabase } from '../lib/tenant.js';
@@ -12,7 +12,7 @@ import { supabase as rawDb } from '../lib/core.js';
 import { clearAuthCache, requireAdmin, requireOwner, requireSuperAdmin } from '../middleware/auth.js';
 import { emitInvoice, getInvoiceSettings, invoiceFile, refreshInvoice, saveInvoiceSettings, testSpedy } from '../services/invoices.js';
 import { efi, providerStatus, woovi } from '../providers/index.js';
-import { efiConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
+import { efiConfig, mailConfig, mask as gwMask, patchGateways, randomSecret, refreshGateways, validatePfx, wooviConfig } from '../services/gateways.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder, testEmail } from '../services/email.js';
 import { emailDeliverability } from '../services/deliverability.js';
 import { runJobs } from '../services/jobs.js';
@@ -601,7 +601,7 @@ adminRouter.post('/orders/:id/resend-delivery', async (req, res) => {
 /** Recuperação manual por e-mail (ícone ao lado do status, só pedidos pendentes). */
 adminRouter.post('/orders/:id/recovery-email', async (req, res) => {
   const id = uuid.parse(req.params.id);
-  if (!features.email) return res.json({ ok: false, message: 'Configure o SMTP (variáveis SMTP_*) para enviar e-mails de recuperação' });
+  if (!mailConfig().configured) return res.json({ ok: false, message: 'Configure o SMTP em Integrações → E-mail para enviar e-mails de recuperação' });
   const { data: o }: any = await supabase
     .from('orders')
     .select(RECOVERY_ORDER_SELECT)
@@ -892,7 +892,7 @@ adminRouter.get('/integrations', async (_req, res) => {
   res.json({
     providers: providerStatus(),
     paytracking: { configured: (await allWebhooks()).some((w) => w.active), signed: (await allWebhooks()).some((w) => w.active && Boolean(w.secret)) },
-    email: { configured: features.email, from: env.MAIL_FROM ?? null },
+    email: { configured: mailConfig().configured, from: mailConfig().from || null },
     webhooks: {
       woovi: `${env.PUBLIC_URL}/api/webhooks/woovi`,
       wooviSecretConfigured: Boolean(wooviConfig().webhookSecret),
@@ -1249,6 +1249,43 @@ adminRouter.post('/webhooks/:id/test', async (req, res) => {
   await supabase.from('integration_logs').insert({ integration: `webhook:${w.id}`, event: 'connection_test', ok: r.ok, http_status: r.status, message: `${w.name}: ${r.message}`.slice(0, 500) });
   res.json(r);
 });
+// ------------------------------------------------------------------ SMTP (e-mail) pelo painel — só o Super Admin
+adminRouter.get('/integrations/email/smtp', async (_req, res) => {
+  await refreshGateways(true);
+  const m = mailConfig();
+  res.json({ source: m.source, host: m.host, port: m.port, secure: m.secure, user: m.user, from: m.from, fromName: m.fromName, hasPassword: Boolean(m.pass), pass_hint: gwMask(m.pass) });
+});
+adminRouter.put('/integrations/email/smtp', async (req, res) => {
+  const b = z
+    .object({
+      host: z.string().trim().min(3, 'Informe o servidor SMTP').max(200),
+      port: z.number().int().min(1).max(65535),
+      secure: z.boolean(),
+      user: z.string().trim().min(3, 'Informe o usuário (e-mail)').max(200),
+      pass: z.string().max(500).optional(), // vazio = mantém a senha salva
+      from: z.string().trim().email('Remetente inválido').max(200).or(z.literal('')).optional(),
+      fromName: z.string().trim().max(80).optional(),
+    })
+    .parse(req.body);
+  await refreshGateways(true);
+  const cur = mailConfig();
+  const pass = b.pass || (cur.source === 'painel' ? cur.pass : '');
+  if (!pass) throw new HttpError(400, 'Informe a senha do e-mail');
+  // confere antes de salvar: servidor, porta e senha corretos
+  try {
+    const t = (await import('nodemailer')).default.createTransport({ host: b.host, port: b.port, secure: b.secure, auth: { user: b.user, pass }, connectionTimeout: 10_000 });
+    await t.verify();
+  } catch (e: any) {
+    throw new HttpError(400, `O servidor de e-mail recusou: ${String(e?.message ?? e).slice(0, 200)}. Confira servidor, porta, usuário e senha.`);
+  }
+  await patchGateways((g) => ({ ...g, smtp: { host: b.host, port: b.port, secure: b.secure, user: b.user, pass, from: b.from || '', fromName: b.fromName || '' } }));
+  res.json({ ok: true, message: 'SMTP salvo e testado: a conexão com o servidor de e-mail funcionou' });
+});
+adminRouter.delete('/integrations/email/smtp', async (_req, res) => {
+  await patchGateways((g) => ({ ...g, smtp: undefined }));
+  res.json({ ok: true, message: 'SMTP do painel removido: voltou a usar as variáveis SMTP_*' });
+});
+
 adminRouter.get('/integrations/email/deliverability', async (_req, res) => res.json(await emailDeliverability()));
 adminRouter.post('/integrations/email/test', async (req, res) => {
   const to = z.object({ to: z.string().email() }).parse(req.body).to;

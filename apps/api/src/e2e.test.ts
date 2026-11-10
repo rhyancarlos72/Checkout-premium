@@ -921,4 +921,56 @@ describe('marketplace multiusuário', () => {
     expect(me.body.error).toMatch(/suspensa/);
     expect((await api('POST', '/api/public/orders', { checkout_slug: bSlug, customer: { name: 'José Souza', email: 'ze@x.com', phone: '11977778888' }, bump_ids: [], tracking: {} })).status).toBe(403);
   });
+  it('SMTP pelo painel: só o Super Admin altera, testa a conexão antes de salvar e mantém a senha quando o campo vem vazio', async () => {
+    const net = await import('node:net');
+    const auths: string[] = [];
+    let accept = true;
+    const smtp = net.createServer((sock) => {
+      sock.write('220 fake ESMTP\r\n');
+      let buf = '';
+      sock.on('data', (d) => {
+        buf += d.toString();
+        let i;
+        while ((i = buf.indexOf('\r\n')) >= 0) {
+          const line = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          if (/^(EHLO|HELO)/i.test(line)) sock.write('250-fake\r\n250 AUTH PLAIN LOGIN\r\n');
+          else if (/^AUTH PLAIN/i.test(line)) {
+            auths.push(Buffer.from(line.split(' ')[2] ?? '', 'base64').toString().split('\0').pop()!);
+            sock.write(accept ? '235 ok\r\n' : '535 senha incorreta\r\n');
+          } else if (/^QUIT/i.test(line)) sock.end('221 bye\r\n');
+          else sock.write('250 ok\r\n');
+        }
+      });
+    });
+    await new Promise<void>((r) => smtp.listen(0, '127.0.0.1', () => r()));
+    const port = (smtp.address() as AddressInfo).port;
+    try {
+      const cfg = { host: '127.0.0.1', port, secure: false, user: 'vendas@loja.com', pass: 'senha-1', from: 'contato@loja.com', fromName: 'Loja' };
+      expect((await as('b', 'GET', '/api/admin/integrations/email/smtp')).status).toBe(403);
+      expect((await as('b', 'PUT', '/api/admin/integrations/email/smtp', cfg)).status).toBe(403);
+
+      accept = false;
+      const bad = await as('owner', 'PUT', '/api/admin/integrations/email/smtp', cfg);
+      expect(bad.status).toBe(400);
+      expect(bad.body.error).toMatch(/recusou/);
+      expect((await as('owner', 'GET', '/api/admin/integrations/email/smtp')).body.source).not.toBe('painel');
+
+      accept = true;
+      expect((await as('owner', 'PUT', '/api/admin/integrations/email/smtp', cfg)).status).toBe(200);
+      const got = (await as('owner', 'GET', '/api/admin/integrations/email/smtp')).body;
+      expect(got).toMatchObject({ source: 'painel', host: '127.0.0.1', port, user: 'vendas@loja.com', from: 'contato@loja.com', fromName: 'Loja', hasPassword: true });
+      expect(JSON.stringify(got)).not.toContain('senha-1');
+
+      // senha em branco: mantém a salva
+      expect((await as('owner', 'PUT', '/api/admin/integrations/email/smtp', { ...cfg, pass: '', fromName: 'Loja Nova' })).status).toBe(200);
+      expect(auths.slice(-1)[0]).toBe('senha-1');
+      expect((await as('owner', 'GET', '/api/admin/integrations/email/smtp')).body.fromName).toBe('Loja Nova');
+
+      expect((await as('owner', 'DELETE', '/api/admin/integrations/email/smtp')).status).toBe(200);
+      expect((await as('owner', 'GET', '/api/admin/integrations/email/smtp')).body.source).not.toBe('painel');
+    } finally {
+      smtp.close();
+    }
+  });
 });

@@ -15,6 +15,8 @@ export interface GatewaySettings {
   defaultProvider?: 'woovi' | 'efi' | null;
   /** Validade real do Pix para todos os produtos (minutos). Padrão: 120 (2 horas). */
   pixExpiresMinutes?: number;
+  /** SMTP do e-mail (entrega, recuperação, códigos). Painel tem prioridade; as variáveis SMTP_* ficam de reserva. */
+  smtp?: { host?: string; port?: number; secure?: boolean; user?: string; pass?: string; from?: string; fromName?: string };
   /** Cartão de crédito (Super Admin): gateway e máximo de parcelas sem juros para o cliente */
   card?: { enabled?: boolean; provider?: 'woovi' | 'efi'; maxInstallments?: number };
   woovi?: { appId?: string; webhookSecret?: string };
@@ -161,4 +163,18 @@ export function validatePfx(pfx: Buffer, passphrase: string): string | null {
 /** Nome/data do certificado enviado pelo painel (para exibir). */
 export function efiCertMeta() {
   return { name: snap.efi?.certName ?? (snap.efi?.certBase64 ? 'certificado.p12' : env.EFI_CERT_PATH ? 'variável de ambiente' : 'EFI_CERT_BASE64'), uploadedAt: snap.efi?.certUploadedAt ?? null };
+}
+
+/** SMTP em uso: o do painel (Integrações → E-mail) ou, se vazio, o das variáveis SMTP_*. */
+export function mailConfig() {
+  const m = snap.smtp ?? {};
+  const panel = Boolean(m.host && m.user && m.pass);
+  const host = panel ? m.host! : env.SMTP_HOST ?? '';
+  const user = panel ? m.user! : env.SMTP_USER ?? '';
+  const pass = panel ? m.pass! : env.SMTP_PASS ?? '';
+  const port = panel ? Number(m.port) || 465 : env.SMTP_PORT;
+  const secure = panel ? (m.secure ?? port === 465) : env.SMTP_SECURE;
+  const from = (panel ? m.from : env.MAIL_FROM) || user;
+  const fromName = (panel ? m.fromName : env.MAIL_FROM_NAME) || env.MAIL_FROM_NAME || 'Checkout';
+  return { host, port, secure, user, pass, from, fromName, source: panel ? ('painel' as const) : host ? ('env' as const) : null, configured: Boolean(host && user && pass), key: [host, port, secure, user, pass].join('|') };
 }

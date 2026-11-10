@@ -720,11 +720,11 @@ export function buildRecoveryMessage(p: { phone: string; name: string; link: str
   const pixTitulo = pick(
     [
       '📋 Prefere copiar o Pix? Ele vem na próxima mensagem: toque e segure para copiar.',
-      '📋 O código Pix copia e cola vai logo abaixo: é só tocar e segurar para copiar.',
+      '📋 O código Pix copia e cola vai logo abaixo. Toque e segure nele para copiar.',
       '📋 Na próxima mensagem vai o Pix copia e cola. Toque e segure nela e escolha Copiar.',
       '📋 Mandei o código Pix logo abaixo, sozinho, para facilitar: toque e segure para copiar.',
-      '📋 Se preferir pagar pelo app do banco, o copia e cola vem na mensagem seguinte (toque e segure).',
-      '📋 Logo abaixo segue o Pix copia e cola: segure o dedo em cima e toque em Copiar.',
+      '📋 Se preferir pagar pelo app do banco, o Pix copia e cola vem na mensagem seguinte: toque e segure para copiar.',
+      '📋 Logo abaixo segue o Pix copia e cola: toque e segure em cima dele e escolha Copiar.',
     ],
     'pix',
   );

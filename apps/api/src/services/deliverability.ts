@@ -1,3 +1,4 @@
+import { mailConfig } from './gateways.js';
 import dns from 'node:dns/promises';
 import { env } from '../config/env.js';
 
@@ -28,24 +29,25 @@ const txt = async (name: string) => {
 };
 
 export async function emailDeliverability(): Promise<{ domain: string | null; from: string | null; score: number; checks: Check[] }> {
-  const from = (env.MAIL_FROM || env.SMTP_USER || '').trim().toLowerCase();
-  const user = (env.SMTP_USER || '').trim().toLowerCase();
+  const mc = mailConfig();
+  const from = (mc.from || '').trim().toLowerCase();
+  const user = (mc.user || '').trim().toLowerCase();
   const host = (env.SMTP_HOST || '').toLowerCase();
   const checks: Check[] = [];
   const domain = from.includes('@') ? from.split('@')[1] : null;
 
-  if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS)
-    checks.push({ id: 'smtp', label: 'SMTP configurado', status: 'error', detail: 'Faltam variáveis SMTP_HOST, SMTP_USER ou SMTP_PASS.', fix: 'Na Hostinger: SMTP_HOST=smtp.hostinger.com, SMTP_PORT=465, SMTP_USER e SMTP_PASS do e-mail do seu domínio.' });
+  if (!mc.configured)
+    checks.push({ id: 'smtp', label: 'SMTP configurado', status: 'error', detail: 'SMTP não configurado.', fix: 'Em Integrações → E-mail → Configurar SMTP. Na Hostinger: servidor smtp.hostinger.com, porta 465, e-mail e senha do e-mail do seu domínio.' });
   else checks.push({ id: 'smtp', label: 'SMTP configurado', status: 'ok', detail: `${env.SMTP_HOST}:${env.SMTP_PORT} como ${user}` });
 
   if (!domain) return { domain, from: from || null, score: 0, checks };
 
   if (FREE.test(from))
-    checks.push({ id: 'free', label: 'Remetente no seu domínio', status: 'error', detail: `${from} é um e-mail gratuito. Gmail/Hotmail/Yahoo marcam como spam e-mails de lojas enviados por endereço gratuito.`, fix: 'Crie um e-mail no seu domínio (ex.: vendas@seudominio.com.br) no Hostinger Email e use em SMTP_USER e MAIL_FROM.' });
+    checks.push({ id: 'free', label: 'Remetente no seu domínio', status: 'error', detail: `${from} é um e-mail gratuito. Gmail/Hotmail/Yahoo marcam como spam e-mails de lojas enviados por endereço gratuito.`, fix: 'Crie um e-mail no seu domínio (ex.: vendas@seudominio.com.br) no Hostinger Email e use como usuário e remetente do SMTP.' });
   else checks.push({ id: 'free', label: 'Remetente no seu domínio', status: 'ok', detail: from });
 
   if (user && user.includes('@') && user.split('@')[1] !== domain)
-    checks.push({ id: 'align', label: 'Remetente igual ao usuário do SMTP', status: 'error', detail: `O e-mail sai como ${from}, mas é autenticado como ${user}. Isso quebra o alinhamento (DMARC) e manda para o spam.`, fix: 'Use o MESMO endereço em MAIL_FROM e SMTP_USER (ou deixe MAIL_FROM vazio).' });
+    checks.push({ id: 'align', label: 'Remetente igual ao usuário do SMTP', status: 'error', detail: `O e-mail sai como ${from}, mas é autenticado como ${user}. Isso quebra o alinhamento (DMARC) e manda para o spam.`, fix: 'Use o MESMO endereço no usuário do SMTP e no remetente (ou deixe o remetente vazio).' });
   else checks.push({ id: 'align', label: 'Remetente igual ao usuário do SMTP', status: 'ok', detail: 'Alinhado' });
 
   const [rootTxt, dmarcTxt, mx] = await Promise.all([
