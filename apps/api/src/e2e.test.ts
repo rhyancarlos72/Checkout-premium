@@ -295,8 +295,12 @@ describe('recuperação pelo WhatsApp', () => {
     const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
     const before = waSent.length;
     await sendWhatsAppRecoveries();
-    const msgs = waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'));
-    expect(msgs).toHaveLength(1);
+    const all = waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'));
+    // 2 mensagens do MESMO número: o lembrete e, em seguida, só o código Pix (fácil de copiar)
+    expect(all).toHaveLength(2);
+    expect(all[1].body.text).toBe(o.pix_code);
+    expect(all[1].instance).toBe(all[0].instance);
+    const msgs = all.slice(0, 1);
     const text = msgs[0].body.text ?? msgs[0].body.textMessage?.text;
     // link curto e exclusivo (ex.: https://checkout.loja.com/r/aZ3kQg8) em vez do token de 48 caracteres
     const short = text.match(/https:\/\/checkout\.loja\.com\/r\/([0-9A-Za-z]+)/);
@@ -308,11 +312,12 @@ describe('recuperação pelo WhatsApp', () => {
     const go = await fetch(`${base}/r/${short![1]}`, { redirect: 'manual' });
     expect(go.status).toBe(302);
     expect(go.headers.get('location')).toBe(`/pedido/${r.body.token}?utm_source=whatsapp&utm_medium=recovery`);
-    expect(text).toContain(o.pix_code);
+    expect(text).not.toContain(o.pix_code);
     expect(text).toContain('*Pack Etiquetas*'); // nome do produto no lembrete
     expect(text).toMatch(/Carla/);
     await sendWhatsAppRecoveries();
-    const mine = () => waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222'));
+    // só os lembretes (sem as mensagens que levam apenas o código Pix)
+    const mine = () => waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222') && w.body.text !== o.pix_code);
     expect(mine()).toHaveLength(1); // ainda não deu o tempo do 2º
     o.created_at = new Date(Date.now() - 200 * 60_000).toISOString(); // 3h20
     await sendWhatsAppRecoveries();
@@ -514,7 +519,8 @@ describe('cobranças de valores diferentes da mesma pessoa', () => {
     const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
     const before = waSent.length;
     await sendWhatsAppRecoveries();
-    const mine = waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('00009999'));
+    // 1 lembrete (+ a mensagem só com o código Pix, do mesmo número)
+    const mine = waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('00009999') && !/^0002/.test(String(w.body.text ?? '')));
     expect(mine).toHaveLength(1);
     expect(db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === ob.id)).toHaveLength(1);
     expect(db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === oa.id)).toHaveLength(0);

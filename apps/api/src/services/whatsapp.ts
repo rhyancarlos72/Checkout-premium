@@ -336,10 +336,11 @@ const isExistsFalse = (r: { http: number; error: string }) => r.http === 400 && 
 export type SendResult = { ok: boolean; error?: string; hint?: string; instance?: string };
 
 /** Envia texto com rodízio de instâncias e fallback; em falha, diz o motivo de cada instância. */
-export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?: WhatsAppConfig): Promise<SendResult> {
+export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?: WhatsAppConfig, opts: { instance?: string } = {}): Promise<SendResult> {
   const cfg = cfgIn ?? (await getWhatsAppConfig());
   if (!cfg.apiUrl) return { ok: false, error: 'URL da Evolution API não configurada', hint: 'Preencha a URL em Integrações → WhatsApp.' };
-  const instances = cfg.instances.filter((i) => i.active && i.name && tokenFor(cfg, i)).map((i) => ({ ...i, token: tokenFor(cfg, i) }));
+  // opts.instance: continuação de uma conversa (ex.: o código Pix logo depois do lembrete) sai do MESMO número
+  const instances = cfg.instances.filter((i) => i.active && i.name && tokenFor(cfg, i) && (!opts.instance || i.name === opts.instance)).map((i) => ({ ...i, token: tokenFor(cfg, i) }));
   if (!instances.length) return { ok: false, error: 'Nenhuma instância ativa com token', hint: 'Adicione ao menos uma instância com nome e token e deixe-a ativa.' };
   const text = sanitizeText(message);
   if (!text) return { ok: false, error: 'Mensagem vazia' };
@@ -715,9 +716,20 @@ export function buildRecoveryMessage(p: { phone: string; name: string; link: str
             'corpo',
           );
   const cta = pick(t === 3 ? ['👉 Garanta agora:', '👉 Finalize aqui:', '👉 Último link:'] : ['👉 Pague aqui:', '👉 Finalize agora:', '👉 Seu Pix:', '👉 Toque para pagar:', '👉 Concluir agora:'], 'cta');
-  const pixTitulo = pick(['Ou copie o Pix:', 'Pix copia e cola:', 'Se preferir, cole no app do banco:', 'Código Pix:'], 'pix');
+  // o código vai sozinho na PRÓXIMA mensagem: tocar e segurar → Copiar leva o código inteiro
+  const pixTitulo = pick(
+    [
+      '📋 Prefere copiar o Pix? Ele vem na próxima mensagem: toque e segure para copiar.',
+      '📋 O código Pix copia e cola vai logo abaixo: é só tocar e segurar para copiar.',
+      '📋 Na próxima mensagem vai o Pix copia e cola. Toque e segure nela e escolha Copiar.',
+      '📋 Mandei o código Pix logo abaixo, sozinho, para facilitar: toque e segure para copiar.',
+      '📋 Se preferir pagar pelo app do banco, o copia e cola vem na mensagem seguinte (toque e segure).',
+      '📋 Logo abaixo segue o Pix copia e cola: segure o dedo em cima e toque em Copiar.',
+    ],
+    'pix',
+  );
   const sair = pick(['Não quer mais lembretes? Responda SAIR.', 'Para não receber mais, responda SAIR.', 'Se não quiser mais mensagens, responda SAIR.'], 'sair');
-  const partes = [corpo, `${cta}\n${p.link}`, p.pixCode ? `${pixTitulo}\n${p.pixCode}` : '', sair];
+  const partes = [corpo, `${cta}\n${p.link}`, p.pixCode ? pixTitulo : '', sair];
   const msg = partes.filter(Boolean).join('\n\n');
   // nunca a mesma mensagem (fora nome/link/Pix) em sequência para clientes diferentes
   const skel = hashText(`${t}|${corpo.replace(n, '').replace(P, '')}|${cta}|${pixTitulo}|${sair}`);
@@ -837,6 +849,8 @@ export async function sendWhatsAppRecoveries(max = 10) {
     const r: SendResult = waDown
       ? { ok: false, error: waDown }
       : await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: next, pixCode: pixValid ? o.pix_code : null, product: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? null, totalCents: o.total_cents }), cfg);
+    // Pix copia e cola numa mensagem SÓ com o código (fácil de copiar inteiro), do mesmo número do lembrete
+    if (r.ok && pixValid && o.pix_code) await sendWhatsAppText(phone, o.pix_code, cfg, { instance: r.instance }).catch(() => null);
     if (!r.ok && !waDown && isWaUnavailable(r.error)) waDown = r.error ?? 'WhatsApp indisponível';
     let viaEmail = false;
     if (!r.ok) viaEmail = await recoveryEmailFallback(o.id, o.customer_id, next);
