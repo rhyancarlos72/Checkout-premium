@@ -842,7 +842,7 @@ describe('marketplace multiusuário', () => {
     expect((await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Bruno Efí', email: 'b1@x.com', phone: '11955554444', document: '52998224725' }, bump_ids: [], tracking: {}, payment_method: 'card' })).status).toBe(400);
 
     // aprovado na hora → pago, entregue e no livro-razão como cartão
-    const ok = await buy('b-ok@x.com', 'tok-approve-1234567890');
+    const ok = await buy('b-ok@x.com', 'tok-approve-1234567890', { tracking: { utm_source: 'facebook', utm_campaign: 'cartao-camp', utm_medium: 'cpc', fbclid: 'FBCARD1' } });
     expect(ok.status).toBe(201);
     expect(ok.body.order.status).toBe('paid');
     const o1 = db.orders.find((x) => x.public_token === ok.body.token)!;
@@ -851,6 +851,17 @@ describe('marketplace multiusuário', () => {
     expect(sent).toMatchObject({ installments: 3, payment_token: 'tok-approve-1234567890', customer: { cpf: '52998224725', email: 'b-ok@x.com', phone_number: '11955554444' }, metadata: { custom_id: o1.id, notification_url: 'https://checkout.loja.com/api/webhooks/efi-card' }, tds_info: { tds_identifier: 'f81d4fae-7dec-11d0-a765-00a0c91e6bf6', challenge_callback_url: `https://checkout.loja.com/api/public/orders/${o1.public_token}/3ds-return` } });
     expect(sent.items[0].marketplace).toBeUndefined(); // venda da Prime: sem repasse
     expect(db.ledger_entries.find((l) => l.order_id === o1.id && l.type === 'sale')!.data).toMatchObject({ method: 'card' });
+    // UTMs no cartão: ficam no pedido, vão para a PayTracking como cartão e aparecem em Vendas com "Cartão"
+    expect(o1.tracking).toMatchObject({ utm_source: 'facebook', utm_campaign: 'cartao-camp', fbclid: 'FBCARD1' });
+    await settle();
+    const ptCard = ptCalls.filter((c) => c.body?.transaction_id === o1.id);
+    expect(ptCard.map((c) => c.event)).toEqual(expect.arrayContaining(['sale.approved']));
+    for (const c of ptCard) expect(c.body).toMatchObject({ payment_method: 'credit_card', gateway: 'efi', tracking: { utm_source: 'facebook', utm_campaign: 'cartao-camp', utm_medium: 'cpc', fbclid: 'FBCARD1' } });
+    const list = (await as('owner', 'GET', '/api/admin/orders?status=paid&pageSize=100')).body.data as any[];
+    expect(list.find((x) => x.id === o1.id)).toMatchObject({ payment_method: 'card', tracking: { utm_source: 'facebook' } });
+    const csv = await fetch(`${base}/api/admin/orders/export.csv?status=paid`, { headers: { Authorization: 'Bearer tok-owner' } }).then((r) => r.text());
+    expect(csv).toContain('Pagamento');
+    expect(csv.split('\n').find((l) => l.startsWith(`"${o1.number}"`))).toContain('"Cartão"');
 
     // recusado → 402 com o motivo; pedido falhou
     const no = await buy('b-no@x.com', 'tok-refuse-1234567890');

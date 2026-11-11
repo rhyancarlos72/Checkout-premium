@@ -24,6 +24,7 @@ export interface OrderForTracking {
   id: string;
   number: number;
   provider: string;
+  payment_method?: string | null; // 'pix' | 'card' (bancos antigos: ausente = pix)
   total_cents: number;
   created_at: string;
   ip: string | null;
@@ -63,7 +64,7 @@ export function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
     event,
     status,
     payment_status: status,
-    payment_method: 'pix',
+    payment_method: o.payment_method === 'card' ? 'credit_card' : 'pix',
     gateway: o.provider,
     transaction_id: o.id,
     order_number: o.number,

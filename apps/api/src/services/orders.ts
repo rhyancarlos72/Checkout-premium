@@ -368,7 +368,7 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
 export async function loadOrderForTracking(orderId: string): Promise<OrderForTracking | null> {
   const { data } = await supabase
     .from('orders')
-    .select('id, number, provider, total_cents, created_at, ip, user_agent, tracking, customer_id, checkout:checkouts(slug), customer:customers(name, email, phone, document), items:order_items(kind, name, price_cents, product_id, bump_id, product:products(number))')
+    .select('*, checkout:checkouts(slug), customer:customers(name, email, phone, document), items:order_items(kind, name, price_cents, product_id, bump_id, product:products(number))')
     .eq('id', orderId)
     .maybeSingle();
   if (!data) return null;

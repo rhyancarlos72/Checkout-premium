@@ -548,12 +548,14 @@ function ordersQuery(f: z.infer<typeof orderListQuery>, select: string, count = 
   return q;
 }
 
-const orderListSelect = 'id, number, status, provider, total_cents, discount_cents, created_at, paid_at, recovery_sent_at, tracking, customer:customers!inner(name, email, phone), checkout:checkouts(name, slug), items:order_items(kind, name, price_cents, product:products(number))';
+const orderListSelect = 'id, number, status, provider, payment_method, total_cents, discount_cents, created_at, paid_at, recovery_sent_at, tracking, customer:customers!inner(name, email, phone), checkout:checkouts(name, slug), items:order_items(kind, name, price_cents, product:products(number))';
 
 adminRouter.get('/orders', async (req, res) => {
   const f = orderListQuery.parse(req.query);
   const sel = f.q && !/^\d+$/.test(f.q) ? orderListSelect : orderListSelect.replace('customers!inner', 'customers');
-  const { data, error, count } = await ordersQuery(f, sel).range((f.page - 1) * f.pageSize, f.page * f.pageSize - 1);
+  let { data, error, count } = await ordersQuery(f, sel).range((f.page - 1) * f.pageSize, f.page * f.pageSize - 1);
+  // banco sem a coluna payment_method (SQL do cartão não rodado): tudo é Pix
+  if (error && /payment_method/.test(error.message)) ({ data, error, count } = await ordersQuery(f, sel.replace(' payment_method,', '')).range((f.page - 1) * f.pageSize, f.page * f.pageSize - 1));
   if (error) throw new HttpError(500, error.message);
   res.json({ data, total: count ?? 0, page: f.page, pageSize: f.pageSize });
 });
@@ -561,17 +563,18 @@ adminRouter.get('/orders', async (req, res) => {
 adminRouter.get('/orders/export.csv', async (req, res) => {
   const f = orderListQuery.parse(req.query);
   const sel = f.q && !/^\d+$/.test(f.q) ? orderListSelect : orderListSelect.replace('customers!inner', 'customers');
-  const { data, error } = await ordersQuery(f, sel, false).limit(5000);
+  let { data, error } = await ordersQuery(f, sel, false).limit(5000);
+  if (error && /payment_method/.test(error.message)) ({ data, error } = await ordersQuery(f, sel.replace(' payment_method,', ''), false).limit(5000));
   if (error) throw new HttpError(500, error.message);
   const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const rows = (data as any[]).map((o) =>
-    [o.number, o.created_at, o.status, o.provider, (o.total_cents / 100).toFixed(2).replace('.', ','), o.items.map((i: any) => `${i.product?.number ? `#${i.product.number} ` : ''}${i.name}`).join(' + '), o.customer?.name, o.customer?.email, o.customer?.phone, o.checkout?.name, o.tracking?.utm_source, o.tracking?.utm_campaign, o.paid_at]
+    [o.number, o.created_at, o.status, o.payment_method === 'card' ? 'Cartão' : 'Pix', o.provider, (o.total_cents / 100).toFixed(2).replace('.', ','), o.items.map((i: any) => `${i.product?.number ? `#${i.product.number} ` : ''}${i.name}`).join(' + '), o.customer?.name, o.customer?.email, o.customer?.phone, o.checkout?.name, o.tracking?.utm_source, o.tracking?.utm_campaign, o.paid_at]
       .map(esc)
       .join(';'),
   );
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="pedidos.csv"');
-  res.send('﻿' + ['Pedido;Data;Status;Gateway;Total;Produtos (ID);Cliente;Email;Telefone;Checkout;utm_source;utm_campaign;Pago em', ...rows].join('\n'));
+  res.send('﻿' + ['Pedido;Data;Status;Pagamento;Gateway;Total;Produtos (ID);Cliente;Email;Telefone;Checkout;utm_source;utm_campaign;Pago em', ...rows].join('\n'));
 });
 
 adminRouter.get('/orders/:id', async (req, res) => {

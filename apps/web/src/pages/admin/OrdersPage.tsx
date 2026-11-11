@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronLeft, ChevronRight, Download, Trash2, MailCheck, MailPlus, Receipt, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CreditCard, Download, Trash2, MailCheck, MailPlus, Receipt, RefreshCw, Search, Send, ShoppingBag, Undo2, Zap } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Badge, Button, Card, cn, EmptyState, Input, Modal, PageLoader, Select, StatusBadge, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
@@ -13,6 +13,7 @@ interface OrderRow {
   number: number;
   status: string;
   provider: string;
+  payment_method?: 'pix' | 'card' | null;
   total_cents: number;
   created_at: string;
   paid_at: string | null;
@@ -21,6 +22,25 @@ interface OrderRow {
   customer: { name: string; email: string; phone: string | null } | null;
   checkout: { name: string; slug: string } | null;
   items: { kind: string; name: string; price_cents: number; product?: { number: number | null } | null }[];
+}
+
+/** Forma de pagamento ao lado do status: Pix ou Cartão (pedidos antigos, sem a informação, são Pix). */
+export function MethodBadge({ method }: { method?: string | null }) {
+  const card = method === 'card';
+  return (
+    <span title={card ? 'Pago com cartão de crédito' : 'Pago com Pix'} className={cn('inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold', card ? 'bg-indigo-50 text-indigo-700' : 'bg-teal-50 text-teal-700')}>
+      {card ? <CreditCard className="h-3 w-3" /> : <PixIcon className="h-3 w-3" />}
+      {card ? 'Cartão' : 'Pix'}
+    </span>
+  );
+}
+function PixIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden className={className}>
+      <path d="M11.9 11.6a2.3 2.3 0 0 1-1.6-.7L8 8.6a.4.4 0 0 0-.6 0L5.1 10.9a2.3 2.3 0 0 1-1.6.7H3l2.9 2.9a2.3 2.3 0 0 0 3.3 0l2.9-2.9h-.2ZM3.5 4.4c.6 0 1.2.2 1.6.7l2.3 2.3c.2.2.5.2.6 0l2.3-2.3c.4-.4 1-.7 1.6-.7h.3L9.3 1.5a2.3 2.3 0 0 0-3.3 0L3.2 4.4h.3Z" />
+      <path d="m14.5 6.3-1.7-1.7h-.9c-.4 0-.8.2-1.1.5L8.5 7.4a1 1 0 0 1-1.4 0L4.8 5.1c-.3-.3-.7-.5-1.1-.5H2.6L.9 6.3a2.3 2.3 0 0 0 0 3.3l1.7 1.7h1.1c.4 0 .8-.2 1.1-.5l2.3-2.3a1 1 0 0 1 1.4 0l2.3 2.3c.3.3.7.5 1.1.5h.9l1.7-1.7a2.3 2.3 0 0 0 0-3.3Z" />
+    </svg>
+  );
 }
 
 export function useDebounced<T>(v: T, ms = 350) {
@@ -113,7 +133,7 @@ export default function OrdersPage() {
                     <td className="px-5 py-3 text-gray-600">{(() => { const m = o.items.find((i) => i.kind === 'main'); return m ? <span className="pv">{m.product?.number && <span className="mr-1.5 rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-zinc-600">ID: {productCode(m.product.number)}</span>}{m.name}</span> : null; })()}{o.items.some((i) => i.kind === 'bump') && <span className="ml-1 inline-flex items-center gap-0.5 text-xs text-teal-700"><Zap className="h-3 w-3" />+{o.items.filter((i) => i.kind === 'bump').length}</span>}</td>
                     <td className="px-5 py-3 text-xs text-gray-500">{o.tracking?.utm_source ?? 'direto'}{o.tracking?.utm_campaign ? ` / ${o.tracking.utm_campaign}` : ''}</td>
                     <td className="pv px-5 py-3 text-right font-semibold tabular-nums">{brl(o.total_cents)}</td>
-                    <td className="px-5 py-3"><div className="flex items-center gap-2"><StatusBadge status={o.status} />{(o.status === 'pending' || o.status === 'expired') && <RecoveryEmailButton order={o} />}{isOwner && <DeleteOrderButton order={o} />}</div></td>
+                    <td className="px-5 py-3"><div className="flex items-center gap-2"><StatusBadge status={o.status} /><MethodBadge method={o.payment_method} />{(o.status === 'pending' || o.status === 'expired') && <RecoveryEmailButton order={o} />}{isOwner && <DeleteOrderButton order={o} />}</div></td>
                   </tr>
                 ))}
               </tbody>
@@ -195,6 +215,7 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
         <div className="space-y-5">
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={o.status} />
+            <MethodBadge method={o.payment_method} />
             <Badge tone="off">{o.provider === 'efi' ? 'Efí' : 'Woovi'}</Badge>
             <span className="text-sm text-gray-500">Criado {dateTime(o.created_at)}{o.paid_at && ` · Pago ${dateTime(o.paid_at)}`}</span>
           </div>
@@ -202,7 +223,7 @@ function OrderDetail({ id, onClose }: { id: string; onClose: () => void }) {
             {o.status !== 'paid' && <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'sync'} onClick={() => action.mutate('sync')}><RefreshCw className="h-3.5 w-3.5" /> Consultar gateway</Button>}
             {o.status === 'paid' && <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'resend-delivery'} onClick={() => action.mutate('resend-delivery')}><Send className="h-3.5 w-3.5" /> Reenviar acesso</Button>}
             <Button size="sm" variant="secondary" loading={action.isPending && action.variables === 'resend-tracking'} onClick={() => action.mutate('resend-tracking')}><Zap className="h-3.5 w-3.5" /> Reenviar ao PayTracking</Button>
-            {o.status === 'paid' && <Button size="sm" variant="ghost" onClick={() => confirm('Marcar como reembolsado? Faça o estorno do PIX no painel do gateway.') && action.mutate('refund')}><Undo2 className="h-3.5 w-3.5" /> Marcar reembolso</Button>}
+            {o.status === 'paid' && <Button size="sm" variant="ghost" onClick={() => confirm(`Marcar como reembolsado? Faça o estorno ${o.payment_method === 'card' ? 'do cartão' : 'do Pix'} no painel do gateway.`) && action.mutate('refund')}><Undo2 className="h-3.5 w-3.5" /> Marcar reembolso</Button>}
             {isOwner && <DeleteOrderButton order={o} label onDeleted={onClose} />}
           </div>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
