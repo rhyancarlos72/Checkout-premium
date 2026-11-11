@@ -174,6 +174,7 @@ function PlatformIntegrations() {
           )}
         </Card>
       </div>
+      <p className="mt-6 text-xs text-gray-400">Cidade e estado do visitante (Pixel e PayTracking): <a href="https://db-ip.com" target="_blank" rel="noopener noreferrer" className="underline">IP Geolocation by DB-IP</a>, consultado no próprio servidor.</p>
       {toast.node}
     </>
   );

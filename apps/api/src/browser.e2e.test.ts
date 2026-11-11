@@ -560,3 +560,37 @@ describe.skipIf(!RUN)('cartão pela Efí no checkout', () => {
     }, 120_000);
   }
 });
+
+describe.skipIf(!RUN)('Pixel com cidade/estado do visitante', () => {
+  it('PageView e InitiateCheckout vão com cidade e UF calculadas pelo IP no servidor', async () => {
+    const { clearCheckoutCache } = await import('./services/orders.js');
+    const c = db.checkouts.find((x) => x.slug === '8931442')!;
+    const before = c.tracking;
+    c.tracking = { metaPixelId: '111222333' };
+    clearCheckoutCache();
+    const ctx = await browser.newContext({ locale: 'pt-BR', extraHTTPHeaders: { 'X-Forwarded-For': '187.10.20.77' } });
+    // biblioteca do Pixel simulada: as chamadas ficam na fila do fbq para conferirmos
+    await ctx.route('**/fbevents.js', (r: any) => r.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
+    const p = await ctx.newPage();
+    try {
+      await p.goto(`${base}/checkout?produto_id=8931442`, { waitUntil: 'load' });
+      await p.getByText('Pack Etiquetas Escolares').first().waitFor();
+      const calls = () => p.evaluate(() => (window as any).fbq.queue.map((a: any[]) => JSON.parse(JSON.stringify(a))));
+      const first = await calls();
+      expect(first[0]).toEqual(['init', '111222333', expect.objectContaining({ country: 'br', ct: 'maua', st: 'sp' })]);
+      expect(first[1]).toEqual(['track', 'PageView']);
+      await p.fill('input[autocomplete=name]', 'Maria Souza');
+      await p.fill('input[type=email]', 'maria.geo@teste.com');
+      await p.waitForFunction(() => (window as any).fbq.queue.some((a: any[]) => a[1] === 'InitiateCheckout'));
+      const all = await calls();
+      const ic = all.findIndex((a: any[]) => a[1] === 'InitiateCheckout');
+      const lastInit = all.slice(0, ic).filter((a: any[]) => a[0] === 'init').pop();
+      expect(lastInit[2]).toMatchObject({ em: 'maria.geo@teste.com', fn: 'maria', ln: 'souza', ct: 'maua', st: 'sp', country: 'br' });
+      ok('Pixel: PageView e InitiateCheckout com cidade (maua) e UF (sp) pelo IP');
+    } finally {
+      c.tracking = before;
+      clearCheckoutCache();
+      await ctx.close();
+    }
+  });
+});

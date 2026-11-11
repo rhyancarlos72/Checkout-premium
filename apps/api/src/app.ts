@@ -9,7 +9,8 @@ import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
 import { ZodError } from 'zod';
 import { env } from './config/env.js';
-import { escapeHtml, HttpError, logger, parseShortOrderCode, supabase } from './lib/core.js';
+import { clientIp, escapeHtml, geoFromHeaders, HttpError, logger, parseShortOrderCode, supabase } from './lib/core.js';
+import { geoTrackingFromIp } from './services/geoip.js';
 import { publicCheckoutData } from './routes/public.js';
 import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
@@ -243,6 +244,14 @@ export function createApp() {
         // dados do checkout já no HTML (bloco JSON, não executável): a página monta sem esperar a API
         const json = JSON.stringify({ slug: seo.data.slug, data: seo.data }).replace(/</g, '\\u003c');
         body = body.replace('<div id="root"></div>', `<div id="root"></div>\n    <script type="application/json" id="ck-data">${json}</script>`);
+      }
+      // cidade/estado do visitante para a correspondência avançada do Pixel (PageView, InitiateCheckout, Purchase)
+      if (/^\/(checkout|c\/|pedido\/)/.test(req.path)) {
+        const g = { ...geoTrackingFromIp(clientIp(req as any)), ...geoFromHeaders(req.headers as any) };
+        if (g.geo_city || g.geo_state) {
+          const geo = JSON.stringify({ ct: g.geo_city ?? null, st: g.geo_state ?? null, country: g.geo_country ?? null }).replace(/</g, '\\u003c');
+          body = body.replace('<div id="root"></div>', `<div id="root"></div>\n    <script type="application/json" id="ck-geo">${geo}</script>`);
+        }
       }
       res.type('html').send(body);
     });

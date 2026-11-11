@@ -113,13 +113,28 @@ export interface PixelUser {
   name?: string | null;
   externalId?: string | null;
 }
+/** Cidade/estado do visitante calculados no servidor pelo IP (bloco JSON no HTML; nada é consultado fora). */
+let geoCache: { ct?: string; st?: string } | undefined;
+function visitorGeo() {
+  if (geoCache) return geoCache;
+  geoCache = {};
+  try {
+    const g = JSON.parse(document.getElementById('ck-geo')?.textContent || '{}');
+    // padrão da Meta: minúsculas, sem acento, espaço ou pontuação ("São Paulo" → "saopaulo"; UF → "sp")
+    const clean = (v: unknown) => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z]/g, '');
+    if (clean(g.ct)) geoCache.ct = clean(g.ct);
+    if (clean(g.st).length === 2) geoCache.st = clean(g.st);
+  } catch {
+    /* sem localização: segue sem */
+  }
+  return geoCache;
+}
 /** Correspondência avançada do Pixel: o próprio Pixel normaliza e criptografa (SHA-256) antes de enviar. */
-function pixelUserData(u?: PixelUser) {
-  if (!u) return undefined;
+function pixelUserData(u: PixelUser = {}) {
   const [fn, ...ln] = (u.name ?? '').trim().toLowerCase().split(/\s+/);
   let ph = (u.phone ?? '').replace(/\D/g, '');
   if (ph.length === 10 || ph.length === 11) ph = `55${ph}`;
-  const d: Record<string, string> = { country: 'br' };
+  const d: Record<string, string> = { country: 'br', ...visitorGeo() };
   if (u.email) d.em = u.email.trim().toLowerCase();
   if (ph) d.ph = ph;
   if (fn) d.fn = fn;

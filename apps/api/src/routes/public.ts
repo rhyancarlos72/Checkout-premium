@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import express, { Router } from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
+import { geoTrackingFromIp } from '../services/geoip.js';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { cardOptionFor, createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
@@ -94,7 +95,9 @@ publicRouter.post('/checkouts/:slug/quote', quoteLimiter, async (req, res) => {
 
 publicRouter.post('/orders', orderIpLimiter, orderLimiter, async (req, res) => {
   const input = createOrderSchema.parse(req.body);
-  const result = await createOrder(input, { ip: clientIp(req as any), userAgent: req.get('user-agent') ?? null, geo: geoFromHeaders(req.headers as any) });
+  const ip = clientIp(req as any);
+  // cidade/estado: cabeçalhos da CDN quando houver; senão, pela base de IP do próprio servidor
+  const result = await createOrder(input, { ip, userAgent: req.get('user-agent') ?? null, geo: { ...geoTrackingFromIp(ip), ...geoFromHeaders(req.headers as any) } });
   res.status(201).json(result);
 });
 

@@ -153,6 +153,7 @@ export async function runJobs() {
 /** Ao ligar o servidor: deixa em memória o que toda visita ao checkout usa (a 1ª visita não espera o banco). */
 export async function warmCaches() {
   try {
+    (await import('./geoip.js')).warmGeoDb(); // base de cidade/estado por IP (~4 MB) em memória antes da 1ª visita
     const { ownerOrgId } = await import('../lib/tenant.js');
     await ownerOrgId();
     await getSettings();

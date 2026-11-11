@@ -175,7 +175,7 @@ describe('venda completa', () => {
     const o = db.orders.find((x) => x.public_token === token)!;
     orderId = o.id;
     expect(o.ip).toBe('187.10.20.30');
-    expect(o.tracking.geo_city).toBeUndefined(); // geo só vem do servidor
+    expect(o.tracking.geo_city).toBe('Sao Caetano do Sul'); // geo só vem do servidor (o "Hackeado" do navegador é ignorado)
     expect(db.order_items.filter((i) => i.order_id === o.id)).toHaveLength(2);
     expect(charges.get(o.id)?.value).toBe(2690);
     // validade real do Pix: 2 horas (padrão de Integrações), não os 15 min do cronômetro da página
@@ -852,11 +852,11 @@ describe('marketplace multiusuário', () => {
     expect(sent.items[0].marketplace).toBeUndefined(); // venda da Prime: sem repasse
     expect(db.ledger_entries.find((l) => l.order_id === o1.id && l.type === 'sale')!.data).toMatchObject({ method: 'card' });
     // UTMs no cartão: ficam no pedido, vão para a PayTracking como cartão e aparecem em Vendas com "Cartão"
-    expect(o1.tracking).toMatchObject({ utm_source: 'facebook', utm_campaign: 'cartao-camp', fbclid: 'FBCARD1' });
+    expect(o1.tracking).toMatchObject({ utm_source: 'facebook', utm_campaign: 'cartao-camp', fbclid: 'FBCARD1', geo_city: 'Sao Caetano do Sul', geo_state: 'sp', geo_country: 'BR' });
     await settle();
     const ptCard = ptCalls.filter((c) => c.body?.transaction_id === o1.id);
     expect(ptCard.map((c) => c.event)).toEqual(expect.arrayContaining(['sale.approved']));
-    for (const c of ptCard) expect(c.body).toMatchObject({ payment_method: 'credit_card', gateway: 'efi', tracking: { utm_source: 'facebook', utm_campaign: 'cartao-camp', utm_medium: 'cpc', fbclid: 'FBCARD1' } });
+    for (const c of ptCard) expect(c.body).toMatchObject({ payment_method: 'credit_card', gateway: 'efi', customer: { city: 'Sao Caetano do Sul', state: 'sp', country: 'BR' }, tracking: { utm_source: 'facebook', utm_campaign: 'cartao-camp', utm_medium: 'cpc', fbclid: 'FBCARD1' } });
     const list = (await as('owner', 'GET', '/api/admin/orders?status=paid&pageSize=100')).body.data as any[];
     expect(list.find((x) => x.id === o1.id)).toMatchObject({ payment_method: 'card', tracking: { utm_source: 'facebook' } });
     const csv = await fetch(`${base}/api/admin/orders/export.csv?status=paid`, { headers: { Authorization: 'Bearer tok-owner' } }).then((r) => r.text());
@@ -983,5 +983,20 @@ describe('marketplace multiusuário', () => {
     } finally {
       smtp.close();
     }
+  });
+  it('cidade/estado do visitante pelo IP: no HTML do checkout e do pedido (Pixel), nunca no painel; a CDN tem prioridade', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    if (!fs.existsSync(path.resolve(__dirname, '../../web/dist/index.html'))) return; // sem build do site
+    const page = (p: string, headers: Record<string, string> = {}) => fetch(`${base}${p}`, { headers: { 'X-Forwarded-For': '2804:14c:5b81:8b1c::1', ...headers } }).then((r) => r.text());
+    const geo = (html: string) => {
+      const m = html.match(/<script type="application\/json" id="ck-geo">([^<]*)<\/script>/);
+      return m ? JSON.parse(m[1]) : null;
+    };
+    expect(geo(await page('/checkout?produto_id=8931442'))).toEqual({ ct: 'Belo Horizonte', st: 'mg', country: 'BR' });
+    expect(geo(await page('/pedido/abc'))).toMatchObject({ ct: 'Belo Horizonte' });
+    expect(geo(await page('/admin'))).toBeNull();
+    expect(geo(await page('/checkout?produto_id=8931442', { 'X-Forwarded-For': '8.8.8.8' }))).toBeNull(); // fora do Brasil: nada
+    expect(geo(await page('/checkout?produto_id=8931442', { 'cf-ipcity': 'Curitiba', 'cf-region-code': 'PR' }))).toMatchObject({ ct: 'Curitiba', st: 'PR' });
   });
 });
