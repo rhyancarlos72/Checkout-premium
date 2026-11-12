@@ -388,6 +388,57 @@ async function dispatchTrackingImpl(orderId: string, event: PayTrackingEvent) {
   }
 }
 
+/**
+ * Envio recusado (ex.: PayTracking respondeu 403/5xx por alguns minutos): tenta de novo sozinho, só no
+ * destino que falhou, com intervalos crescentes (5, 15, 45 min, ~2 h, ~7 h) até 6 tentativas, por até 7 dias
+ * (prazo da Meta para eventos). Erros de configuração/dados (400, 404, 422) não são repetidos.
+ */
+const RETRY_MAX_FAILS = 6;
+const RETRY_WINDOW_MS = 7 * 86400_000;
+const NO_RETRY_STATUS = new Set([400, 404, 422]);
+export const retryDelayMs = (fails: number) => 5 * 60_000 * 3 ** Math.max(0, fails - 1);
+
+export async function retryFailedTracking(now = Date.now()) {
+  const since = new Date(now - RETRY_WINDOW_MS).toISOString();
+  const { data: failed } = await supabase.from('integration_logs').select('order_id, integration, event, http_status, created_at').eq('ok', false).gte('created_at', since).order('created_at', { ascending: true }).limit(1000);
+  const fails = ((failed ?? []) as any[]).filter((l) => l.order_id && String(l.integration).startsWith('webhook:'));
+  if (!fails.length) return 0;
+  const orderIds = [...new Set(fails.map((l) => l.order_id))];
+  const [{ data: oks }, { data: orders }] = await Promise.all([
+    supabase.from('integration_logs').select('order_id, integration, event, created_at').eq('ok', true).in('order_id', orderIds),
+    supabase.from('orders').select('id, status').in('id', orderIds),
+  ]);
+  const okKeys = new Set(((oks ?? []) as any[]).map((l) => `${l.order_id}|${l.integration}|${l.event}`));
+  const statusOf = new Map(((orders ?? []) as any[]).map((o) => [o.id, o.status]));
+  // agrupa por pedido + destino + evento
+  const groups = new Map<string, { orderId: string; webhookId: string; event: PayTrackingEvent; count: number; last: number; lastStatus: number }>();
+  for (const l of fails) {
+    const key = `${l.order_id}|${l.integration}|${l.event}`;
+    const g = groups.get(key) ?? { orderId: l.order_id, webhookId: String(l.integration).slice('webhook:'.length), event: l.event, count: 0, last: 0, lastStatus: 0 };
+    g.count++;
+    g.last = Math.max(g.last, new Date(l.created_at).getTime());
+    g.lastStatus = Number(l.http_status ?? 0);
+    groups.set(key, g);
+  }
+  let sent = 0;
+  for (const [key, g] of groups) {
+    if (okKeys.has(key)) continue; // já foi entregue depois
+    if (g.count >= RETRY_MAX_FAILS || NO_RETRY_STATUS.has(g.lastStatus)) continue;
+    if (now - g.last < retryDelayMs(g.count)) continue;
+    const st = statusOf.get(g.orderId);
+    if (!st) continue; // pedido excluído
+    if (g.event === 'sale.pending' && st !== 'pending') continue; // não "volta" uma venda já paga/cancelada para pendente
+    if (g.event === 'sale.approved' && st !== 'paid') continue; // reembolsado/estornado depois: vale o evento novo
+    await withOrderOrg(g.orderId, async () => {
+      const o = await loadOrderForTracking(g.orderId);
+      if (o) await sendPayTracking(o, g.event, { onlyWebhookId: g.webhookId, attempt: g.count });
+    });
+    sent++;
+    if (sent >= 30) break; // no máximo 30 por rodada
+  }
+  return sent;
+}
+
 /** Links de entrega (arquivos privados viram URL assinada de 7 dias). */
 export async function deliveryItems(orderId: string): Promise<DeliveryItem[]> {
   const [{ data }, { data: ord }] = await Promise.all([

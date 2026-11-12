@@ -185,9 +185,9 @@ async function transmit(target: Target, payload: Record<string, unknown>, extraH
 }
 
 /** Envia o evento da venda para todos os webhooks ativos inscritos nele (PayTracking e outros). */
-export async function sendPayTracking(order: OrderForTracking, event: PayTrackingEvent): Promise<boolean> {
+export async function sendPayTracking(order: OrderForTracking, event: PayTrackingEvent, opts: { onlyWebhookId?: string; attempt?: number } = {}): Promise<boolean> {
   try {
-    const targets = await targetsFor(event);
+    const targets = (await targetsFor(event)).filter((w) => !opts.onlyWebhookId || w.id === opts.onlyWebhookId);
     if (!targets.length) return false;
     const payload = buildPayload(order, event);
     const results = await Promise.all(
@@ -204,7 +204,7 @@ export async function sendPayTracking(order: OrderForTracking, event: PayTrackin
           event,
           ok: r.ok,
           http_status: r.status,
-          message: `${w.name}: ${message}`.slice(0, 500),
+          message: `${w.name}: ${message}${opts.attempt ? ` (nova tentativa ${opts.attempt})` : ''}`.slice(0, 500),
         });
         return r.ok;
       }),

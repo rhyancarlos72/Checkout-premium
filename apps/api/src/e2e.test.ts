@@ -16,6 +16,7 @@ const spedyCalls: any[] = [];
 const ptCalls: { event: string; body: any; headers: http.IncomingHttpHeaders }[] = [];
 const waSent: { instance: string; body: any }[] = [];
 let evoDown = false; // simula a Evolution fora do ar
+let ptStatus = 200; // simula a PayTracking recusando (ex.: 403 por alguns minutos)
 // Efí API de Cobranças simulada (cartão)
 const efiCharges = new Map<string, { status: string; body: any; total: number }>();
 let efiSeq = 9000;
@@ -79,6 +80,7 @@ const fake = http.createServer((req, res) => {
       return json(200, { ok: true });
     }
     if (req.url === '/paytracking') {
+      if (ptStatus !== 200) return json(ptStatus, { error: 'forbidden' });
       ptCalls.push({ event: body?.event, body, headers: req.headers });
       return json(200, { ok: true });
     }
@@ -1018,5 +1020,46 @@ describe('marketplace multiusuário', () => {
     // token inexistente: página normal, sem dados
     const none = await fetch(`${base}/pedido/${'0'.repeat(48)}`).then((r) => r.text());
     expect(none).not.toContain('id="ck-order"');
+  });
+  it('PayTracking recusou (403): reenvia sozinho depois, só o que faltou, com intervalos crescentes', async () => {
+    const { retryFailedTracking, retryDelayMs } = await import('./services/orders.js');
+    ptStatus = 403;
+    const r = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Rita Retry', email: 'rita.retry@x.com', phone: '11966660000' }, bump_ids: [], tracking: { utm_source: 'FB', purchase_event_id: 'purchase_rita' } });
+    expect(r.status).toBe(201);
+    const o = db.orders.find((x) => x.public_token === r.body.token)!;
+    charges.get(o.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: o.id } });
+    await settle();
+    expect(o.status).toBe('paid');
+    const logs = () => db.integration_logs.filter((l) => l.order_id === o.id && String(l.integration).startsWith('webhook:'));
+    expect(logs().filter((l) => !l.ok).map((l) => l.event).sort()).toEqual(['sale.approved', 'sale.pending']);
+    ptStatus = 200;
+    const before = ptCalls.length;
+    const t = Date.now();
+    // logo depois: ainda não (espera 5 min)
+    expect(await retryFailedTracking(t + 60_000)).toBe(0);
+    // 5 min depois: reenvia só a compra (o "pendente" não volta: o pedido já está pago)
+    expect(await retryFailedTracking(t + retryDelayMs(1) + 1000)).toBe(1);
+    const sent = ptCalls.slice(before);
+    expect(sent.map((c) => c.event)).toEqual(['sale.approved']);
+    expect(sent[0].body).toMatchObject({ transaction_id: o.id, tracking: { purchase_event_id: 'purchase_rita', utm_source: 'FB' } });
+    expect(logs().some((l) => l.ok && l.event === 'sale.approved' && /nova tentativa 1/.test(l.message))).toBe(true);
+    // entregue: não manda de novo
+    expect(await retryFailedTracking(t + 3 * 3600_000)).toBe(0);
+    expect(ptCalls.length).toBe(before + 1);
+
+    // destino continua recusando: tenta 6 vezes no total e desiste
+    ptStatus = 403;
+    const r2 = await api('POST', '/api/public/orders', { checkout_slug: '8931442', customer: { name: 'Rui Recusa', email: 'rui.recusa@x.com', phone: '11966661111' }, bump_ids: [], tracking: {} });
+    const o2 = db.orders.find((x) => x.public_token === r2.body.token)!;
+    await settle();
+    let clock = Date.now();
+    for (let i = 1; i <= 8; i++) {
+      clock += retryDelayMs(i) + 1000;
+      await retryFailedTracking(clock);
+    }
+    const fails2 = db.integration_logs.filter((l) => l.order_id === o2.id && l.event === 'sale.pending' && !l.ok);
+    expect(fails2).toHaveLength(6);
+    ptStatus = 200;
   });
 });
