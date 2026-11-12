@@ -594,3 +594,30 @@ describe.skipIf(!RUN)('Pixel com cidade/estado do visitante', () => {
     }
   });
 });
+
+describe.skipIf(!RUN)('página do Pix aberta pelo link', () => {
+  it('mostra o QR Code e o copia e cola sem esperar a API (pedido já vem no HTML)', async () => {
+    const created = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.10.20.99' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Lia Link', email: 'lia.link@teste.com', phone: '11977776666' }, bump_ids: [], tracking: {} }) }).then((r) => r.json());
+    const o = db.orders.find((x) => x.public_token === created.token);
+    expect(o?.pix_code).toBeTruthy();
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'pt-BR' });
+    const p = await ctx.newPage();
+    // API do pedido lenta de propósito: se a página dependesse dela, o QR demoraria 4 s
+    await p.route(/\/api\/public\/orders\/[a-f0-9]{48}$/, async (r: any) => {
+      await new Promise((res) => setTimeout(res, 4000));
+      await r.continue().catch(() => {});
+    });
+    try {
+      const t0 = Date.now();
+      await p.goto(`${base}/pedido/${o!.public_token}`, { waitUntil: 'commit' });
+      await p.locator('img[alt="QR Code Pix"]').waitFor({ timeout: 3500 });
+      const ms = Date.now() - t0;
+      expect(ms).toBeLessThan(3000);
+      expect(await p.getByText(o!.pix_code, { exact: true }).count()).toBe(1);
+      await p.getByText('Aguardando pagamento').waitFor();
+      ok(`página do Pix pelo link: QR Code na tela em ${ms} ms mesmo com a API lenta`);
+    } finally {
+      await ctx.close();
+    }
+  });
+});

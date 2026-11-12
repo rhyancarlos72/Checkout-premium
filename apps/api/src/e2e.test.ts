@@ -999,4 +999,24 @@ describe('marketplace multiusuário', () => {
     expect(geo(await page('/checkout?produto_id=8931442', { 'X-Forwarded-For': '8.8.8.8' }))).toBeNull(); // fora do Brasil: nada
     expect(geo(await page('/checkout?produto_id=8931442', { 'cf-ipcity': 'Curitiba', 'cf-region-code': 'PR' }))).toMatchObject({ ct: 'Curitiba', st: 'PR' });
   });
+  it('página do Pix aberta pelo link: pedido já vem no HTML (sem esperar a API) e o código da página baixa junto', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    if (!fs.existsSync(path.resolve(__dirname, '../../web/dist/index.html'))) return; // sem build do site
+    const o = db.orders.find((x) => x.status === 'pending' && x.pix_code)!;
+    const html = await fetch(`${base}/pedido/${o.public_token}`).then((r) => r.text());
+    const m = html.match(/<script type="application\/json" id="ck-order">([^<]*)<\/script>/);
+    expect(m).not.toBeNull();
+    const emb = JSON.parse(m![1]);
+    const api = await fetch(`${base}/api/public/orders/${o.public_token}`).then((r) => r.json());
+    expect(emb.token).toBe(o.public_token);
+    expect(emb.data).toEqual(api); // exatamente o que a API devolve
+    expect(emb.data.pix_code).toBe(o.pix_code);
+    expect(emb.data).not.toHaveProperty("_id"); // id interno não vaza
+    expect(html).toMatch(/<link rel="modulepreload" href="\/assets\/PaymentPage-[\w-]+\.js" \/>/);
+    expect(html).toContain('noindex');
+    // token inexistente: página normal, sem dados
+    const none = await fetch(`${base}/pedido/${'0'.repeat(48)}`).then((r) => r.text());
+    expect(none).not.toContain('id="ck-order"');
+  });
 });

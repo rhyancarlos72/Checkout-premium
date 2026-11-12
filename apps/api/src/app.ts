@@ -11,7 +11,7 @@ import { ZodError } from 'zod';
 import { env } from './config/env.js';
 import { clientIp, escapeHtml, geoFromHeaders, HttpError, logger, parseShortOrderCode, supabase } from './lib/core.js';
 import { geoTrackingFromIp } from './services/geoip.js';
-import { publicCheckoutData } from './routes/public.js';
+import { publicCheckoutData, publicOrder } from './routes/public.js';
 import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
@@ -197,6 +197,17 @@ export function createApp() {
 
     // SEO por página: título/descrição/prévia de link (WhatsApp, Facebook) do produto no checkout;
     // painel e páginas de Pix de cada cliente ficam fora do Google (dados pessoais)
+    // arquivo da página do Pix (nome muda a cada build)
+    let payChunk: { mtime: number; name: string | null } | null = null;
+    const paymentChunk = () => {
+      try {
+        const mtime = fs.statSync(path.join(webDist, 'index.html')).mtimeMs;
+        if (payChunk?.mtime !== mtime) payChunk = { mtime, name: fs.readdirSync(path.join(webDist, 'assets')).find((f) => /^PaymentPage-[\w-]+\.js$/.test(f)) ?? null };
+        return payChunk.name;
+      } catch {
+        return null;
+      }
+    };
     const seoFor = async (req: Request) => {
       const p = req.path;
       if (/^\/(admin|pedido|membros)(\/|$)/.test(p)) return { noindex: true } as const;
@@ -244,6 +255,19 @@ export function createApp() {
         // dados do checkout já no HTML (bloco JSON, não executável): a página monta sem esperar a API
         const json = JSON.stringify({ slug: seo.data.slug, data: seo.data }).replace(/</g, '\\u003c');
         body = body.replace('<div id="root"></div>', `<div id="root"></div>\n    <script type="application/json" id="ck-data">${json}</script>`);
+      }
+      // página do Pix aberta pelo link (recuperação, e-mail): pedido já no HTML + código da página baixando junto
+      const pm = req.path.match(/^\/pedido\/([a-f0-9]{48})$/);
+      if (pm) {
+        const chunk = paymentChunk();
+        if (chunk) body = body.replace('<head>', `<head>\n    <link rel="modulepreload" href="/assets/${chunk}" />`);
+        try {
+          const { _id, ...o } = (await Promise.race([publicOrder(pm[1]), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))])) as any;
+          const json = JSON.stringify({ token: pm[1], data: o }).replace(/</g, '\\u003c');
+          body = body.replace('<div id="root"></div>', `<div id="root"></div>\n    <script type="application/json" id="ck-order">${json}</script>`);
+        } catch {
+          /* pedido inexistente ou banco lento: a página busca pela API como antes */
+        }
       }
       // cidade/estado do visitante para a correspondência avançada do Pixel (PageView, InitiateCheckout, Purchase)
       if (/^\/(checkout|c\/|pedido\/)/.test(req.path)) {

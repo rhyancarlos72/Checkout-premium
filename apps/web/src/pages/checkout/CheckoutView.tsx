@@ -9,6 +9,7 @@ import { cn } from '@/components/ui';
 import { ApiError, publicApi } from '@/lib/api';
 import { imageDims } from '@/lib/image';
 import { brl, contrastText, digits, maskDocument, maskPhone, nationalPhone, productCode } from '@/lib/format';
+import { thumbProps } from '@/lib/img';
 import { collectTracking, ensureMetaCookies, initMetaPixel, pixel, setPixelUser, track, visitorExternalId } from '@/lib/tracking';
 import { themeDefaults, themeStyle, usePrefersDark, type PublicCheckout } from './theme';
 import { emptyCard, EfiCardFields, submitThreeDS, tokenizeEfiCard, validateCard, type EfiCardData } from './EfiCard';
@@ -364,7 +365,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     <div className="space-y-3">
       <div className="flex items-start gap-3">
         {productImage ? (
-          <img src={productImage} alt="" width={56} height={56} decoding="async" className="h-14 w-14 shrink-0 rounded-[calc(var(--ck-r)*.6)] object-cover ring-1 ring-ck-border" />
+          <img {...thumbProps(productImage, 56)} alt="" width={56} height={56} decoding="async" className="h-14 w-14 shrink-0 rounded-[calc(var(--ck-r)*.6)] object-cover ring-1 ring-ck-border" />
         ) : (
           <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-brand/10 text-brand"><Gift className="h-6 w-6" /></div>
         )}
@@ -440,7 +441,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           <div className="mb-2 flex gap-0.5 text-amber-400">{[0, 1, 2, 3, 4].map((s) => <Star key={s} className="h-4 w-4 fill-current" />)}</div>
           <blockquote className="leading-relaxed">“{tm.text}”</blockquote>
           <figcaption className="mt-3 flex items-center gap-2.5 text-[13px] font-semibold">
-            {tm.avatarUrl ? <img src={tm.avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" loading="lazy" /> : <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/15 text-xs font-bold text-brand">{tm.name?.[0] ?? '★'}</span>}
+            {tm.avatarUrl ? <img {...thumbProps(tm.avatarUrl, 32)} alt="" className="h-8 w-8 rounded-full object-cover" loading="lazy" /> : <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand/15 text-xs font-bold text-brand">{tm.name?.[0] ?? '★'}</span>}
             {tm.name}
             <BadgeCheck className="h-4 w-4 text-sky-500" />
           </figcaption>
@@ -511,7 +512,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
             <div className="flex items-center gap-4 p-4 @lg:gap-5 @lg:p-5">
               {productImage ? (
                 <div className="flex h-[84px] w-[84px] shrink-0 items-center justify-center overflow-hidden rounded-[calc(var(--ck-r)*.6)] border border-ck-border bg-[#fff] p-1 @lg:h-24 @lg:w-24">
-                  <img src={productImage} alt={checkout.product.name} width={96} height={96} decoding="async" className="h-full w-full object-contain" />
+                  <img {...thumbProps(productImage, 96)} alt={checkout.product.name} width={96} height={96} decoding="async" className="h-full w-full object-contain" />
                 </div>
               ) : (
                 <div className="flex h-[84px] w-[84px] shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.6)] bg-gradient-to-br from-brand to-brand/60 text-brand-fg @lg:h-24 @lg:w-24"><Gift className="h-8 w-8" /></div>
@@ -666,7 +667,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                       <div className="flex gap-3 p-3.5 @lg:p-4">
                         <div className="relative shrink-0">
                           {b.image_url ? (
-                            <img src={b.image_url} alt="" width={72} height={72} decoding="async" className="h-16 w-16 rounded-[calc(var(--ck-r)*.5)] object-cover shadow-sm ring-1 ring-ck-border @md:h-[72px] @md:w-[72px]" loading="lazy" />
+                            <img {...thumbProps(b.image_url, 72)} alt="" width={72} height={72} decoding="async" className="h-16 w-16 rounded-[calc(var(--ck-r)*.5)] object-cover shadow-sm ring-1 ring-ck-border @md:h-[72px] @md:w-[72px]" loading="lazy" />
                           ) : (
                             <div className="flex h-16 w-16 items-center justify-center rounded-[calc(var(--ck-r)*.5)] bg-[#fff1b8] text-[#7a5200] shadow-sm @md:h-[72px] @md:w-[72px]"><Gift className="h-7 w-7" /></div>
                           )}

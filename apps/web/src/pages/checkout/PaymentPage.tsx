@@ -7,6 +7,7 @@ import { checkoutPath } from '@/lib/links';
 import { publicApi } from '@/lib/api';
 import { brl, productCode } from '@/lib/format';
 import { initMetaPixel, pixel, track } from '@/lib/tracking';
+import { thumbProps } from '@/lib/img';
 import { PixIcon, PixLogo } from './CheckoutView';
 import { themeDefaults, themeStyle, usePrefersDark, type Theme } from './theme';
 
@@ -123,7 +124,7 @@ function UpsellPopup({ offer, busy, error, onAccept, onDecline }: { offer: Upsel
             {off > 0 && <span className="absolute -top-3 right-4 rounded-full bg-red-500 px-2.5 py-1 text-xs font-extrabold text-white shadow">-{off}%</span>}
             <div className="flex items-center gap-4">
               {offer.image_url ? (
-                <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-ck-border bg-[#fff] p-1"><img src={offer.image_url} alt="" className="h-full w-full object-contain" /></div>
+                <div className="flex h-24 w-24 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-ck-border bg-[#fff] p-1"><img {...thumbProps(offer.image_url, 96)} alt="" className="h-full w-full object-contain" /></div>
               ) : (
                 <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-xl bg-brand/10 text-brand"><Gift className="h-10 w-10" /></div>
               )}
@@ -168,6 +169,18 @@ function Shell({ theme, children }: { theme: Theme; children: ReactNode }) {
   );
 }
 
+/** Pedido embutido no HTML pelo servidor (só para o mesmo token; lido uma vez). */
+function embeddedOrder(token: string | undefined): PublicOrder | undefined {
+  try {
+    const el = document.getElementById('ck-order');
+    if (!el?.textContent || !token) return undefined;
+    const v = JSON.parse(el.textContent) as { token: string; data: PublicOrder };
+    return v.token === token ? v.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export default function PaymentPage() {
   const { token = '' } = useParams();
   // abre sempre no topo (QR Code e copia e cola à vista), mesmo vindo do fim da página do checkout
@@ -178,6 +191,9 @@ export default function PaymentPage() {
   const now = useNow();
   const { data: order, isLoading, error } = useQuery({
     queryKey: ['order', token],
+    // aberto pelo link: o pedido já vem no HTML (mostra o Pix na hora; as consultas seguem a cada 4 s)
+    initialData: () => embeddedOrder(token),
+    initialDataUpdatedAt: () => (embeddedOrder(token) ? Date.now() : undefined),
     // cartão pendente (ex.: voltou da verificação do banco): confere direto no gateway a cada consulta
     queryFn: () => {
       const prev = qc.getQueryData<PublicOrder>(['order', token]);

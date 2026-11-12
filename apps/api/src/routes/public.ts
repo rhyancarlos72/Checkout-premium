@@ -3,6 +3,7 @@ import express, { Router } from 'express';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
 import { geoTrackingFromIp } from '../services/geoip.js';
+import { thumbHandler } from '../services/thumbs.js';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { cardOptionFor, createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
@@ -36,6 +37,9 @@ const unsubHandler = async (req: any, res: any) => {
 };
 publicRouter.get('/unsubscribe', unsubHandler);
 publicRouter.post('/unsubscribe', unsubHandler);
+
+// miniaturas das imagens do Storage (order bumps, produto): WebP pequeno, cache de 1 ano
+publicRouter.get('/img', thumbHandler);
 
 publicRouter.get('/brand', async (_req, res) => {
   const { brand } = await getSettings();
@@ -103,7 +107,8 @@ publicRouter.post('/orders', orderIpLimiter, orderLimiter, async (req, res) => {
 
 const tokenSchema = z.string().regex(/^[a-f0-9]{48}$/);
 
-async function publicOrder(token: string) {
+/** Dados públicos do pedido (também embutidos no HTML da página do Pix). */
+export async function publicOrder(token: string) {
   const o: any = must(
     await supabase
       .from('orders')
