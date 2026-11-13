@@ -480,6 +480,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           )}
           <span className="flex shrink-0 items-center gap-2 text-xs font-medium text-ck-muted">
             <span className="hidden @sm:inline">Pagamento via</span> <PixLogo className="text-sm" />
+            {cardOption && <><span className="hidden @sm:inline">ou</span><span className="flex items-center gap-1 font-semibold text-ck-text"><CreditCard className="h-4 w-4" /> Cartão</span></>}
           </span>
         </div>
       </header>
@@ -636,59 +637,57 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
             </>}
           </Section>
 
-          {/* Order bumps */}
+          {/* Order bumps: 1 aviso de urgência para a seção, o 1º em destaque e os demais compactos */}
           {checkout.bumps.length > 0 && (
-            <div className="space-y-4">
-              {/* faixa que apresenta os adicionais */}
+            <div className="space-y-3">
               <div className="flex items-center gap-3 pt-1">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand"><Gift className="h-5 w-5" /></span>
                 <div className="min-w-0 flex-1">
                   <p className="font-display text-[16px] font-extrabold leading-tight tracking-tight @lg:text-[18px]">Aproveite e leve junto com desconto</p>
+                  <p className="mt-0.5 flex items-center gap-1 text-[12px] font-bold text-[#8a5a00]"><Zap className="h-3.5 w-3.5 fill-current" /> Oferta relâmpago: só nesta página</p>
                 </div>
               </div>
-              {checkout.bumps.map((b) => {
+              {checkout.bumps.map((b, i) => {
                 const on = bumps.includes(b.id);
                 const off = b.compare_at_cents && b.compare_at_cents > b.price_cents ? Math.round((1 - b.price_cents / b.compare_at_cents) * 100) : 0;
-                return (
-                  <div
-                    key={b.id}
-                    className={cn(
-                      'relative overflow-hidden rounded-ck border-2 border-dashed transition-all duration-300',
-                      on ? 'border-brand bg-brand/[.06] shadow-xl shadow-brand/15' : 'ck-bump-idle border-amber-300 bg-ck-surface',
-                    )}
-                  >
-                    {/* faixa superior */}
-                    <div className={cn('flex items-center justify-between gap-2 px-3.5 py-1.5 text-[11px] font-extrabold uppercase tracking-wider', on ? 'bg-brand text-brand-fg' : 'bg-[#fff4c2] text-[#7a5200]')}>
-                      <span className="flex items-center gap-1.5"><Zap className="h-3.5 w-3.5 fill-current" /> Oferta relâmpago · some ao sair desta página</span>
-                      {off > 0 && <span className={cn('rounded-full px-2 py-0.5', on ? 'bg-black/15' : 'bg-[#ffe27a] text-[#6b4700]')}>-{off}%</span>}
-                    </div>
-
-                    <button type="button" onClick={() => toggleBump(b.id)} aria-pressed={on} className="block w-full text-left">
-                      <div className="flex gap-3 p-3.5 @lg:p-4">
-                        <div className="relative shrink-0">
-                          {b.image_url ? (
-                            <img {...thumbProps(b.image_url, 72)} alt="" width={72} height={72} decoding="async" className="h-16 w-16 rounded-[calc(var(--ck-r)*.5)] object-cover shadow-sm ring-1 ring-ck-border @md:h-[72px] @md:w-[72px]" loading="lazy" />
-                          ) : (
-                            <div className="flex h-16 w-16 items-center justify-center rounded-[calc(var(--ck-r)*.5)] bg-[#fff1b8] text-[#7a5200] shadow-sm @md:h-[72px] @md:w-[72px]"><Gift className="h-7 w-7" /></div>
-                          )}
+                const thumb = (px: number, cls: string) =>
+                  b.image_url ? (
+                    <img {...thumbProps(b.image_url, px)} alt="" width={px} height={px} decoding="async" loading="lazy" className={cn('shrink-0 rounded-[calc(var(--ck-r)*.5)] object-cover shadow-sm ring-1 ring-ck-border', cls)} />
+                  ) : (
+                    <div className={cn('flex shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.5)] bg-[#fff1b8] text-[#7a5200]', cls)}><Gift className="h-1/2 w-1/2" /></div>
+                  );
+                const box = (
+                  <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand bg-brand text-brand-fg' : 'border-[#c9a227] bg-[#fff]')}>
+                    {on && <Check className="h-4 w-4" strokeWidth={3.5} />}
+                  </span>
+                );
+                if (i === 0)
+                  return (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => toggleBump(b.id)}
+                      aria-pressed={on}
+                      className={cn(
+                        'relative block w-full overflow-hidden rounded-ck border-2 border-dashed text-left transition-all duration-300',
+                        on ? 'border-brand bg-brand/[.06] shadow-xl shadow-brand/15' : 'ck-bump-idle border-amber-300 bg-ck-surface',
+                      )}
+                    >
+                      <div className="flex gap-3.5 p-3.5 @lg:p-4">
+                        <div className="relative">
+                          {thumb(88, 'h-[76px] w-[76px] @md:h-[88px] @md:w-[88px]')}
+                          {off > 0 && <span className="absolute -left-1.5 -top-1.5 rounded-full bg-[#e11d48] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#fff] shadow">-{off}%</span>}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-[13.5px] font-bold leading-snug">{b.title}</p>
-                          {b.description && <p className="mt-0.5 text-[12px] leading-relaxed text-ck-muted">{b.description}</p>}
+                          <p className="text-[14.5px] font-bold leading-snug">{b.title}</p>
+                          {b.description && <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-ck-muted">{b.description}</p>}
                           <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2">
                             {b.compare_at_cents ? <span className="text-[12px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
-                            <span className="text-[18px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
+                            <span className="text-[19px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
                           </div>
                         </div>
                       </div>
-
-                      {/* barra de ação */}
-                      <div
-                        className={cn(
-                          'flex items-center gap-2.5 border-t-2 border-dashed px-3.5 py-2.5 text-[12.5px] font-bold transition-colors duration-300',
-                          on ? 'border-brand/30 bg-brand text-brand-fg' : 'border-amber-200 bg-[#fff9e0] text-[#5c3d00]',
-                        )}
-                      >
+                      <div className={cn('flex items-center gap-2.5 border-t-2 border-dashed px-3.5 py-2.5 text-[13px] font-bold transition-colors duration-300', on ? 'border-brand/30 bg-brand text-brand-fg' : 'border-amber-200 bg-[#fff9e0] text-[#5c3d00]')}>
                         {!on && <ArrowRight className="ck-nudge h-4 w-4 shrink-0" strokeWidth={3} />}
                         <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-[#c9a227] bg-[#fff]')}>
                           {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
@@ -696,17 +695,35 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                         <span className="flex-1 leading-snug">{on ? 'Adicionado! Você garantiu esta oferta' : `Sim! Quero levar junto por só ${brl(b.price_cents)}`}</span>
                       </div>
                     </button>
-                  </div>
+                  );
+                return (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => toggleBump(b.id)}
+                    aria-pressed={on}
+                    className={cn('flex w-full items-center gap-3 rounded-ck border-2 p-2.5 text-left transition-all duration-200', on ? 'border-brand bg-brand/[.06] shadow-md shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-amber-300')}
+                  >
+                    {box}
+                    {thumb(48, 'h-12 w-12')}
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 block text-[13.5px] font-bold leading-snug">{b.title}</span>
+                      <span className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5">
+                        {b.compare_at_cents ? <span className="text-[11.5px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
+                        <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}</span>
+                      </span>
+                    </span>
+                    {off > 0 && <span className="shrink-0 rounded-full bg-[#ffe27a] px-2 py-0.5 text-[11px] font-extrabold text-[#6b4700]">-{off}%</span>}
+                  </button>
                 );
               })}
             </div>
           )}
 
-          {/* Resumo + CTA (celular) */}
+          {/* Total + cupom junto ao botão (celular): os itens já estão no "Ver resumo do pedido" do topo */}
           <section className="ck-card space-y-4 p-5 @4xl:hidden">
-            <h2 className="font-display text-[18px] font-semibold tracking-tight">Resumo do pedido</h2>
-            {summaryLines}
-            {couponBlock}
+            {selectedBumps.length > 0 && <p className="text-[13px] text-ck-muted">{checkout.product.name} + {selectedBumps.length} {selectedBumps.length === 1 ? 'adicional' : 'adicionais'}</p>}
+            <div className="[&>div:first-child]:border-t-0 [&>div:first-child]:pt-0">{couponBlock}</div>
             {totals}
           </section>
 
@@ -747,7 +764,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
       <footer ref={footerRef} className="border-t border-ck-border">
         <div className="mx-auto max-w-[1120px] space-y-2 px-4 py-8 text-center text-xs leading-relaxed text-ck-muted">
           <p className="mx-auto max-w-md text-center font-medium leading-relaxed">
-            <ShieldCheck className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-emerald-500" />Compra protegida · dados criptografados · pagamento via <PixIcon className="mx-0.5 inline h-3 w-3 align-[-1px]" />Pix
+            <ShieldCheck className="mr-1 inline h-3.5 w-3.5 align-[-2px] text-emerald-500" />Compra protegida · dados criptografados · pagamento via <PixIcon className="mx-0.5 inline h-3 w-3 align-[-1px]" />Pix{cardOption ? ' ou cartão' : ''}
           </p>
           {t.footerText && <p className="whitespace-pre-line">{t.footerText}</p>}
           {(t.producerName || checkout.store.document || checkout.store.supportEmail) && (
