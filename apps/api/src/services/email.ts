@@ -442,3 +442,13 @@ export async function sendMemberCode(to: string, name: string, code: string) {
   const text = `${first ? `${first}, seu` : 'Seu'} código de acesso à área de membros: ${code}\nEle vale por 15 minutos.\nSe você não pediu este código, ignore este e-mail.\n\n--\n${storeName}`;
   return send(to, `Seu código de acesso: ${code}`, html, null as any, 'member_code', { text, fromName: storeName, replyTo: store.supportEmail || undefined });
 }
+
+/** Avisos da assinatura mensal (Pix Automático): renovação, mensalidade paga, acesso vencendo/expirado. */
+export async function sendSubscriptionEmail(p: { to: string; name: string; orderId: string | null; event: string; subject: string; title: string; paragraphs: string[]; cta?: { label: string; url: string } | null }) {
+  const { store } = await getSettings();
+  const storeName = store.name && store.name !== 'Minha Loja' ? store.name : mailConfig().fromName;
+  const first = (p.name.trim().split(/\s+/)[0] ?? '').replace(/^./, (c) => c.toUpperCase());
+  const inner = `${p.paragraphs.map((t) => `<p style="margin:0 0 14px;font-size:15px;line-height:1.6;color:#374151">${escapeHtml(t)}</p>`).join('')}${p.cta ? `<p style="margin:20px 0 6px">${button(p.cta.url, p.cta.label)}</p>` : ''}`;
+  const html = layout(first ? `${first}, ${p.title.charAt(0).toLowerCase()}${p.title.slice(1)}` : p.title, inner);
+  return send(p.to, p.subject, html, p.orderId as any, p.event, { fromName: storeName, replyTo: store.supportEmail || undefined });
+}

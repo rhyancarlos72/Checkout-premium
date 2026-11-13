@@ -11,6 +11,7 @@ import { ZodError } from 'zod';
 import { env } from './config/env.js';
 import { clientIp, escapeHtml, geoFromHeaders, HttpError, logger, parseShortOrderCode, supabase } from './lib/core.js';
 import { geoTrackingFromIp } from './services/geoip.js';
+import { renewalOrderFor, validRenewSig } from './services/subscriptions.js';
 import { publicCheckoutData, publicOrder } from './routes/public.js';
 import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
@@ -127,6 +128,20 @@ export function createApp() {
     if (!data) return res.redirect(302, '/');
     const qs = kind === 'r' ? '?utm_source=whatsapp&utm_medium=recovery' : '';
     res.redirect(302, `/pedido/${(data as any).public_token}${qs}`);
+  });
+
+  // Renovação da assinatura (link assinado do e-mail/WhatsApp/área de membros): abre o Pix da mensalidade na hora
+  app.get(/^\/assinatura\/([0-9a-f-]{36})$/, shortLinkLimiter, async (req, res) => {
+    const id = req.path.split('/')[2];
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    if (!validRenewSig(id, String(req.query.s ?? ''))) return res.redirect(302, '/');
+    try {
+      res.redirect(302, `/pedido/${await renewalOrderFor(id)}`);
+    } catch (e: any) {
+      const msg = e instanceof HttpError ? e.message : 'Não foi possível gerar o Pix agora. Tente de novo em alguns minutos.';
+      res.status(e instanceof HttpError ? e.status : 502).type('html').send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Assinatura</title><body style="font-family:system-ui,sans-serif;max-width:480px;margin:60px auto;padding:0 16px;color:#111;text-align:center"><h1 style="font-size:20px">${escapeHtml(msg)}</h1><p><a href="/membros">Ir para a área de membros</a></p></body>`);
+    }
   });
 
   // Frontend (build do Vite) servido pelo mesmo app → um único deploy na Hostinger

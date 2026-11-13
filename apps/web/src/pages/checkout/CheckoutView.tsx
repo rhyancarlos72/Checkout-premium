@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, BadgeCheck, Check, ChevronDown, Clock, CreditCard, Gift, Lock, Mail, Megaphone, Phone, ShieldCheck, Star, Tag, User, X, Zap } from 'lucide-react';
+import { ArrowRight, BadgeCheck, Check, ChevronDown, Clock, CreditCard, Gift, Lock, Mail, Megaphone, Phone, Repeat, ShieldCheck, Star, Tag, User, X, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useForm, type UseFormRegisterReturn } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -23,7 +23,7 @@ function makeSchema(fields: PublicCheckout['fields'], card = false) {
       .refine((v) => v.split(/\s+/).length >= 2, 'Informe nome e sobrenome'),
     email: z.string().trim().toLowerCase().email('Digite um e-mail válido'),
     phone: fields.phone ? z.string().refine((v) => digits(v).length >= 10, 'Informe o celular com DDD') : z.string().optional(),
-    // CPF só é pedido no cartão (exigência do gateway); no Pix o checkout continua igual
+    // CPF só é pedido no cartão e na assinatura mensal (exigência do gateway/Banco Central); no Pix comum o checkout continua igual
     document: card ? z.string().refine((v) => [11, 14].includes(digits(v ?? '').length), 'Informe seu CPF') : z.string().optional(),
   });
 }
@@ -163,6 +163,15 @@ function CkField({
  * largura do próprio checkout, então funciona igual no celular, no desktop e
  * na pré-visualização do painel.
  */
+/** Selo da assinatura mensal no order bump (Pix Automático). No cartão fica indisponível. */
+function SubNote({ card }: { card: boolean }) {
+  return (
+    <span className={cn('mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold leading-tight', card ? 'bg-ck-surface-2 text-ck-muted' : 'bg-brand/10 text-brand')}>
+      <Repeat className="h-3 w-3 shrink-0" /> {card ? 'Assinatura: disponível só no Pix' : 'Assinatura mensal · cancele quando quiser'}
+    </span>
+  );
+}
+
 export function CheckoutView({ checkout, preview = false }: { checkout: PublicCheckout; preview?: boolean }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -207,7 +216,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const [cardErrors, setCardErrors] = useState<Partial<Record<keyof EfiCardData, string>>>({});
   const [tokenizing, setTokenizing] = useState(false);
   const cardTokenRef = useRef<{ payment_token: string; tds_identifier: string; installments: number } | null>(null);
-  const schema = useMemo(() => makeSchema(checkout.fields, method === 'card'), [checkout.fields, method]);
+  // assinatura mensal (Pix Automático) marcada: pede CPF e só aceita Pix
+  const subOn = checkout.bumps.some((b) => b.recurring && bumps.includes(b.id));
+  const schema = useMemo(() => makeSchema(checkout.fields, method === 'card' || subOn), [checkout.fields, method, subOn]);
   const { register, handleSubmit, setValue, formState, watch, reset, getFieldState } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onTouched',
@@ -259,6 +270,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const subtotal = checkout.price_cents + selectedBumps.reduce((s, b) => s + b.price_cents, 0);
   const discount = coupon ? Math.min(coupon.discount, subtotal - 1) : 0;
   const total = subtotal - discount;
+  const monthlyTotal = selectedBumps.filter((b) => b.recurring).reduce((n, b) => n + (b.monthly_cents ?? b.price_cents), 0);
 
   const quote = useMutation({
     mutationFn: (p: { code: string; bump_ids: string[] }) =>
@@ -286,6 +298,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
 
   function toggleBump(id: string) {
     const on = bumps.includes(id);
+    if (!on && method === 'card' && checkout.bumps.find((b) => b.id === id)?.recurring) return; // assinatura: só no Pix
     const next = on ? bumps.filter((b) => b !== id) : [...bumps, id];
     setBumps(next);
     if (!preview) track(checkout.slug, on ? 'remove_bump' : 'add_bump', { bump_id: id });
@@ -296,7 +309,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
     mutationFn: (v: FormValues) =>
       publicApi.post<{ token: string; order?: unknown }>('/orders', {
         checkout_slug: checkout.slug,
-        customer: { name: v.name, email: v.email, phone: v.phone ? nationalPhone(v.phone) : null, document: method === 'card' ? digits(v.document ?? '') : null },
+        customer: { name: v.name, email: v.email, phone: v.phone ? nationalPhone(v.phone) : null, document: method === 'card' || subOn ? digits(v.document ?? '') : null },
         payment_method: method,
         ...(efiCard && cardTokenRef.current ? { card: cardTokenRef.current } : {}),
         bump_ids: bumps,
@@ -431,6 +444,11 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           <span className="mt-1 flex items-center justify-end gap-1 text-xs text-ck-muted">à vista no <PixIcon className="h-3 w-3" /> Pix</span>
         </span>
       </div>
+      {monthlyTotal > 0 && (
+        <p className="flex items-center justify-end gap-1.5 text-right text-xs font-medium text-ck-muted">
+          <Repeat className="h-3.5 w-3.5 text-brand" /> depois {brl(monthlyTotal)}/mês no Pix Automático
+        </p>
+      )}
     </div>
   );
 
@@ -580,7 +598,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                 <span className="text-[13px] font-bold text-ck-text">Pix</span>
               </button>
               {cardOption && (
-                <button type="button" aria-pressed={method === 'card'} onClick={() => setMethod('card')} className={cn('flex h-[84px] w-[112px] flex-col items-center justify-center gap-2 rounded-[calc(var(--ck-r)*.8)] border-2', method === 'card' ? 'border-brand bg-brand/[.07] shadow-[0_0_0_4px_color-mix(in_srgb,var(--brand)_10%,transparent)]' : 'border-ck-border bg-ck-surface')}>
+                <button type="button" aria-pressed={method === 'card'} onClick={() => (setMethod('card'), setBumps((bs) => bs.filter((id) => !checkout.bumps.find((b) => b.id === id)?.recurring)))} className={cn('flex h-[84px] w-[112px] flex-col items-center justify-center gap-2 rounded-[calc(var(--ck-r)*.8)] border-2', method === 'card' ? 'border-brand bg-brand/[.07] shadow-[0_0_0_4px_color-mix(in_srgb,var(--brand)_10%,transparent)]' : 'border-ck-border bg-ck-surface')}>
                   <CreditCard className="h-7 w-7 text-ck-text" strokeWidth={1.7} />
                   <span className="text-[13px] font-bold text-ck-text">Cartão</span>
                 </button>
@@ -612,6 +630,24 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                     {cardOption.maxInstallments > 1 ? `Em até ${cardOption.maxInstallments}x sem juros. ` : ''}Você digita o cartão numa página segura do pagamento, com verificação do seu banco.
                   </p>
                 )}
+              </div>
+            )}
+            {method === 'pix' && subOn && (
+              <div className="mt-4 space-y-2.5">
+                <CkField
+                  label="CPF (Pix Automático)"
+                  icon={<User strokeWidth={1.9} />}
+                  reg={{ ...register('document'), onChange: async (e) => setValue('document', maskDocument(e.target.value), { shouldValidate: formState.isSubmitted }) }}
+                  error={err.document?.message}
+                  valid={isValid('document')}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="000.000.000-00"
+                />
+                <p className="flex items-start gap-2 rounded-[calc(var(--ck-r)*.6)] bg-brand/[.06] px-3 py-2.5 text-[13px] font-medium leading-snug text-ck-text">
+                  <Repeat className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+                  <span>Ao pagar, o app do seu banco também pede para autorizar o Pix Automático de <b>{brl(monthlyTotal)}/mês</b>. É só confirmar; você cancela quando quiser no próprio app.</span>
+                </p>
               </div>
             )}
             {/* celular: uma linha só (os passos completos já aparecem na página do Pix) */}
@@ -684,7 +720,10 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                           <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2">
                             {b.compare_at_cents ? <span className="text-[12px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
                             <span className="text-[19px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
+                            {b.recurring && (b.monthly_cents ?? b.price_cents) === b.price_cents && <span className="text-[13px] font-bold text-brand">/mês</span>}
                           </div>
+                          {b.recurring && (b.monthly_cents ?? b.price_cents) !== b.price_cents && <p className="mt-0.5 text-[12px] font-semibold text-brand">1º mês hoje, depois {brl(b.monthly_cents!)}/mês</p>}
+                          {b.recurring && <SubNote card={method === 'card'} />}
                         </div>
                       </div>
                       <div className={cn('flex items-center gap-2.5 border-t-2 border-dashed px-3.5 py-2.5 text-[13px] font-bold transition-colors duration-300', on ? 'border-brand/30 bg-brand text-brand-fg' : 'border-amber-200 bg-[#fff9e0] text-[#5c3d00]')}>
@@ -692,7 +731,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                         <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-[#c9a227] bg-[#fff]')}>
                           {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
                         </span>
-                        <span className="flex-1 leading-snug">{on ? 'Adicionado! Você garantiu esta oferta' : `Sim! Quero levar junto por só ${brl(b.price_cents)}`}</span>
+                        <span className="flex-1 leading-snug">{on ? (b.recurring ? 'Assinatura adicionada! Você garantiu esta oferta' : 'Adicionado! Você garantiu esta oferta') : b.recurring ? `Sim! Quero assinar por ${brl(b.monthly_cents ?? b.price_cents)}/mês` : `Sim! Quero levar junto por só ${brl(b.price_cents)}`}</span>
                       </div>
                     </button>
                   );
@@ -711,9 +750,11 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                       {b.description && <span className="mt-0.5 block text-[12px] leading-snug text-ck-muted">{b.description}</span>}
                       <span className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
                         {b.compare_at_cents ? <span className="text-[11.5px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
-                        <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}</span>
+                        <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}{b.recurring && (b.monthly_cents ?? b.price_cents) === b.price_cents && <span className="text-[12px] font-bold">/mês</span>}</span>
                         {off > 0 && <span className="rounded-full bg-[#ffe27a] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#6b4700]">-{off}%</span>}
                       </span>
+                      {b.recurring && (b.monthly_cents ?? b.price_cents) !== b.price_cents && <span className="mt-0.5 block text-[11.5px] font-semibold text-brand">1º mês hoje, depois {brl(b.monthly_cents!)}/mês</span>}
+                      {b.recurring && <SubNote card={method === 'card'} />}
                     </span>
                   </button>
                 );

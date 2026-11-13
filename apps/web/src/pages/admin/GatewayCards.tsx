@@ -10,6 +10,7 @@ interface Gateways {
   defaultProvider: 'woovi' | 'efi' | null;
   pixExpiresMinutes?: number;
   card?: { enabled: boolean; configured: boolean; provider: 'woovi' | 'efi'; maxInstallments: number };
+  pixAuto?: { enabled: boolean; ready: boolean; efiReady: boolean; account: string | null; webhooksAt: string | null };
   efiPayeeCode?: string;
   woovi: { configured: boolean; source: 'painel' | 'env' | null; appId_hint: string; hasWebhookSecret: boolean; webhookUrl: string };
   efi: {
@@ -83,6 +84,52 @@ function CardGatewayCard({ card, wooviReady, efiReady, payeeCode, toast, onSaved
           ? 'Antes de ligar: na sua aplicação Efí, ative a "API de Emissões" (cobranças), cadastre o ramo de atividade e preencha o formulário de KYC de cartão da Efí. A Efí avisa os pagamentos em /api/webhooks/efi-card (configurado sozinho em cada cobrança).'
           : 'Antes de ligar: peça à Woovi a habilitação do cartão (e do parcelamento, se usar mais de 1x) e aguarde o KYC ficar "Ativo" em Cartão de Crédito → Ajustes.'}
       </p>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Pix Automático (assinatura mensal nos order bumps)
+function PixAutoCard({ data, toast, onSaved }: { data: NonNullable<Gateways['pixAuto']>; toast: Toast; onSaved: () => void }) {
+  const [enabled, setEnabled] = useState(data.enabled);
+  const [account, setAccount] = useState(data.account ?? '');
+  const save = useMutation({
+    mutationFn: () => adminApi.put<{ message: string }>('/gateways/pix-auto', { enabled, account: account.trim() }),
+    onSuccess: (r) => (toast.ok(r.message), onSaved()),
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
+  });
+  const hooks = useMutation({
+    mutationFn: () => adminApi.post<{ message: string }>('/integrations/efi/register-auto-webhooks'),
+    onSuccess: (r) => (toast.ok(r.message), onSaved()),
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
+  });
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-5 lg:col-span-2">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="font-semibold text-zinc-900">Pix Automático · assinatura mensal</p>
+          <p className="mt-1 text-sm text-zinc-500">
+            Para os order bumps marcados como "Assinatura mensal" (em Order bumps). O cliente paga o pedido e autoriza a mensalidade no app do banco com o mesmo QR Code; depois o valor é debitado sozinho todo mês, pela Efí. Sem pagamento, o acesso fica liberado por mais 3 dias e então é pausado; quem não autorizar recebe um link de renovação por e-mail e WhatsApp.
+          </p>
+          {!data.efiReady && <p className="mt-2 text-sm font-medium text-amber-600">Configure a Efí Pix (credenciais, chave Pix e certificado) antes de ligar.</p>}
+        </div>
+        <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold', data.ready ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-500')}>{data.ready ? 'Ligado · Efí' : 'Desligado'}</span>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 sm:items-end">
+        <Field label="Número da sua conta Efí" hint="Efí → Minha conta (só números). Vai na cobrança de cada mês.">
+          <Input value={account} onChange={(e) => setAccount(e.target.value.replace(/[^\d-]/g, ''))} inputMode="numeric" placeholder="ex.: 1234567" />
+        </Field>
+        <div className="flex flex-col gap-1.5">
+          <Button variant="secondary" loading={hooks.isPending} onClick={() => hooks.mutate()} disabled={!data.efiReady}><RefreshCw className="h-4 w-4" /> Registrar avisos na Efí</Button>
+          <p className="text-xs text-zinc-500">{data.webhooksAt ? `Registrados em ${dateTime(data.webhooksAt)}` : 'Ainda não registrados (sem eles, o sistema confere a cada 2 minutos)'}</p>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <label className="flex items-center gap-2 text-sm font-medium text-zinc-700">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 accent-blue-600" /> Ligar assinaturas por Pix Automático
+        </label>
+        <Button className="sm:ml-auto" loading={save.isPending} onClick={() => save.mutate()}>Salvar</Button>
+      </div>
+      <p className="mt-3 text-xs text-zinc-500">Antes de ligar: o Pix Automático exige conta Efí Empresas com o recurso liberado e os escopos de Pix Automático (rec, cobr, locrec, webhookrec, webhookcobr) ativos na sua aplicação Efí. Se a Efí recusar a autorização, a venda sai normal e o cliente renova pelo link.</p>
     </div>
   );
 }
@@ -246,6 +293,7 @@ export function GatewayCards({ toast }: { toast: Toast }) {
   return (
     <>
       <DefaultGatewayCard current={data.defaultProvider} pixMinutes={data.pixExpiresMinutes ?? 120} configured={{ efi: e.configured, woovi: w.configured }} toast={toast} onSaved={refresh} />
+      {data.pixAuto && <PixAutoCard data={data.pixAuto} toast={toast} onSaved={refresh} />}
       {data.card && <CardGatewayCard card={data.card} wooviReady={w.configured} efiReady={Boolean(e.clientId_hint && e.hasClientSecret)} payeeCode={(e as any).payeeCode ?? ''} toast={toast} onSaved={refresh} />}
       <GatewayCard
         logo={<EfiLogo />}

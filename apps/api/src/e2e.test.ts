@@ -1062,4 +1062,196 @@ describe('marketplace multiusuário', () => {
     expect(fails2).toHaveLength(6);
     ptStatus = 200;
   });
+  it('assinatura mensal (Pix Automático): 1 QR paga e autoriza, débito do mês, tolerância de 3 dias, renovação pelo link, cancelamento', async () => {
+    const { efi } = await import('./providers/index.js');
+    const { refreshGateways } = await import('./services/gateways.js');
+    const { clearCheckoutCache, syncOrderWithProvider } = await import('./services/orders.js');
+    const subs = await import('./services/subscriptions.js');
+    const { ownedProductIds, memberHome } = await import('./services/members.js');
+    const DAY = 86_400_000;
+
+    // Efí Pix configurada + Pix Automático ligado (Super Admin)
+    const g = db.settings.find((x) => x.key === 'gateways')!;
+    const before = g.value;
+    g.value = { ...g.value, efi: { ...(g.value.efi ?? {}), clientId: 'cid', clientSecret: 'csec', pixKey: 'pix@prime.com', certBase64: Buffer.from('cert').toString('base64'), webhookSecret: 'whsec123' }, pixAuto: { enabled: true, account: '7654321' } };
+    await refreshGateways(true);
+
+    // Efí falsa (API Pix): cobrança imediata, recorrência (Jornada 3) e cobranças do mês
+    const calls: { method: string; path: string; body?: any }[] = [];
+    const cob = new Map<string, { status: string; valor: string }>();
+    const rec = new Map<string, string>();
+    const cobr = new Map<string, { status: string; valor: string }>();
+    let recSeq = 0;
+    let locrecDown = false;
+    const realAuthed = (efi as any).authed;
+    (efi as any).authed = async (method: string, path: string, body?: any) => {
+      calls.push({ method, path, body });
+      const [p, qs] = path.split('?');
+      let m;
+      if ((m = p.match(/^\/v2\/cob\/(\w+)$/)) && method === 'PUT') return cob.set(m[1], { status: 'ATIVA', valor: body.valor.original }), { txid: m[1], pixCopiaECola: `000201COB${m[1]}`, loc: { id: 1 } };
+      if ((m = p.match(/^\/v2\/cob\/(\w+)$/)) && method === 'GET') { const c = cob.get(m[1])!; return { status: c.status, pix: c.status === 'CONCLUIDA' ? [{ valor: c.valor }] : [] }; }
+      if (p === '/v2/locrec' && method === 'POST') { if (locrecDown) throw new Error('Efí respondeu 403: escopo locrec não liberado'); return { id: 900 + recSeq }; }
+      if (p === '/v2/rec' && method === 'POST') { const id = `RR${++recSeq}`; rec.set(id, 'CRIADA'); return { idRec: id }; }
+      if ((m = p.match(/^\/v2\/rec\/(\w+)$/)) && method === 'GET') return { idRec: m[1], status: rec.get(m[1]), ...(qs ? { dadosQR: { pixCopiaECola: `000201REC${m[1]}${new URLSearchParams(qs).get('txid')}` } } : {}) };
+      if ((m = p.match(/^\/v2\/rec\/(\w+)$/)) && method === 'PATCH') return rec.set(m[1], body.status), { idRec: m[1], status: body.status };
+      if ((m = p.match(/^\/v2\/cobr\/(\w+)$/)) && method === 'PUT') return cobr.set(m[1], { status: 'CRIADA', valor: body.valor.original }), { txid: m[1], status: 'CRIADA' };
+      if ((m = p.match(/^\/v2\/cobr\/(\w+)$/)) && method === 'GET') { const c = cobr.get(m[1])!; return { txid: m[1], status: c.status, valor: { original: c.valor } }; }
+      throw new Error(`Efí falsa: ${method} ${path}`);
+    };
+    const ck = db.checkouts.find((c) => c.slug === '8931442')!;
+    const CLUB = '0c000000-0000-4000-8000-0000000000c1';
+    const SUB_BUMP = '0c000000-0000-4000-8000-0000000000b9';
+    db.products.push({ id: CLUB, number: 4242, name: 'Clube de Artes', price_cents: 990, active: true, members_enabled: true, delivery_type: 'members', org_id: OWNER_ORG, created_at: new Date().toISOString() });
+    db.order_bumps.push({ id: SUB_BUMP, product_id: CLUB, title: 'Clube de Artes (mensal)', description: 'Artes novas toda semana.', price_cents: 490, recurring: true, recurring_price_cents: 990, active: true, org_id: OWNER_ORG, created_at: new Date().toISOString() });
+    db.checkout_bumps.push({ checkout_id: ck.id, bump_id: SUB_BUMP, sort: 9, org_id: OWNER_ORG });
+    clearCheckoutCache();
+    const buy = (email: string, extra: any = {}) =>
+      fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.44.10.9' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Sara Assinante', email, phone: '11987651234', ...extra.customer }, bump_ids: [SUB_BUMP], tracking: { utm_source: 'FB' }, ...extra.body }) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+    try {
+      // checkout mostra o bump como assinatura (1º mês R$ 4,90, depois R$ 9,90/mês)
+      const pub = (await api('GET', '/api/public/checkouts/8931442')).body;
+      expect(pub.bumps.find((b: any) => b.id === SUB_BUMP)).toMatchObject({ recurring: true, monthly_cents: 990, price_cents: 490 });
+
+      // sem CPF: não dá para autorizar o Pix Automático
+      const noCpf = await buy('sara@x.com');
+      expect(noCpf.status).toBe(400);
+      expect(noCpf.body.error).toMatch(/CPF/);
+
+      // 1 QR Code: paga o pedido e autoriza R$ 9,90/mês (Jornada 3)
+      const r = await buy('sara@x.com', { customer: { document: '529.982.247-25' } });
+      expect(r.status).toBe(201);
+      const o = db.orders.find((x) => x.public_token === r.body.token)!;
+      const txid = o.provider_charge_id;
+      expect(o).toMatchObject({ provider: 'efi', rec_id: 'RR1', total_cents: 1999 + 490 });
+      expect(r.body.order.pix_code).toBe(`000201RECRR1${txid}`); // o copia e cola da recorrência (paga + autoriza)
+      expect(calls.map((c) => `${c.method} ${c.path.split('?')[0]}`)).toEqual([`PUT /v2/cob/${txid}`, 'POST /v2/locrec', 'POST /v2/rec', 'GET /v2/rec/RR1']);
+      expect(calls[0].body).toMatchObject({ devedor: { cpf: '52998224725', nome: 'Sara Assinante' }, valor: { original: '24.89' }, chave: 'pix@prime.com' });
+      expect(calls[2].body).toMatchObject({
+        vinculo: { devedor: { cpf: '52998224725', nome: 'Sara Assinante' } },
+        calendario: { periodicidade: 'MENSAL', dataInicial: subs.spDate(subs.addMonths(Date.now(), 1)) },
+        valor: { valorRec: '9.90' },
+        politicaRetentativa: 'PERMITE_3R_7D',
+        loc: 900,
+        ativacao: { dadosJornada: { txid } },
+      });
+      expect(calls[3].path).toBe(`/v2/rec/RR1?txid=${txid}`);
+      expect(db.order_items.filter((i) => i.order_id === o.id).find((i) => i.product_id === CLUB)).toMatchObject({ recurring: true, price_cents: 490 });
+      const sub = db.subscriptions.find((x) => x.origin_order_id === o.id)!;
+      expect(sub).toMatchObject({ status: 'pending', price_cents: 990, rec_id: 'RR1', rec_status: 'CRIADA', product_ids: [CLUB] });
+      expect(o.subscription_id).toBe(sub.id);
+      const page = (await api('GET', `/api/public/orders/${r.body.token}`)).body;
+      expect(page.subscription).toMatchObject({ monthly_cents: 990, auto: true, names: ['Clube de Artes (mensal)'] });
+
+      // pagou: acesso por 1 mês (o produto da assinatura entra na área de membros)
+      cob.get(txid)!.status = 'CONCLUIDA';
+      expect(await syncOrderWithProvider(o.id)).toBe('paid');
+      expect(sub.status).toBe('active');
+      const until1 = new Date(sub.paid_until).getTime();
+      expect(Math.abs(until1 - subs.addMonths(new Date(o.paid_at), 1).getTime())).toBeLessThan(5000);
+      const cust = o.customer_id;
+      expect((await ownedProductIds(cust)).has(CLUB)).toBe(true);
+
+      // aviso da Efí: autorização aprovada no banco (o sistema reconsulta a Efí, não confia no corpo)
+      expect((await fetch(`${base}/api/webhooks/efi-auto?hmac=errado&ignorar=`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recs: [{ idRec: 'RR1', status: 'APROVADA' }] }) })).status).toBe(401);
+      rec.set('RR1', 'APROVADA');
+      await fetch(`${base}/api/webhooks/efi-auto?hmac=whsec123&ignorar=`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recs: [{ idRec: 'RR1', status: 'qualquer' }] }) });
+      await settle();
+      expect(sub.rec_status).toBe('APROVADA');
+
+      // 9 dias antes de vencer: agenda o débito do mês na autorização (regra: 10 a 2 dias antes)
+      await subs.runSubscriptionJobs(until1 - 12 * DAY);
+      expect(sub.cobr_txid).toBeNull(); // ainda cedo
+      await subs.runSubscriptionJobs(until1 - 9 * DAY);
+      const cobrCall = calls.find((c) => c.method === 'PUT' && c.path.startsWith('/v2/cobr/'))!;
+      expect(cobrCall.body).toMatchObject({ idRec: 'RR1', calendario: { dataDeVencimento: subs.spDate(until1) }, valor: { original: '9.90' }, ajusteDiaUtil: true, recebedor: { conta: '7654321', tipoConta: 'PAGAMENTO' } });
+      expect(sub.cobr_txid).toHaveLength(32);
+
+      // débito feito: aviso da Efí → venda de renovação (financeiro + nota), acesso +1 mês, sem PayTracking de venda
+      const ptBefore = ptCalls.length;
+      cobr.get(sub.cobr_txid)!.status = 'CONCLUIDA';
+      const cobrTxid = sub.cobr_txid;
+      await fetch(`${base}/api/webhooks/efi-auto?hmac=whsec123&ignorar=`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cobsr: [{ txid: cobrTxid, idRec: 'RR1', status: 'CONCLUIDA' }] }) });
+      await settle();
+      const renewal = db.orders.find((x) => x.provider_charge_id === cobrTxid)!;
+      expect(renewal).toMatchObject({ kind: 'renewal', status: 'paid', total_cents: 990, subscription_id: sub.id });
+      expect(db.ledger_entries.some((l) => l.order_id === renewal.id && l.type === 'sale' && l.amount_cents === 990)).toBe(true);
+      expect(new Date(sub.paid_until).getTime()).toBe(subs.addMonths(until1, 1).getTime());
+      expect(sub.cobr_txid).toBeNull();
+      expect(ptCalls.slice(ptBefore).some((c) => c.body?.transaction_id === renewal.id)).toBe(false);
+      // aviso repetido não gera outra venda
+      await fetch(`${base}/api/webhooks/efi-auto?hmac=whsec123&ignorar=`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cobsr: [{ txid: cobrTxid }] }) });
+      await settle();
+      expect(db.orders.filter((x) => x.provider_charge_id === cobrTxid)).toHaveLength(1);
+
+      // cliente cancelou o Pix Automático no banco → sem débito: lembrete com link, venceu (3 dias de tolerância), depois pausa
+      rec.set('RR1', 'CANCELADA');
+      await subs.syncRec('RR1');
+      const waBefore = waSent.length;
+      sub.paid_until = new Date(Date.now() + 2 * DAY).toISOString();
+      await subs.runSubscriptionJobs();
+      expect(waSent.slice(waBefore).some((m) => /vence em/.test(m.body?.text ?? '') && (m.body?.text ?? '').includes(`/assinatura/${sub.id}?s=`))).toBe(true);
+      await subs.runSubscriptionJobs(); // não repete o lembrete
+      expect(waSent.slice(waBefore).filter((m) => /vence em/.test(m.body?.text ?? ''))).toHaveLength(1);
+      sub.paid_until = new Date(Date.now() - 1 * DAY).toISOString();
+      await subs.runSubscriptionJobs();
+      expect(sub.status).toBe('past_due');
+      expect((await ownedProductIds(cust)).has(CLUB)).toBe(true); // tolerância
+      sub.paid_until = new Date(Date.now() - 4 * DAY).toISOString();
+      await subs.runSubscriptionJobs();
+      expect(sub.status).toBe('expired');
+      expect((await ownedProductIds(cust)).has(CLUB)).toBe(false); // pausado
+      const home = await memberHome(cust);
+      expect(home.extras[0]).toMatchObject({ id: CLUB, badge: 'Renovar assinatura' });
+      expect(home.extras[0].checkout_url).toContain(`/assinatura/${sub.id}?s=`);
+      // compra única do mesmo cliente continua liberada para sempre (só a assinatura pausa)
+      expect((await ownedProductIds(cust)).has(ck.product_id)).toBe(true);
+
+      // renovação pelo link: link adulterado não abre; o certo gera o Pix (que pede a autorização de novo)
+      expect((await fetch(`${base}/assinatura/${sub.id}?s=errado`, { redirect: 'manual' })).headers.get('location')).toBe('/');
+      const link = new URL(subs.renewUrl(sub.id));
+      const go = await fetch(`${base}${link.pathname}${link.search}`, { redirect: 'manual' });
+      expect(go.status).toBe(302);
+      const rtoken = go.headers.get('location')!.split('/pedido/')[1];
+      const ro = db.orders.find((x) => x.public_token === rtoken)!;
+      expect(ro).toMatchObject({ kind: 'renewal', status: 'pending', total_cents: 990, subscription_id: sub.id, rec_id: 'RR2' });
+      // abrir o link de novo reaproveita o mesmo Pix
+      expect((await fetch(`${base}${link.pathname}${link.search}`, { redirect: 'manual' })).headers.get('location')).toBe(`/pedido/${rtoken}`);
+      cob.get(ro.provider_charge_id)!.status = 'CONCLUIDA';
+      expect(await syncOrderWithProvider(ro.id)).toBe('paid');
+      expect(sub.status).toBe('active');
+      expect(new Date(sub.paid_until).getTime()).toBeGreaterThan(Date.now() + 27 * DAY); // venceu há muito: conta a partir de hoje
+      expect((await ownedProductIds(cust)).has(CLUB)).toBe(true);
+
+      // painel: só o Super Admin vê e cancela; cancelar para os débitos e mantém o mês pago
+      expect((await as('b', 'GET', '/api/admin/subscriptions')).status).toBe(403);
+      const list = (await as('owner', 'GET', '/api/admin/subscriptions')).body;
+      expect(list.find((x: any) => x.id === sub.id)).toMatchObject({ status: 'active', price_cents: 990, payments: 3, received_cents: 2489 + 990 + 990 });
+      expect((await as('owner', 'POST', `/api/admin/subscriptions/${sub.id}/cancel`)).status).toBe(200);
+      expect(calls.some((c) => c.method === 'PATCH' && c.path === '/v2/rec/RR2' && c.body.status === 'CANCELADA')).toBe(true);
+      expect(sub.status).toBe('canceled');
+      expect((await ownedProductIds(cust)).has(CLUB)).toBe(true); // até o fim do mês pago
+
+      // cartão não aceita assinatura; Pix Automático indisponível na conta: a venda sai com Pix normal (renova pelo link)
+      locrecDown = true;
+      const fb = await buy('fabio@x.com', { customer: { name: 'Fabio Lima', document: '52998224725' } });
+      expect(fb.status).toBe(201);
+      const fo = db.orders.find((x) => x.public_token === fb.body.token)!;
+      expect(fb.body.order.pix_code).toBe(`000201COB${fo.provider_charge_id}`);
+      expect(db.subscriptions.find((x) => x.origin_order_id === fo.id)).toMatchObject({ rec_id: null, status: 'pending' });
+
+      // Pix Automático desligado: o mesmo bump vira compra única (sem CPF, sem assinatura)
+      g.value = { ...g.value, pixAuto: { enabled: false } };
+      await refreshGateways(true);
+      clearCheckoutCache();
+      expect((await api('GET', '/api/public/checkouts/8931442')).body.bumps.find((b: any) => b.id === SUB_BUMP).recurring).toBeUndefined();
+      const once = await buy('olga@x.com', { customer: { name: 'Olga Souza' } });
+      expect(once.status).toBe(201);
+    } finally {
+      (efi as any).authed = realAuthed;
+      g.value = before;
+      await refreshGateways(true);
+      db.checkout_bumps = db.checkout_bumps.filter((x) => x.bump_id !== SUB_BUMP);
+      clearCheckoutCache();
+    }
+  });
 });

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import express, { Router, type Request } from 'express';
 import { readEfiNotification } from '../services/efiCard.js';
+import { syncCobr, syncRec } from '../services/subscriptions.js';
 import { efiConfig, wooviConfig } from '../services/gateways.js';
 import { logger, supabase } from '../lib/core.js';
 import { findOrderByCharge, syncOrderWithProvider } from '../services/orders.js';
@@ -80,6 +81,41 @@ async function efiHandler(req: Request, res: any) {
     }
   }
 }
+/**
+ * Pix Automático (Efí): avisos de autorização ({ recs: [...] }) e de mensalidade ({ cobsr: [...] }).
+ * Cadastrados com ?hmac=SEGREDO&ignorar= (a Efí acrescentaria /rec e /cobr). Nunca confia no corpo:
+ * reconsulta a recorrência/cobrança na própria Efí antes de mudar qualquer coisa.
+ */
+async function efiAutoHandler(req: Request, res: any) {
+  const efiSecret = efiConfig().webhookSecret;
+  if (efiSecret && !safeEqual(String(req.query.hmac ?? ''), efiSecret)) {
+    await log('efi-auto', null, null, 'error', 'hmac inválido');
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+  res.status(200).json({ ok: true }); // responde já; a reconsulta roda depois
+  const body: any = req.body ?? {};
+  for (const r of Array.isArray(body.recs) ? body.recs.slice(0, 50) : []) {
+    if (typeof r?.idRec !== 'string') continue;
+    try {
+      const st = await syncRec(r.idRec);
+      await log('efi-rec', r.idRec, { status: r.status }, 'processed', st ?? 'sem status');
+    } catch (e: any) {
+      await log('efi-rec', r.idRec, null, 'error', String(e?.message ?? e));
+    }
+  }
+  for (const c of Array.isArray(body.cobsr) ? body.cobsr.slice(0, 50) : []) {
+    if (typeof c?.txid !== 'string') continue;
+    try {
+      const st = await syncCobr(c.txid);
+      await log('efi-cobr', c.txid, { status: c.status, idRec: c.idRec }, 'processed', st ?? 'sem status');
+    } catch (e: any) {
+      await log('efi-cobr', c.txid, null, 'error', String(e?.message ?? e));
+    }
+  }
+}
+webhookRouter.post('/efi-auto', efiAutoHandler);
+webhookRouter.post('/efi-auto/rec', efiAutoHandler);
+webhookRouter.post('/efi-auto/cobr', efiAutoHandler);
 webhookRouter.post('/efi', efiHandler);
 webhookRouter.post('/efi/pix', efiHandler);
 

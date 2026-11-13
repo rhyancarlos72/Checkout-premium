@@ -7,7 +7,7 @@ import { createEfiCardCharge, getEfiCardCharge } from './efiCard.js';
 import crypto from 'node:crypto';
 import { z } from 'zod';
 import { env } from '../config/env.js';
-import { HttpError, logger, must, onlyDigits, productCode, supabase } from '../lib/core.js';
+import { HttpError, isValidCnpj, isValidCpf, logger, must, onlyDigits, productCode, supabase } from '../lib/core.js';
 import { getProvider, type ProviderName } from '../providers/index.js';
 import { cardConfig, globalProvider, pixExpiresMinutes } from './gateways.js';
 import { pixQrDataUrl } from '../lib/qr.js';
@@ -16,6 +16,7 @@ import { sendDeliveryEmail, type DeliveryItem } from './email.js';
 import { sendWhatsAppApproved } from './whatsapp.js';
 import { checkCoupon, computeTotals, type CouponRow, type PriceLine } from './pricing.js';
 import { sendPayTracking, type OrderForTracking, type PayTrackingEvent } from './paytracking.js';
+import { addMonths, createSubscriptionForOrder, issueAutoCharge, monthlyCentsOf, onOrderPaid, onRenewalPaid, recurringLines, subscriptionsAvailable } from './subscriptions.js';
 
 const trackingKeys = [
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck',
@@ -147,10 +148,12 @@ export async function quote(slug: string, bumpIds: string[], couponCode?: string
   const lines: PriceLine[] = [
     { kind: 'main', name: checkout.product.name, price_cents: checkout.price_cents, product_id: checkout.product.id },
   ];
+  // assinatura mensal só vale com o Pix Automático ligado e em vendas da Prime; senão o bump é compra única
+  const subsOn = checkout.bumps.some((x: any) => x.recurring) && subscriptionsAvailable(await isOwnerOrg(checkout.org_id ?? null));
   for (const id of new Set(bumpIds)) {
     const b = checkout.bumps.find((x: any) => x.id === id);
     if (!b) throw new HttpError(400, 'Oferta adicional inválida');
-    lines.push({ kind: 'bump', name: b.title, price_cents: b.price_cents, product_id: b.product_id, bump_id: b.id });
+    lines.push({ kind: 'bump', name: b.title, price_cents: b.price_cents, product_id: b.product_id, bump_id: b.id, ...(subsOn && b.recurring ? { recurring: true, monthly_cents: b.recurring_price_cents ?? b.price_cents } : {}) });
   }
   const subtotal = lines.reduce((s, l) => s + l.price_cents, 0);
   let coupon: CouponRow | null = null;
@@ -197,9 +200,15 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
     if (!input.card) throw new HttpError(400, 'Dados do cartão incompletos. Preencha o cartão novamente.');
     if (onlyDigits(input.customer.document).length !== 11) throw new HttpError(400, 'Informe o CPF do titular do cartão');
   }
+  // assinatura mensal (Pix Automático): só no Pix, sempre pela Efí, com CPF (exigência do Banco Central)
+  const subLines = recurringLines(q.lines);
+  if (subLines.length) {
+    if (card) throw new HttpError(400, 'A assinatura mensal é paga só no Pix. Escolha Pix ou desmarque a assinatura.');
+    if (!isValidCpf(doc) && !isValidCnpj(doc)) throw new HttpError(400, 'Informe seu CPF para a assinatura mensal (Pix Automático)');
+  }
   // gateway: cartão → o do cartão (Super Admin); Pix → o do produtor, senão o global (Integrações), senão o do checkout
   const ownerSale = await isOwnerOrg(checkout.org_id); // em memória: venda da Prime não consulta produtor nem split
-  const providerName = (card ? card.provider : ((ownerSale ? null : (await orgInfo(checkout.org_id))?.pix_provider) ?? globalProvider() ?? checkout.provider)) as ProviderName;
+  const providerName = (subLines.length ? 'efi' : card ? card.provider : ((ownerSale ? null : (await orgInfo(checkout.org_id))?.pix_provider) ?? globalProvider() ?? checkout.provider)) as ProviderName;
   // cartão Efí usa a API de Cobranças (sem certificado/chave Pix): não exige o Pix da Efí configurado
   const provider = card?.provider === 'efi' ? null : getProvider(providerName);
   const customer = await upsertCustomer(input.customer);
@@ -235,7 +244,7 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
   ) as { id: string; number: number; public_token: string; created_at: string };
 
   // itens gravados em paralelo com a geração do Pix (não precisa esperar um pelo outro)
-  const itemsSaved = supabase.from('order_items').insert(q.lines.map((l) => ({ ...l, order_id: order.id })));
+  const itemsSaved = supabase.from('order_items').insert(q.lines.map(({ monthly_cents: _m, recurring, ...l }) => ({ ...l, ...(recurring ? { recurring: true } : {}), order_id: order.id })));
 
   try {
     // ---------------- cartão Efí (API de Cobranças): resposta na hora (aprovado / recusado / verificação do banco)
@@ -295,16 +304,29 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
       };
     }
 
-    const charge = await provider!.createCharge({
-      orderId: order.id,
-      amountCents: q.totalCents,
-      description: `Pedido #${order.number} - ${checkout.product.name}`,
-      expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
-      customer: { name: input.customer.name, email: input.customer.email, phone: input.customer.phone, document: doc || null },
-      method,
-      cardInstallments: card?.maxInstallments,
-      split: ownerSale ? null : await splitFor(order.id), // venda de produtor: a parte dele vai direto para o recebedor dele
-    });
+    const charge = subLines.length
+      ? // 1 QR Code: paga o pedido agora e autoriza a mensalidade no app do banco (Jornada 3 do Pix Automático)
+        await issueAutoCharge({
+          orderId: order.id,
+          orderNumber: order.number,
+          totalCents: q.totalCents,
+          description: `Pedido #${order.number} - ${checkout.product.name}`,
+          customer: { name: input.customer.name, email: input.customer.email, phone: input.customer.phone, document: doc },
+          monthlyCents: monthlyCentsOf(q.lines),
+          items: subLines,
+          firstDue: addMonths(Date.now(), 1),
+        })
+      : await provider!.createCharge({
+          orderId: order.id,
+          amountCents: q.totalCents,
+          description: `Pedido #${order.number} - ${checkout.product.name}`,
+          expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
+          customer: { name: input.customer.name, email: input.customer.email, phone: input.customer.phone, document: doc || null },
+          method,
+          cardInstallments: card?.maxInstallments,
+          split: ownerSale ? null : await splitFor(order.id), // venda de produtor: a parte dele vai direto para o recebedor dele
+        });
+    if (subLines.length) await createSubscriptionForOrder({ orderId: order.id, orgId: checkout.org_id ?? null, customerId: customer.id, lines: q.lines, recId: (charge as any).recId ?? null });
     // QR Code gerado aqui mesmo a partir do copia e cola: sai na hora, sem baixar imagem do gateway
     const qrImage = charge.pixCode ? ((await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage) : null;
     const expiresAt = charge.expiresAt.toISOString();
@@ -545,13 +567,16 @@ async function syncOrderImpl(orderId: string): Promise<string> {
     const { data: transitioned, error } = await supabase.rpc('mark_order_paid', { p_order_id: orderId });
     if (error) throw new HttpError(500, error.message);
     if (transitioned) {
-      await supabase.from('events').insert({ checkout_id: order.checkout_id, order_id: orderId, type: 'purchase', data: { total_cents: order.total_cents } });
+      // mensalidade paga pelo link: só financeiro, nota e acesso (não é venda de anúncio: sem PayTracking/WhatsApp de venda)
+      const renewal = order.kind === 'renewal';
+      await supabase.from('events').insert({ checkout_id: order.checkout_id, order_id: orderId, type: renewal ? 'subscription_renewal' : 'purchase', data: { total_cents: order.total_cents } });
+      await onOrderPaid(orderId).catch((e) => logger.error({ err: e?.message, orderId }, 'Assinatura não ativada')); // libera 1 mês de acesso
       await Promise.allSettled([
         recordSale(orderId), // livro-razão: venda + comissão (uma vez por pedido)
-        fulfill(orderId),
-        dispatchTracking(orderId, 'sale.approved'),
+        renewal ? onRenewalPaid(orderId) : fulfill(orderId),
+        renewal ? null : dispatchTracking(orderId, 'sale.approved'),
         emitInvoice(orderId), // uma nota por venda (produto + order bumps)
-        deliveryItems(orderId).then((items) => sendWhatsAppApproved(orderId, items.map((it, i) => ({ ...it, kind: i === 0 ? 'main' : 'bump' })))),
+        renewal ? null : deliveryItems(orderId).then((items) => sendWhatsAppApproved(orderId, items.map((it, i) => ({ ...it, kind: i === 0 ? 'main' : 'bump' })))),
       ]);
       return 'paid';
     }
@@ -596,7 +621,7 @@ export async function notifyPixExpired(orderId: string, checkoutId: string | nul
 export async function renewOrder(token: string): Promise<{ token: string; renewed: boolean }> {
   const { data } = await supabase
     .from('orders')
-    .select('id, status, expires_at, public_token, checkout_id, customer_id, subtotal_cents, discount_cents, total_cents, coupon_id, tracking, ip, user_agent, customer:customers(name, email, phone, document), items:order_items(kind, name, price_cents, product_id, bump_id)')
+    .select('*, customer:customers(name, email, phone, document), items:order_items(*)') // '*': inclui assinatura (kind, subscription_id, recurring) quando existir
     .eq('public_token', token)
     .maybeSingle();
   const old: any = data;
@@ -615,7 +640,10 @@ export async function renewOrder(token: string): Promise<{ token: string; renewe
   if (!checkout) throw new HttpError(404, 'Checkout não encontrado');
   const ckOrg = await orgOfOrder(old.id);
   await assertCanSell(ckOrg);
-  const provider = getProvider(((await orgInfo(ckOrg))?.pix_provider ?? globalProvider() ?? checkout.provider) as ProviderName);
+  // pedido com assinatura (Pix Automático): o novo Pix também pede a autorização, sempre pela Efí
+  const subItems = ((old.items ?? []) as any[]).filter((i) => i.recurring);
+  const withSub = Boolean(old.subscription_id) && subItems.length > 0;
+  const provider = getProvider((withSub ? 'efi' : ((await orgInfo(ckOrg))?.pix_provider ?? globalProvider() ?? checkout.provider)) as ProviderName);
 
   const tracking = { ...(old.tracking ?? {}), renewed_from: old.id };
   const order = must(
@@ -633,22 +661,34 @@ export async function renewOrder(token: string): Promise<{ token: string; renewe
         ip: old.ip,
         user_agent: old.user_agent,
         recovery_sent_at: new Date().toISOString(), // a pessoa já voltou: sem novo e-mail de recuperação
+        ...(old.kind && old.kind !== 'sale' ? { kind: old.kind } : {}),
+        ...(withSub ? { subscription_id: old.subscription_id } : {}),
         ...(await feeFieldsFor(ckOrg, old.items ?? [], old.total_cents)),
       })
       .select('id, number, public_token')
       .single(),
   ) as { id: string; number: number; public_token: string };
-  const itemsSaved = supabase.from('order_items').insert(old.items.map((i: any) => ({ kind: i.kind, name: i.name, price_cents: i.price_cents, product_id: i.product_id, bump_id: i.bump_id, order_id: order.id })));
+  const itemsSaved = supabase.from('order_items').insert(old.items.map((i: any) => ({ kind: i.kind, name: i.name, price_cents: i.price_cents, product_id: i.product_id, bump_id: i.bump_id, ...(i.recurring ? { recurring: true } : {}), order_id: order.id })));
 
   try {
-    const charge = await provider.createCharge({
-      orderId: order.id,
-      amountCents: old.total_cents,
-      description: `Pedido #${order.number} - ${checkout.product?.name ?? checkout.name}`,
-      expiresInSeconds: pixExpiresMinutes() * 60, // validade real definida em Integrações (padrão 2 h)
-      customer: { name: old.customer?.name ?? '', email: old.customer?.email ?? '', phone: old.customer?.phone ?? null, document: old.customer?.document ?? null },
-      split: await splitFor(order.id),
-    });
+    const description = `Pedido #${order.number} - ${checkout.product?.name ?? checkout.name}`;
+    const customer = { name: old.customer?.name ?? '', email: old.customer?.email ?? '', phone: old.customer?.phone ?? null, document: old.customer?.document ?? null };
+    let charge: Awaited<ReturnType<typeof provider.createCharge>> & { recId?: string | null };
+    if (withSub) {
+      const { data: sub } = await supabase.from('subscriptions').select('price_cents, rec_status, origin_order_id').eq('id', old.subscription_id).maybeSingle();
+      const needsAuth = (sub as any)?.rec_status !== 'APROVADA';
+      charge = needsAuth
+        ? await issueAutoCharge({ orderId: order.id, orderNumber: order.number, totalCents: old.total_cents, description, customer, monthlyCents: (sub as any)?.price_cents ?? subItems.reduce((n, i) => n + i.price_cents, 0), items: subItems, firstDue: addMonths(Date.now(), 1) })
+        : await provider.createCharge({ orderId: order.id, amountCents: old.total_cents, description, expiresInSeconds: pixExpiresMinutes() * 60, customer });
+      // a assinatura passa a apontar para o pedido novo (o antigo foi substituído)
+      await supabase
+        .from('subscriptions')
+        .update({ ...((sub as any)?.origin_order_id === old.id ? { origin_order_id: order.id } : { renewal_order_id: order.id }), ...(charge.recId ? { rec_id: charge.recId, rec_status: 'CRIADA' } : {}), updated_at: new Date().toISOString() })
+        .eq('id', old.subscription_id);
+      if (charge.recId) await supabase.from('orders').update({ rec_id: charge.recId }).eq('id', order.id);
+    } else {
+      charge = await provider.createCharge({ orderId: order.id, amountCents: old.total_cents, description, expiresInSeconds: pixExpiresMinutes() * 60, customer, split: await splitFor(order.id) });
+    }
     void saveSplit(order.id, charge.splitInfo);
     const qrImage = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
     const expiresAt = charge.expiresAt.toISOString();

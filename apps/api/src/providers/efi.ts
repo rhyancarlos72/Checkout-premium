@@ -213,6 +213,74 @@ export class EfiProvider implements PixProvider {
     return this.authed<any>('GET', `/v2/webhook/${encodeURIComponent(efiConfig().pixKey)}`);
   }
 
+  // ------------------------------------------------------------------ Pix Automático (dev.efipay.com.br/docs/api-pix/pix-automatico)
+  /**
+   * Jornada 3: UM QR Code que paga o pedido agora (cobrança imediata) E autoriza a mensalidade no app do banco.
+   * Passos da Efí: location de recorrência → cobrança imediata → recorrência (com o location e o txid) →
+   * consulta da recorrência com o txid para obter o copia e cola único.
+   * Se qualquer passo da recorrência falhar (ex.: Pix Automático não liberado na conta), devolve o Pix
+   * normal da cobrança já criada: a venda nunca trava; a mensalidade passa a ser cobrada por Pix de renovação.
+   */
+  async createAutoCharge(input: CreateChargeInput & { rec: { cpf: string; name: string; monthlyCents: number; contract: string; object: string; firstDue: string } }): Promise<CreatedCharge & { recId: string | null; recError?: string }> {
+    const cpf = onlyDigits(input.rec.cpf);
+    if (!isValidCpf(cpf) && !isValidCnpj(cpf)) throw new HttpError(400, 'Informe um CPF válido para a assinatura');
+    const charge = await this.createCharge({ ...input, split: null, customer: { ...input.customer, document: cpf } });
+    const txid = charge.chargeId;
+    try {
+      const loc = await this.authed<{ id: number }>('POST', '/v2/locrec');
+      if (!loc?.id) throw new Error('location de recorrência não criado');
+      const devedor = cpf.length === 14 ? { cnpj: cpf, nome: input.rec.name.slice(0, 140) } : { cpf, nome: input.rec.name.slice(0, 140) };
+      const rec = await this.authed<{ idRec: string }>('POST', '/v2/rec', {
+        vinculo: { contrato: input.rec.contract.slice(0, 35), devedor, objeto: input.rec.object.slice(0, 35) },
+        calendario: { dataInicial: input.rec.firstDue, periodicidade: 'MENSAL' },
+        valor: { valorRec: centsToBRL(input.rec.monthlyCents) },
+        // até 3 novas tentativas em 7 dias se o débito do mês não passar (cobre os 3 dias de tolerância)
+        politicaRetentativa: 'PERMITE_3R_7D',
+        loc: loc.id,
+        ativacao: { dadosJornada: { txid } },
+      });
+      if (!rec?.idRec) throw new Error('recorrência não criada');
+      const full = await this.authed<any>('GET', `/v2/rec/${encodeURIComponent(rec.idRec)}?txid=${encodeURIComponent(txid)}`);
+      const code = full?.dadosQR?.pixCopiaECola as string | undefined;
+      if (!code) throw new Error('a Efí não devolveu o copia e cola do Pix Automático');
+      return { ...charge, pixCode: code, qrImage: null, recId: rec.idRec };
+    } catch (e: any) {
+      logger.warn({ err: e?.message, txid }, 'Pix Automático indisponível: segue com o Pix normal (renovação por lembrete)');
+      return { ...charge, recId: null, recError: String(e?.message ?? e).slice(0, 300) };
+    }
+  }
+
+  /** Recorrência (autorização do cliente): CRIADA, APROVADA, REJEITADA, EXPIRADA ou CANCELADA. */
+  async getRec(idRec: string) {
+    return this.authed<{ idRec: string; status: string; valor?: { valorRec?: string } }>('GET', `/v2/rec/${encodeURIComponent(idRec)}`);
+  }
+  async cancelRec(idRec: string) {
+    return this.authed<any>('PATCH', `/v2/rec/${encodeURIComponent(idRec)}`, { status: 'CANCELADA' });
+  }
+
+  /** Cobrança do mês na recorrência aprovada: deve ser enviada de 2 a 10 dias antes do vencimento (regra do Pix Automático). */
+  async createCobr(input: { txid: string; idRec: string; dueDate: string; amountCents: number; info: string; account?: string | null }) {
+    return this.authed<{ txid: string; status: string }>('PUT', `/v2/cobr/${encodeURIComponent(input.txid)}`, {
+      idRec: input.idRec,
+      infoAdicional: input.info.slice(0, 140),
+      calendario: { dataDeVencimento: input.dueDate },
+      valor: { original: centsToBRL(input.amountCents) },
+      ajusteDiaUtil: true,
+      ...(input.account ? { recebedor: { agencia: '0001', conta: onlyDigits(input.account), tipoConta: 'PAGAMENTO' } } : {}),
+    });
+  }
+  /** Cobrança do mês: CRIADA, ATIVA, CONCLUIDA (paga), EXPIRADA, REJEITADA ou CANCELADA. */
+  async getCobr(txid: string) {
+    return this.authed<{ txid: string; idRec: string; status: string; valor?: { original?: string } }>('GET', `/v2/cobr/${encodeURIComponent(txid)}`);
+  }
+
+  /** Avisos do Pix Automático (autorizações e mensalidades) — mesma proteção do webhook Pix (segredo na URL + reconsulta). */
+  async registerAutoWebhooks(recUrl: string, cobrUrl: string) {
+    const h = { 'x-skip-mtls-checking': 'true' };
+    await this.authed<any>('PUT', '/v2/webhookrec', { webhookUrl: recUrl }, h);
+    await this.authed<any>('PUT', '/v2/webhookcobr', { webhookUrl: cobrUrl }, h);
+  }
+
   /** Testa Client ID/Secret + certificado obtendo um token OAuth. */
   async testConnection() {
     this.token = null;

@@ -3,6 +3,7 @@ import { logger, sleep, supabase } from '../lib/core.js';
 import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
 import { fulfill, notifyPixExpired, retryFailedTracking, syncOrderWithProvider } from './orders.js';
+import { runSubscriptionJobs } from './subscriptions.js';
 import { getSettings } from './settings.js';
 import { orgOfOrder, runAsOrg } from '../lib/tenant.js';
 import { refreshPendingInvoices } from './invoices.js';
@@ -143,6 +144,7 @@ export async function runJobs() {
     await sendWhatsAppRecoveries();
     await retryDeliveries();
     await retryFailedTracking().catch((e) => logger.warn({ err: (e as Error)?.message }, 'Reenvio de eventos falhou'));
+    await runSubscriptionJobs().catch((e) => logger.warn({ err: (e as Error)?.message }, 'Rotina das assinaturas falhou'));
     await refreshPendingInvoices();
   } catch (e) {
     logger.error({ err: e }, 'Jobs falharam');

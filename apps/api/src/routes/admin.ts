@@ -6,6 +6,7 @@ import { env, isProd } from '../config/env.js';
 import { HttpError, must, productCode } from '../lib/core.js';
 // todas as consultas do painel passam pelo filtro da organização (cada produtor só vê os próprios dados)
 import { ownerOrgId, tenantCtx, tenantDb as supabase } from '../lib/tenant.js';
+import { cancelSubscription, renewUrl } from '../services/subscriptions.js';
 import { audit } from '../services/audit.js';
 import { platformRouter } from './platform.js';
 import { supabase as rawDb } from '../lib/core.js';
@@ -29,7 +30,7 @@ adminRouter.use(requireAdmin);
 // a partir daqui, toda consulta usa a organização de quem está logado
 adminRouter.use((req, _res, next) => tenantCtx.run({ orgId: req.orgId ?? null }, () => next()));
 // gateways, credenciais, WhatsApp da plataforma, equipe da Prime, jobs e gestão da plataforma: só o Super Admin
-export const SUPER_ADMIN_PATH = /^\/(gateways|whatsapp|team|jobs|platform)(\/|$)|^\/integrations\/?$|^\/integrations\/(email|efi)(\/|$)/i;
+export const SUPER_ADMIN_PATH = /^\/(gateways|whatsapp|team|jobs|platform|subscriptions)(\/|$)|^\/integrations\/?$|^\/integrations\/(email|efi)(\/|$)/i;
 // webhooks/PayTracking e nota fiscal da própria organização: só o dono da organização (não a equipe)
 export const OWNER_ONLY_PATH = /^\/webhooks(\/|$)|^\/integrations\/(invoices|paytracking)(\/|$)/i;
 adminRouter.use((req, res, next) => (SUPER_ADMIN_PATH.test(req.path) ? requireSuperAdmin(req, res, next) : OWNER_ONLY_PATH.test(req.path) ? requireOwner(req, res, next) : next()));
@@ -421,6 +422,24 @@ const bumpSchema = z.object({
   compare_at_cents: z.number().int().min(0).nullable().optional(),
   image_url: urlOrEmpty,
   active: z.boolean().default(true),
+  // assinatura mensal por Pix Automático (só a Prime): valor de cada mês (vazio = o mesmo preço)
+  recurring: z.boolean().optional(),
+  recurring_price_cents: z.number().int().min(100, 'Mensalidade mínima de R$ 1,00').nullable().optional(),
+});
+// Assinatura: só o Super Admin (vendas da Prime); banco sem o SQL das assinaturas → os campos novos são ignorados
+let subsColumns: boolean | null = null;
+adminRouter.use(/^\/bumps(\/[0-9a-f-]{36})?$/, async (req, _res, next) => {
+  if (req.method !== 'POST' && req.method !== 'PUT') return next();
+  const b = req.body ?? {};
+  if (!('recurring' in b) && !('recurring_price_cents' in b)) return next();
+  if (b.recurring && !req.isSuperAdmin) return next(new HttpError(403, 'Assinatura mensal só pode ser ligada pelo administrador da plataforma'));
+  subsColumns ??= !(await supabase.from('order_bumps').select('recurring').limit(1)).error;
+  if (!subsColumns) {
+    if (b.recurring) return next(new HttpError(400, 'Rode no Supabase o SQL das assinaturas (20261114000000_subscriptions.sql) para ligar a assinatura mensal'));
+    delete b.recurring;
+    delete b.recurring_price_cents;
+  }
+  next();
 });
 crud('bumps', 'order_bumps', bumpSchema, '*, product:products(name, number)');
 
@@ -939,6 +958,11 @@ adminRouter.get('/gateways', async (_req, res) => {
       hasWebhookSecret: Boolean(e.webhookSecret),
       webhookUrl: `${env.PUBLIC_URL}/api/webhooks/efi`,
     },
+    // assinatura mensal nos order bumps marcados (Efí, conta Empresas com Pix Automático liberado)
+    pixAuto: (() => {
+      const a = g.pixAutoConfig();
+      return { enabled: a.configured, ready: a.enabled, efiReady: a.efiReady, account: a.account, webhooksAt: a.webhooksAt };
+    })(),
   });
 });
 
@@ -952,6 +976,70 @@ adminRouter.put('/gateways/pix-expiration', async (req, res) => {
 });
 
 /** Cartão de crédito: liga/desliga, gateway e parcelas (só o Super Admin). */
+adminRouter.put('/gateways/pix-auto', async (req, res) => {
+  const b = z.object({ enabled: z.boolean(), account: z.string().trim().max(20).regex(/^[\d-]*$/, 'Número da conta: só números').optional().default('') }).parse(req.body);
+  if (b.enabled && !efiConfig().configured) throw new HttpError(400, 'Configure a Efí Pix (credenciais, chave Pix e certificado) antes de ligar o Pix Automático');
+  await patchGateways((g) => ({ ...g, pixAuto: { ...g.pixAuto, enabled: b.enabled, account: b.account || undefined } }));
+  clearCheckoutCache();
+  res.json({ ok: true, message: b.enabled ? 'Pix Automático ligado: os order bumps marcados como assinatura passam a cobrar todo mês.' : 'Pix Automático desligado: os order bumps de assinatura voltam a ser compra única.' });
+});
+adminRouter.post('/integrations/efi/register-auto-webhooks', async (_req, res) => {
+  if (!efi.isConfigured()) throw new HttpError(400, 'Configure a Efí primeiro (Client ID, Client Secret, Chave Pix e certificado)');
+  let secret = efiConfig().webhookSecret;
+  if (!secret) {
+    secret = randomSecret();
+    await patchGateways((g) => ({ ...g, efi: { ...g.efi, webhookSecret: secret } }));
+  }
+  const url = `${env.PUBLIC_URL}/api/webhooks/efi-auto?hmac=${encodeURIComponent(secret)}&ignorar=`;
+  await efi.registerAutoWebhooks(url, url);
+  await patchGateways((g) => ({ ...g, pixAuto: { ...g.pixAuto, webhooksAt: new Date().toISOString() } }));
+  res.json({ ok: true, message: 'Avisos do Pix Automático registrados na Efí (autorizações e mensalidades)' });
+});
+
+// ---------------------------------------------------------------- assinaturas (Pix Automático)
+adminRouter.get('/subscriptions', async (req, res) => {
+  const status = z.enum(['all', 'pending', 'active', 'past_due', 'expired', 'canceled']).default('all').parse(req.query.status ?? 'all');
+  let q = supabase.from('subscriptions').select('*, customer:customers(name, email, phone), origin:orders!subscriptions_origin_order_id_fkey(number, public_token)').order('created_at', { ascending: false }).limit(300);
+  if (status !== 'all') q = q.eq('status', status);
+  const { data, error } = await q;
+  if (error) {
+    if (/subscriptions/.test(error.message)) throw new HttpError(503, 'Rode no Supabase o SQL das assinaturas (20261114000000_subscriptions.sql)');
+    throw new HttpError(500, error.message);
+  }
+  const rows = (data ?? []) as any[];
+  const { data: paid } = rows.length ? await supabase.from('orders').select('subscription_id, total_cents').in('subscription_id', rows.map((r) => r.id)).eq('status', 'paid') : { data: [] as any[] };
+  const totals = new Map<string, { n: number; cents: number }>();
+  for (const o of (paid ?? []) as any[]) {
+    const t = totals.get(o.subscription_id) ?? { n: 0, cents: 0 };
+    totals.set(o.subscription_id, { n: t.n + 1, cents: t.cents + o.total_cents });
+  }
+  res.json(
+    rows.map((r) => ({
+      id: r.id,
+      status: r.status,
+      price_cents: r.price_cents,
+      items: r.items,
+      customer: r.customer,
+      origin: r.origin,
+      rec_status: r.rec_status,
+      auto: r.rec_status === 'APROVADA',
+      paid_until: r.paid_until,
+      next_due: r.next_due,
+      cobr_status: r.cobr_status,
+      canceled_at: r.canceled_at,
+      created_at: r.created_at,
+      payments: totals.get(r.id)?.n ?? 0,
+      received_cents: totals.get(r.id)?.cents ?? 0,
+      renew_url: renewUrl(r.id),
+    })),
+  );
+});
+adminRouter.post('/subscriptions/:id/cancel', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  await cancelSubscription(id);
+  res.json({ ok: true, message: 'Assinatura cancelada: os débitos param e o acesso segue até o fim do mês já pago' });
+});
+
 adminRouter.put('/gateways/card', async (req, res) => {
   const b = z.object({ enabled: z.boolean(), provider: z.enum(['woovi', 'efi']).default('woovi'), maxInstallments: z.number().int().min(1).max(12).default(1) }).parse(req.body);
   if (b.enabled && b.provider === 'woovi' && !wooviConfig().appId) throw new HttpError(400, 'Configure a Woovi (AppID) antes de ligar o cartão');

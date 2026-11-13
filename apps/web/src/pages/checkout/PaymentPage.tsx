@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, CheckCircle2, Clock, Gift, Zap, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, ShieldCheck, Smartphone } from 'lucide-react';
+import { Check, CheckCircle2, Clock, Gift, Zap, Copy, CopyCheck, ExternalLink, Lock, Mail, QrCode, RefreshCw, Repeat, ShieldCheck, Smartphone } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { cn } from '@/components/ui';
@@ -29,6 +29,7 @@ interface PublicOrder {
   content_ids?: string[];
   upsell?: UpsellOffer | null;
   is_upsell?: boolean;
+  subscription?: { names: string[]; monthly_cents: number; auto: boolean; authorized: boolean; paid_until: string | null } | null;
   external_id?: string | null;
   checkout: { slug: string; name: string; theme: Theme; metaPixelId: string | null } | null;
   purchase_event_id: string | null;
@@ -335,6 +336,13 @@ export default function PaymentPage() {
             <p className="mx-auto mt-2 max-w-md text-ck-muted">
               Obrigado{firstName ? `, ${firstName}` : ''}! Enviamos os dados de acesso para <b className="text-ck-text [overflow-wrap:anywhere]">{order.customer?.email}</b>.
             </p>
+            {order.subscription?.paid_until && (
+              <p className="mx-auto mt-3 flex max-w-md items-center justify-center gap-1.5 text-[13px] font-medium text-ck-muted">
+                <Repeat className="h-4 w-4 text-brand" />
+                Assinatura ativa até {new Date(order.subscription.paid_until).toLocaleDateString('pt-BR')}
+                {order.subscription.authorized ? ' · renova sozinha no Pix Automático' : ''}
+              </p>
+            )}
           </div>
           <div className="space-y-3 px-5 pb-6 text-left sm:px-8">
             {order.delivery.map((d, i) => (
@@ -445,6 +453,15 @@ export default function PaymentPage() {
           {storeName && (
             <p className="mt-1 text-xs text-ck-muted">
               Pagamento para <b className="text-ck-text">{storeName}</b>{order.store?.document ? ` · ${order.store.document}` : ''}
+            </p>
+          )}
+          {order.subscription && (
+            <p className="mx-auto mt-3 flex max-w-md items-start gap-2 rounded-[calc(var(--ck-r)*.6)] bg-brand/[.07] px-3 py-2.5 text-left text-[13px] leading-snug text-ck-text">
+              <Repeat className="mt-0.5 h-4 w-4 shrink-0 text-brand" />
+              <span>
+                Inclui a assinatura de <b>{order.subscription.names.join(' + ')}</b>: {brl(order.subscription.monthly_cents)}/mês.{' '}
+                {order.subscription.auto ? 'Ao pagar, o app do banco também pede para autorizar o Pix Automático. Confirme para renovar sozinho todo mês; cancele quando quiser no próprio app.' : 'Todo mês você recebe o link para renovar pelo Pix.'}
+              </span>
             </p>
           )}
           {left !== null && (

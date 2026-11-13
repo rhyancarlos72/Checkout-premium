@@ -44,7 +44,7 @@ export interface PublicCheckout {
   fields: { phone: boolean; document: boolean };
   tracking: { metaPixelId: string | null };
   product: { name: string; number?: number | null; description: string | null; image_url: string | null };
-  bumps: { id: string; title: string; description: string | null; price_cents: number; compare_at_cents: number | null; image_url: string | null }[];
+  bumps: { id: string; title: string; description: string | null; price_cents: number; compare_at_cents: number | null; image_url: string | null; recurring?: boolean; monthly_cents?: number }[];
   store: { name: string; supportEmail: string; document: string };
   /** formas além do Pix (cartão só quando liberado pela plataforma) */
   payment?: { card: { maxInstallments: number; provider?: 'woovi' | 'efi'; efi?: { payeeCode: string; sandbox: boolean } | null } | null };

@@ -21,6 +21,10 @@ export interface PriceLine {
   price_cents: number;
   product_id?: string | null;
   bump_id?: string | null;
+  /** order bump de assinatura mensal (Pix Automático) */
+  recurring?: boolean;
+  /** valor de cada mês da assinatura (o 1º mês é o price_cents, pago junto com o pedido) */
+  monthly_cents?: number;
 }
 
 export type CouponCheck = { ok: true; discountCents: number } | { ok: false; reason: string };

@@ -33,6 +33,8 @@ export interface GatewaySettings {
     /** Identificador de conta Efí (payee_code): público, usado no navegador para gerar o payment_token do cartão */
     payeeCode?: string;
   };
+  /** Pix Automático (assinaturas mensais nos order bumps marcados): sempre pela Efí, só para a Prime */
+  pixAuto?: { enabled?: boolean; account?: string; webhooksAt?: string };
 }
 
 const KEY = 'gateways';
@@ -90,6 +92,13 @@ export const pixExpiresMinutes = (): number => {
   const v = Number(snap.pixExpiresMinutes);
   return Number.isInteger(v) && v >= 15 && v <= 1440 ? v : 120;
 };
+
+/** Pix Automático: ligado no painel + Efí Pix configurada (certificado, chave, credenciais). */
+export function pixAutoConfig() {
+  const a = snap.pixAuto ?? {};
+  const e = efiConfig();
+  return { enabled: Boolean(a.enabled) && e.configured, configured: Boolean(a.enabled), efiReady: e.configured, account: a.account || null, webhooksAt: a.webhooksAt || null };
+}
 
 export const randomSecret = () => crypto.randomBytes(24).toString('hex');
 export const mask = (v?: string) => (v ? `••••${v.slice(-4)}` : '');

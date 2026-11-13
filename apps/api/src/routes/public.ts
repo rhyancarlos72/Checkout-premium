@@ -4,10 +4,11 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
 import { geoTrackingFromIp } from '../services/geoip.js';
 import { thumbHandler } from '../services/thumbs.js';
+import { subscriptionsAvailable } from '../services/subscriptions.js';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { cardOptionFor, createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
-import { ownerOrgId, runAsOrg } from '../lib/tenant.js';
+import { isOwnerOrg, ownerOrgId, runAsOrg } from '../lib/tenant.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
 
 export const publicRouter = Router();
@@ -52,6 +53,7 @@ export async function publicCheckoutData(slug: string) {
   // checkout e organização proprietária em paralelo (menos idas e voltas ao banco na primeira visita)
   const [c] = await Promise.all([loadCheckout(slug), ownerOrgId().catch(() => null)]);
   const s = await runAsOrg(c.org_id ?? null, () => getSettings()); // nome/CNPJ da loja do produtor dono do checkout
+  const subsOn = c.bumps.some((b: any) => b.recurring) && subscriptionsAvailable(await isOwnerOrg(c.org_id ?? null));
   return {
     id: c.id,
     slug: c.slug,
@@ -68,6 +70,8 @@ export async function publicCheckoutData(slug: string) {
       price_cents: b.price_cents,
       compare_at_cents: b.compare_at_cents,
       image_url: b.image_url,
+      // assinatura mensal (Pix Automático): só aparece como assinatura quando está ligada em Integrações
+      ...(subsOn && b.recurring ? { recurring: true, monthly_cents: b.recurring_price_cents ?? b.price_cents } : {}),
     })),
     store: { name: s.store.name, supportEmail: s.store.supportEmail, document: s.store.document },
     // formas de pagamento além do Pix (cartão só quando liberado pelo Super Admin para este produtor)
@@ -107,6 +111,13 @@ publicRouter.post('/orders', orderIpLimiter, orderLimiter, async (req, res) => {
 
 const tokenSchema = z.string().regex(/^[a-f0-9]{48}$/);
 
+async function subscriptionSummary(subId: string, recId: string | null) {
+  const { data } = await supabase.from('subscriptions').select('price_cents, items, status, paid_until, rec_status').eq('id', subId).maybeSingle();
+  const sub: any = data;
+  if (!sub) return null;
+  return { names: ((sub.items ?? []) as any[]).map((i) => i.name), monthly_cents: sub.price_cents, auto: Boolean(recId), authorized: sub.rec_status === 'APROVADA', paid_until: sub.paid_until ?? null };
+}
+
 /** Dados públicos do pedido (também embutidos no HTML da página do Pix). */
 export async function publicOrder(token: string) {
   const o: any = must(
@@ -141,6 +152,8 @@ export async function publicOrder(token: string) {
     store: await runAsOrg(o.org_id ?? null, () => getSettings()).then((st) => ({ name: st.store.pixReceiver || (st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null), document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),
     upsell: o.status === 'paid' ? await upsellOfferFor(o).catch(() => null) : null,
     is_upsell: Boolean(o.tracking?.upsell_of),
+    // assinatura mensal: a página explica a autorização do Pix Automático no app do banco
+    subscription: o.subscription_id ? await subscriptionSummary(o.subscription_id, o.rec_id) : null,
     _id: o.id,
   };
 }

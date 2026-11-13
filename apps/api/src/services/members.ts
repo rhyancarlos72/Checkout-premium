@@ -3,6 +3,7 @@ import { env } from '../config/env.js';
 import { z } from 'zod';
 import { HttpError, productCode, supabase } from '../lib/core.js';
 import { orgKey, runAsOrg } from '../lib/tenant.js';
+import { subscriptionAccess } from './subscriptions.js';
 
 // ------------------------------------------------------------------ sessão do aluno
 // Token assinado (HMAC) com o id do cliente e a validade: não precisa de tabela de sessões.
@@ -33,11 +34,18 @@ export const hashCode = (email: string, code: string) => crypto.createHmac('sha2
 export const newCode = () => String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
 
 // ------------------------------------------------------------------ acesso
-/** Produtos que o cliente comprou (pedidos pagos; order bumps contam). */
+/**
+ * Produtos que o cliente comprou (pedidos pagos; order bumps contam).
+ * Assinatura mensal: vale só enquanto estiver em dia (ou nos 3 dias de tolerância).
+ */
 export async function ownedProductIds(customerId: string) {
-  const { data } = await supabase.from('orders').select('id, items:order_items(product_id)').eq('customer_id', customerId).eq('status', 'paid');
+  const [{ data }, subs] = await Promise.all([
+    supabase.from('orders').select('id, items:order_items(*)').eq('customer_id', customerId).eq('status', 'paid'), // '*': inclui "recurring" quando existir
+    subscriptionAccess(customerId),
+  ]);
   const ids = new Set<string>();
-  for (const o of (data ?? []) as any[]) for (const i of o.items ?? []) if (i.product_id) ids.add(i.product_id);
+  for (const o of (data ?? []) as any[]) for (const i of o.items ?? []) if (i.product_id && !i.recurring) ids.add(i.product_id);
+  for (const pid of subs.active) ids.add(pid);
   return ids;
 }
 
@@ -119,7 +127,16 @@ export async function memberHome(customerId: string) {
     if (cfg.offers.length) extras.push(...(await manualExtras(owned, cfg)));
     else extras.push(...autoExtras.filter((x) => x.org_id === org).map(({ org_id: _o, ...x }) => x));
   }
-  return { customer, courses, extras, offers };
+  // assinatura vencida (depois da tolerância): o curso aparece bloqueado com o botão de renovar pelo Pix
+  const { paused } = await subscriptionAccess(customerId);
+  const renew = [...paused].flatMap(([pid, url]) => {
+    const p = ((products ?? []) as any[]).find((x) => x.id === pid);
+    if (!p) return [];
+    const mods = ((modules ?? []) as ModuleRow[]).filter((m) => m.product_id === p.id).sort(sort);
+    return [{ id: p.id, name: p.name, description: p.description, cover_url: mods[0]?.cover_url ?? p.image_url, modules: mods.length, checkout_url: url, code: productCode(p.number), badge: 'Renovar assinatura' as string | null, price_cents: null as number | null }];
+  });
+  const renewIds = new Set(renew.map((r) => r.id));
+  return { customer, courses, extras: [...renew, ...extras.filter((x) => !renewIds.has(x.id))], offers };
 }
 
 // ------------------------------------------------------------------ vitrine de produtos adicionais
