@@ -4,7 +4,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { z } from 'zod';
 import { geoTrackingFromIp } from '../services/geoip.js';
 import { thumbHandler } from '../services/thumbs.js';
-import { subscriptionsAvailable } from '../services/subscriptions.js';
+import { bumpIsRecurring, bumpMonthlyCents, subscriptionsAvailable } from '../services/subscriptions.js';
 import { clientIp, geoFromHeaders, HttpError, must, productCode, supabase } from '../lib/core.js';
 import { cardOptionFor, createOrder, createOrderSchema, createUpsellOrder, renewOrder, upsellOfferFor, deliveryItems, loadCheckout, quote, syncOrderWithProvider } from '../services/orders.js';
 import { getSettings } from '../services/settings.js';
@@ -53,7 +53,7 @@ export async function publicCheckoutData(slug: string) {
   // checkout e organização proprietária em paralelo (menos idas e voltas ao banco na primeira visita)
   const [c] = await Promise.all([loadCheckout(slug), ownerOrgId().catch(() => null)]);
   const s = await runAsOrg(c.org_id ?? null, () => getSettings()); // nome/CNPJ da loja do produtor dono do checkout
-  const subsOn = c.bumps.some((b: any) => b.recurring) && subscriptionsAvailable(await isOwnerOrg(c.org_id ?? null));
+  const subsOn = c.bumps.some(bumpIsRecurring) && subscriptionsAvailable(await isOwnerOrg(c.org_id ?? null));
   return {
     id: c.id,
     slug: c.slug,
@@ -71,7 +71,7 @@ export async function publicCheckoutData(slug: string) {
       compare_at_cents: b.compare_at_cents,
       image_url: b.image_url,
       // assinatura mensal (Pix Automático): só aparece como assinatura quando está ligada em Integrações
-      ...(subsOn && b.recurring ? { recurring: true, monthly_cents: b.recurring_price_cents ?? b.price_cents } : {}),
+      ...(subsOn && bumpIsRecurring(b) ? { recurring: true, monthly_cents: bumpMonthlyCents(b) } : {}),
     })),
     store: { name: s.store.name, supportEmail: s.store.supportEmail, document: s.store.document },
     // formas de pagamento além do Pix (cartão só quando liberado pelo Super Admin para este produtor)

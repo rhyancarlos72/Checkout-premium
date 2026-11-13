@@ -1102,8 +1102,16 @@ describe('marketplace multiusuário', () => {
     const CLUB = '0c000000-0000-4000-8000-0000000000c1';
     const SUB_BUMP = '0c000000-0000-4000-8000-0000000000b9';
     db.products.push({ id: CLUB, number: 4242, name: 'Clube de Artes', price_cents: 990, active: true, members_enabled: true, delivery_type: 'members', org_id: OWNER_ORG, created_at: new Date().toISOString() });
-    db.order_bumps.push({ id: SUB_BUMP, product_id: CLUB, title: 'Clube de Artes (mensal)', description: 'Artes novas toda semana.', price_cents: 490, recurring: true, recurring_price_cents: 990, active: true, org_id: OWNER_ORG, created_at: new Date().toISOString() });
+    // bump comum (sem marcação): a assinatura é escolhida no PRODUTO, na aba Produtos
+    db.order_bumps.push({ id: SUB_BUMP, product_id: CLUB, title: 'Clube de Artes (mensal)', description: 'Artes novas toda semana.', price_cents: 490, active: true, org_id: OWNER_ORG, created_at: new Date().toISOString() });
     db.checkout_bumps.push({ checkout_id: ck.id, bump_id: SUB_BUMP, sort: 9, org_id: OWNER_ORG });
+    clearCheckoutCache();
+    expect((await api('GET', '/api/public/checkouts/8931442')).body.bumps.find((b: any) => b.id === SUB_BUMP).recurring).toBeUndefined(); // produto ainda não é assinatura
+    // só o Super Admin marca o produto como assinatura
+    expect((await as('b', 'PUT', `/api/admin/products/${CLUB}`, { recurring: true })).status).toBe(403);
+    const marked = await as('owner', 'PUT', `/api/admin/products/${CLUB}`, { recurring: true, recurring_price_cents: 990 });
+    expect(marked.status).toBe(200);
+    expect(db.products.find((x) => x.id === CLUB)).toMatchObject({ recurring: true, recurring_price_cents: 990 });
     clearCheckoutCache();
     const buy = (email: string, extra: any = {}) =>
       fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.44.10.9' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Sara Assinante', email, phone: '11987651234', ...extra.customer }, bump_ids: [SUB_BUMP], tracking: { utm_source: 'FB' }, ...extra.body }) }).then(async (r) => ({ status: r.status, body: await r.json() }));

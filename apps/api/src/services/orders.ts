@@ -16,7 +16,7 @@ import { sendDeliveryEmail, type DeliveryItem } from './email.js';
 import { sendWhatsAppApproved } from './whatsapp.js';
 import { checkCoupon, computeTotals, type CouponRow, type PriceLine } from './pricing.js';
 import { sendPayTracking, type OrderForTracking, type PayTrackingEvent } from './paytracking.js';
-import { addMonths, createSubscriptionForOrder, issueAutoCharge, monthlyCentsOf, onOrderPaid, onRenewalPaid, recurringLines, subscriptionsAvailable } from './subscriptions.js';
+import { addMonths, bumpIsRecurring, bumpMonthlyCents, createSubscriptionForOrder, issueAutoCharge, monthlyCentsOf, onOrderPaid, onRenewalPaid, recurringLines, subscriptionsAvailable } from './subscriptions.js';
 
 const trackingKeys = [
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck',
@@ -123,7 +123,7 @@ async function loadCheckoutFresh(slug: string) {
   const checkout = must(
     await supabase
       .from('checkouts')
-      .select('*, product:products(*), checkout_bumps(sort, bump:order_bumps(*, product:products(name, description, image_url, active)))')
+      .select('*, product:products(*), checkout_bumps(sort, bump:order_bumps(*, product:products(*)))') // produto do bump completo: inclui "assinatura" quando existir
       .eq('slug', slug)
       .eq('active', true)
       .maybeSingle(),
@@ -149,11 +149,11 @@ export async function quote(slug: string, bumpIds: string[], couponCode?: string
     { kind: 'main', name: checkout.product.name, price_cents: checkout.price_cents, product_id: checkout.product.id },
   ];
   // assinatura mensal só vale com o Pix Automático ligado e em vendas da Prime; senão o bump é compra única
-  const subsOn = checkout.bumps.some((x: any) => x.recurring) && subscriptionsAvailable(await isOwnerOrg(checkout.org_id ?? null));
+  const subsOn = checkout.bumps.some(bumpIsRecurring) && subscriptionsAvailable(await isOwnerOrg(checkout.org_id ?? null));
   for (const id of new Set(bumpIds)) {
     const b = checkout.bumps.find((x: any) => x.id === id);
     if (!b) throw new HttpError(400, 'Oferta adicional inválida');
-    lines.push({ kind: 'bump', name: b.title, price_cents: b.price_cents, product_id: b.product_id, bump_id: b.id, ...(subsOn && b.recurring ? { recurring: true, monthly_cents: b.recurring_price_cents ?? b.price_cents } : {}) });
+    lines.push({ kind: 'bump', name: b.title, price_cents: b.price_cents, product_id: b.product_id, bump_id: b.id, ...(subsOn && bumpIsRecurring(b) ? { recurring: true, monthly_cents: bumpMonthlyCents(b) } : {}) });
   }
   const subtotal = lines.reduce((s, l) => s + l.price_cents, 0);
   let coupon: CouponRow | null = null;

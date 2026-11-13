@@ -23,7 +23,7 @@ export interface Bump {
   active: boolean;
   recurring?: boolean;
   recurring_price_cents?: number | null;
-  product?: { name: string; number?: number | null };
+  product?: { name: string; number?: number | null; recurring?: boolean; recurring_price_cents?: number | null };
 }
 
 const schema = z.object({
@@ -64,9 +64,9 @@ export default function BumpsPage() {
                 <div className="text-right">
                   {b.compare_at_cents ? <p className="pv text-xs text-gray-400 line-through">{brl(b.compare_at_cents)}</p> : null}
                   <p className="pv font-semibold tabular-nums">{brl(b.price_cents)}</p>
-                  {b.recurring && <p className="text-[11px] font-semibold text-indigo-700">+ {brl(b.recurring_price_cents ?? b.price_cents)}/mês</p>}
+                  {(b.recurring || b.product?.recurring) && <p className="text-[11px] font-semibold text-indigo-700">+ {brl(b.product?.recurring_price_cents ?? b.recurring_price_cents ?? b.price_cents)}/mês</p>}
                 </div>
-                {b.recurring && <Badge tone="info">Assinatura</Badge>}
+                {(b.recurring || b.product?.recurring) && <Badge tone="info">Assinatura</Badge>}
                 <Badge tone={b.active ? 'on' : 'off'}>{b.active ? 'Ativo' : 'Inativo'}</Badge>
                 <div className="flex">
                   <Button size="sm" variant="ghost" aria-label="Editar" onClick={() => setEditing(b)}><Pencil className="h-4 w-4" /></Button>
@@ -101,14 +101,12 @@ function BumpForm({ bump, products, onClose, onSave }: { bump: Bump | null; prod
     },
   });
   const e = formState.errors;
-  const recurring = watch('recurring');
   return (
     <Modal open onClose={onClose} title={bump ? 'Editar order bump' : 'Novo order bump'}>
       <form
         className="space-y-4"
-        onSubmit={handleSubmit(async ({ price, compare, recurring, monthly, ...v }) => {
+        onSubmit={handleSubmit(async ({ price, compare, recurring: _r, monthly: _m, ...v }) => {
           setError(null);
-          if (recurring && monthly && parseMoney(monthly) < 100) return setError('Mensalidade mínima de R$ 1,00');
           try {
             await onSave({
               ...v,
@@ -117,7 +115,6 @@ function BumpForm({ bump, products, onClose, onSave }: { bump: Bump | null; prod
               compare_at_cents: compare ? parseMoney(compare) || null : null,
               description: v.description || null,
               // só o Super Admin vê a opção; produtor não envia (o servidor recusa)
-              ...(superAdmin ? { recurring, recurring_price_cents: recurring && monthly ? parseMoney(monthly) : null } : {}),
             });
           } catch (err) {
             setError(err instanceof ApiError ? err.message : 'Erro ao salvar');
@@ -148,23 +145,7 @@ function BumpForm({ bump, products, onClose, onSave }: { bump: Bump | null; prod
           <Field label="Preço “de” (opcional)"><Input {...register('compare')} inputMode="decimal" placeholder="47,00" /></Field>
         </div>
         <Controller control={control} name="image_url" render={({ field }) => <ImageUpload kind="thumb" label="Imagem" value={field.value} onChange={field.onChange} />} />
-        {superAdmin && (
-          <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3.5">
-            <Controller control={control} name="recurring" render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Assinatura mensal (Pix Automático)" />} />
-            {recurring ? (
-              <div className="mt-3 space-y-2.5">
-                <Field label="Valor de cada mês (R$)" hint="Vazio = o mesmo preço da oferta. O 1º mês é pago junto com o pedido.">
-                  <Input {...register('monthly')} inputMode="decimal" placeholder={watch('price') || '9,90'} />
-                </Field>
-                <p className="text-xs leading-relaxed text-indigo-900/80">
-                  No checkout, o cliente paga o pedido e autoriza a mensalidade no app do banco com o mesmo QR Code (pede o CPF). O acesso ao produto na área de membros vale 1 mês e renova sozinho a cada débito; sem pagamento, fica liberado por mais 3 dias e depois é pausado. Só no Pix (cartão não). Ligue o Pix Automático em Integrações.
-                </p>
-              </div>
-            ) : (
-              <p className="mt-1.5 text-xs text-indigo-900/70">Desligado: compra única, com acesso para sempre.</p>
-            )}
-          </div>
-        )}
+        {superAdmin && <p className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3 text-xs leading-relaxed text-indigo-900/80">Assinatura mensal (Pix Automático): marque no próprio produto, na aba <a href="/admin/produtos" className="font-semibold underline">Produtos</a>. Todo order bump que oferecer esse produto vira assinatura.</p>}
         <Controller control={control} name="active" render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Ativo" />} />
         {error && <p className="text-sm font-medium text-red-600">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">

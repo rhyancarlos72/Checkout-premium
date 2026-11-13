@@ -14,6 +14,7 @@ import { PageHeader } from './AdminApp';
 import { ProductBumpsModal } from './ProductBumpsModal';
 import { UpsellModal, UpsellSection, type Upsell } from './ProductUpsell';
 import { useCrud } from './crud';
+import { useMe } from '@/lib/me';
 
 export interface Product {
   id: string;
@@ -29,6 +30,9 @@ export interface Product {
   delivery_url: string | null;
   delivery_note: string | null;
   active: boolean;
+  /** assinatura mensal (Pix Automático) quando oferecido como order bump */
+  recurring?: boolean;
+  recurring_price_cents?: number | null;
   checkouts?: { id: string; slug: string; name: string; active: boolean; created_at?: string; checkout_bumps?: { sort: number; bump: { id: string; product_id: string; title: string; price_cents: number } | null }[] }[];
 }
 
@@ -106,6 +110,8 @@ const schema = z.object({
   delivery_url: z.string().optional(),
   delivery_note: z.string().optional(),
   active: z.boolean(),
+  recurring: z.boolean(),
+  monthly: z.string().optional(),
 });
 type Form = z.infer<typeof schema>;
 
@@ -155,6 +161,7 @@ export default function ProductsPage() {
                       {p.number && <button type="button" title="Copiar ID" onClick={() => navigator.clipboard.writeText(productCode(p.number)).then(() => toast.ok(`ID ${productCode(p.number)} copiado`))} className="mb-1 inline-block rounded-md bg-zinc-100 px-2 py-0.5 text-[13px] font-medium text-zinc-500 transition hover:text-zinc-800">ID: {productCode(p.number)}</button>}
                       <p className="pv font-semibold leading-snug">{p.name}</p>
                     </div>
+                    {p.recurring && <Badge tone="info">Assinatura{p.recurring_price_cents ? ` ${brl(p.recurring_price_cents)}/mês` : ''}</Badge>}
                     <Badge tone={p.active ? 'on' : 'off'}>{p.active ? 'Ativo' : 'Inativo'}</Badge>
                   </div>
                   <p className="pv mt-1 text-lg font-bold tabular-nums">{brl(p.price_cents)}</p>
@@ -226,19 +233,33 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
       delivery_url: product?.delivery_url ?? '',
       delivery_note: product?.delivery_note ?? '',
       active: product?.active ?? true,
+      recurring: product?.recurring ?? false,
+      monthly: centsToInput(product?.recurring_price_cents),
     },
   });
   const type = watch('delivery_type');
+  const recurring = watch('recurring');
+  const superAdmin = Boolean(useMe().data?.superAdmin);
   const e = formState.errors;
 
   return (
     <Modal open onClose={onClose} title={product ? `Editar produto${product.number ? ` · ID: ${productCode(product.number)}` : ''}` : 'Novo produto'}>
       <form
         className="space-y-4"
-        onSubmit={handleSubmit(async ({ price, ...v }) => {
+        onSubmit={handleSubmit(async ({ price, recurring, monthly, ...v }) => {
           setError(null);
+          if (recurring && monthly && parseMoney(monthly) < 100) return setError('Mensalidade mínima de R$ 1,00');
           try {
-            await onSave({ ...v, id: product?.id, price_cents: parseMoney(price), description: v.description || null, delivery_url: v.delivery_url || null, delivery_note: v.delivery_note || null });
+            await onSave({
+              ...v,
+              id: product?.id,
+              price_cents: parseMoney(price),
+              description: v.description || null,
+              delivery_url: v.delivery_url || null,
+              delivery_note: v.delivery_note || null,
+              // só o Super Admin vê a opção (assinatura vale nas vendas da Prime)
+              ...(superAdmin ? { recurring, recurring_price_cents: recurring && monthly ? parseMoney(monthly) : null } : {}),
+            });
           } catch (err) {
             setError(err instanceof ApiError ? err.message : 'Erro ao salvar');
           }
@@ -267,6 +288,23 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
           <Controller control={control} name="delivery_url" render={({ field }) => <ImageUpload label="Arquivo do produto (privado, link temporário de 7 dias)" bucket="deliverables" accept="*/*" value={field.value} onChange={field.onChange} />} />
         )}
         <Field label="Instruções no e-mail de entrega (opcional)"><Textarea {...register('delivery_note')} rows={2} /></Field>
+        {superAdmin && (
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3.5">
+            <Controller control={control} name="recurring" render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Assinatura mensal (Pix Automático)" />} />
+            {recurring ? (
+              <div className="mt-3 space-y-2.5">
+                <Field label="Valor de cada mês (R$)" hint="Vazio = o mesmo preço da oferta no order bump. O 1º mês é pago junto com o pedido.">
+                  <Input {...register('monthly')} inputMode="decimal" placeholder="9,90" />
+                </Field>
+                <p className="text-xs leading-relaxed text-indigo-900/80">
+                  Quando este produto for oferecido como order bump, o cliente paga o pedido e autoriza a mensalidade no app do banco com o mesmo QR Code (o checkout pede o CPF). O acesso vale 1 mês e renova sozinho a cada débito; sem pagamento, fica liberado por mais 3 dias e depois é pausado. Só no Pix. Ligue o Pix Automático em Integrações. Use a entrega por Área de membros.
+                </p>
+              </div>
+            ) : (
+              <p className="mt-1.5 text-xs text-indigo-900/70">Desligado: compra única, com acesso para sempre.</p>
+            )}
+          </div>
+        )}
         <Controller control={control} name="active" render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Produto ativo" />} />
         {error && <p className="text-sm font-medium text-red-600">{error}</p>}
         <div className="flex justify-end gap-2 pt-2">

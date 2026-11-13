@@ -212,7 +212,27 @@ const productSchema = z.object({
   delivery_url: z.string().max(1000).nullable().optional(),
   delivery_note: z.string().max(1000).nullable().optional(),
   active: z.boolean().default(true),
+  // assinatura mensal por Pix Automático quando o produto é oferecido como order bump (só a Prime)
+  recurring: z.boolean().optional(),
+  recurring_price_cents: z.number().int().min(100, 'Mensalidade mínima de R$ 1,00').nullable().optional(),
 });
+// Assinatura (Pix Automático): só o Super Admin liga (vendas da Prime); banco sem o SQL → os campos novos são ignorados
+const subsColumns: Record<string, boolean> = {};
+adminRouter.use(/^\/(products|bumps)(\/[0-9a-f-]{36})?$/, async (req, _res, next) => {
+  if (req.method !== 'POST' && req.method !== 'PUT') return next();
+  const b = req.body ?? {};
+  if (!('recurring' in b) && !('recurring_price_cents' in b)) return next();
+  if (b.recurring && !req.isSuperAdmin) return next(new HttpError(403, 'Assinatura mensal só pode ser ligada pelo administrador da plataforma'));
+  const table = req.path.startsWith('/products') ? 'products' : 'order_bumps';
+  subsColumns[table] ??= !(await supabase.from(table).select('recurring').limit(1)).error;
+  if (!subsColumns[table]) {
+    if (b.recurring) return next(new HttpError(400, 'Rode no Supabase o SQL das assinaturas (20261114000000_subscriptions.sql e 20261115000000_product_subscriptions.sql) para ligar a assinatura mensal'));
+    delete b.recurring;
+    delete b.recurring_price_cents;
+  }
+  next();
+});
+
 // Cada produto tem seu link de checkout com um CÓDIGO próprio (ex.: /checkout?produto_id=9452229),
 // criado automaticamente junto com o produto.
 /** Código numérico aleatório de 7 dígitos (ex.: 9452229) usado em /checkout?produto_id=… — não revela o nome do produto. */
@@ -270,7 +290,9 @@ adminRouter.post('/products', async (req, res) => {
 });
 adminRouter.put('/products/:id', async (req, res) => {
   const id = uuid.parse(req.params.id);
-  const body = productSchema.partial().parse(req.body);
+  // só os campos enviados: os valores padrão do formulário (entrega "link", ativo) não sobrescrevem o que já existe
+  const parsed = productSchema.partial().parse(req.body) as Record<string, unknown>;
+  const body = Object.fromEntries(Object.entries(parsed).filter(([k]) => k in (req.body ?? {}))) as z.infer<typeof productSchema>;
   const { data: before } = await supabase.from('products').select('price_cents').eq('id', id).maybeSingle();
   const product = must(await supabase.from('products').update(mapDelivery(body)).eq('id', id).select().single()) as any;
   if (product.members_enabled) await ensureCourse(id);
@@ -426,22 +448,8 @@ const bumpSchema = z.object({
   recurring: z.boolean().optional(),
   recurring_price_cents: z.number().int().min(100, 'Mensalidade mínima de R$ 1,00').nullable().optional(),
 });
-// Assinatura: só o Super Admin (vendas da Prime); banco sem o SQL das assinaturas → os campos novos são ignorados
-let subsColumns: boolean | null = null;
-adminRouter.use(/^\/bumps(\/[0-9a-f-]{36})?$/, async (req, _res, next) => {
-  if (req.method !== 'POST' && req.method !== 'PUT') return next();
-  const b = req.body ?? {};
-  if (!('recurring' in b) && !('recurring_price_cents' in b)) return next();
-  if (b.recurring && !req.isSuperAdmin) return next(new HttpError(403, 'Assinatura mensal só pode ser ligada pelo administrador da plataforma'));
-  subsColumns ??= !(await supabase.from('order_bumps').select('recurring').limit(1)).error;
-  if (!subsColumns) {
-    if (b.recurring) return next(new HttpError(400, 'Rode no Supabase o SQL das assinaturas (20261114000000_subscriptions.sql) para ligar a assinatura mensal'));
-    delete b.recurring;
-    delete b.recurring_price_cents;
-  }
-  next();
-});
-crud('bumps', 'order_bumps', bumpSchema, '*, product:products(name, number)');
+crud('bumps', 'order_bumps', bumpSchema, '*, product:products(*)');
+
 
 const couponSchema = z.object({
   code: z.string().trim().toUpperCase().regex(/^[A-Z0-9_-]{3,40}$/, 'Use letras, números, _ ou -'),

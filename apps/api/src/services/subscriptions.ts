@@ -41,6 +41,11 @@ export function addMonths(d: Date | number, n: number) {
   return x;
 }
 
+/** Order bump é assinatura quando o PRODUTO oferecido está marcado como assinatura (aba Produtos) — ou o próprio bump. */
+export const bumpIsRecurring = (b: any) => Boolean(b?.recurring || b?.product?.recurring);
+/** Valor de cada mês: o do produto, senão o do bump, senão o preço da oferta. */
+export const bumpMonthlyCents = (b: any): number => b?.product?.recurring_price_cents ?? b?.recurring_price_cents ?? b?.price_cents;
+
 export const recurringLines = <T extends SubLine>(lines: T[]) => lines.filter((l) => l.recurring);
 export const monthlyCentsOf = (lines: SubLine[]) => recurringLines(lines).reduce((s, l) => s + (l.monthly_cents ?? l.price_cents), 0);
 const namesOf = (items: { name: string }[]) => items.map((i) => i.name).join(' + ');

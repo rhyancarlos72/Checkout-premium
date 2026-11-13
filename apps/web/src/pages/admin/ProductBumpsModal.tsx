@@ -103,7 +103,7 @@ export function ProductBumpsModal({ product, products, onClose, onSaved }: { pro
                         <div className="flex items-center gap-3">
                           {p.image_url ? <img src={p.image_url} alt="" className="h-12 w-12 rounded-lg object-cover" /> : <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-amber-100 text-amber-700"><Gift className="h-5 w-5" /></div>}
                           <div className="min-w-0 flex-1">
-                            <p className="truncate font-semibold text-zinc-900">{p.name}</p>
+                            <p className="truncate font-semibold text-zinc-900">{p.name}{p.recurring && <span className="ml-1.5 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-bold text-indigo-700 ring-1 ring-inset ring-indigo-600/20">Assinatura {p.recurring_price_cents ? `${brl(p.recurring_price_cents)}/mês` : 'mensal'}</span>}</p>
                             <p className="text-xs text-zinc-500">Preço normal: {brl(p.price_cents)}{p.number ? ` · ID: ${productCode(p.number)}` : ''}</p>
                           </div>
                           <button disabled={idx === 0} onClick={() => move(idx, -1)} className="rounded p-1.5 text-zinc-500 hover:bg-white disabled:opacity-30" aria-label="Subir"><ArrowUp className="h-4 w-4" /></button>
@@ -132,7 +132,7 @@ export function ProductBumpsModal({ product, products, onClose, onSaved }: { pro
                         <button key={p.id} onClick={() => toggle(p)} disabled={list.length >= 10} className="flex items-center gap-3 rounded-xl border border-dashed border-zinc-300 p-3 text-left transition hover:border-blue-500 hover:bg-blue-50/40 disabled:opacity-50">
                           <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 border-zinc-300" />
                           <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-zinc-900">{p.number ? <span className="mr-1 font-mono text-xs text-zinc-500">ID: {productCode(p.number)}</span> : null}{p.name}</span>
+                            <span className="block truncate text-sm font-medium text-zinc-900">{p.number ? <span className="mr-1 font-mono text-xs text-zinc-500">ID: {productCode(p.number)}</span> : null}{p.name}{p.recurring && <span className="ml-1.5 rounded-full bg-indigo-50 px-1.5 py-0.5 text-[10.5px] font-bold text-indigo-700">Assinatura</span>}</span>
                             <span className={cn('block text-xs', p.active ? 'text-zinc-500' : 'text-amber-600')}>{brl(p.price_cents)}{!p.active && ' · inativo'}</span>
                           </span>
                         </button>
