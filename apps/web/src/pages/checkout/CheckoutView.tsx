@@ -680,7 +680,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="text-[14.5px] font-bold leading-snug">{b.title}</p>
-                          {b.description && <p className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-ck-muted">{b.description}</p>}
+                          {b.description && <p className="mt-0.5 text-[12.5px] leading-snug text-ck-muted">{b.description}</p>}
                           <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2">
                             {b.compare_at_cents ? <span className="text-[12px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
                             <span className="text-[19px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
@@ -702,18 +702,19 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                     type="button"
                     onClick={() => toggleBump(b.id)}
                     aria-pressed={on}
-                    className={cn('flex w-full items-center gap-3 rounded-ck border-2 p-2.5 text-left transition-all duration-200', on ? 'border-brand bg-brand/[.06] shadow-md shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-amber-300')}
+                    className={cn('flex w-full items-start gap-3 rounded-ck border-2 p-3 text-left transition-all duration-200', on ? 'border-brand bg-brand/[.06] shadow-md shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-amber-300')}
                   >
-                    {box}
-                    {thumb(48, 'h-12 w-12')}
+                    <span className="mt-4 shrink-0">{box}</span>
+                    {thumb(56, 'h-14 w-14 self-start')}
                     <span className="min-w-0 flex-1">
-                      <span className="line-clamp-2 block text-[13.5px] font-bold leading-snug">{b.title}</span>
-                      <span className="mt-0.5 flex flex-wrap items-baseline gap-x-1.5">
+                      <span className="block text-[13.5px] font-bold leading-snug">{b.title}</span>
+                      {b.description && <span className="mt-0.5 block text-[12px] leading-snug text-ck-muted">{b.description}</span>}
+                      <span className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
                         {b.compare_at_cents ? <span className="text-[11.5px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
                         <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}</span>
+                        {off > 0 && <span className="rounded-full bg-[#ffe27a] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#6b4700]">-{off}%</span>}
                       </span>
                     </span>
-                    {off > 0 && <span className="shrink-0 rounded-full bg-[#ffe27a] px-2 py-0.5 text-[11px] font-extrabold text-[#6b4700]">-{off}%</span>}
                   </button>
                 );
               })}
