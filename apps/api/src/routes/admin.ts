@@ -224,7 +224,8 @@ adminRouter.use(/^\/(products|bumps)(\/[0-9a-f-]{36})?$/, async (req, _res, next
   if (!('recurring' in b) && !('recurring_price_cents' in b)) return next();
   if (b.recurring && !req.isSuperAdmin) return next(new HttpError(403, 'Assinatura mensal só pode ser ligada pelo administrador da plataforma'));
   const table = req.path.startsWith('/products') ? 'products' : 'order_bumps';
-  subsColumns[table] ??= !(await supabase.from(table).select('recurring').limit(1)).error;
+  // só guarda o "sim": se o SQL ainda não tinha sido rodado, confere de novo na próxima vez (sem precisar reiniciar o servidor)
+  if (!subsColumns[table]) subsColumns[table] = !(await supabase.from(table).select('recurring').limit(1)).error;
   if (!subsColumns[table]) {
     if (b.recurring) return next(new HttpError(400, 'Rode no Supabase o SQL das assinaturas (20261114000000_subscriptions.sql e 20261115000000_product_subscriptions.sql) para ligar a assinatura mensal'));
     delete b.recurring;

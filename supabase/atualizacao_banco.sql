@@ -533,3 +533,6 @@ alter table public.products add column if not exists recurring_price_cents integ
 do $$ begin
   alter table public.products add constraint products_recurring_price_check check (recurring_price_cents is null or recurring_price_cents >= 100);
 exception when duplicate_object then null; end $$;
+
+-- avisa a API do Supabase que as colunas novas existem
+notify pgrst, 'reload schema';

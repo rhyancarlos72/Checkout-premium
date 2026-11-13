@@ -58,3 +58,6 @@ create index if not exists orders_subscription_idx on public.orders(subscription
 
 -- só o servidor (service role) lê e grava assinaturas
 alter table public.subscriptions enable row level security;
+
+-- avisa a API do Supabase que as colunas novas existem (sem isso ela pode demorar alguns minutos para enxergar)
+notify pgrst, 'reload schema';
