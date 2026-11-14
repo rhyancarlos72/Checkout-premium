@@ -748,10 +748,10 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                           <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}{b.recurring && (b.monthly_cents ?? b.price_cents) === b.price_cents && <span className="text-[12px] font-bold">/mês</span>}</span>
                           {off > 0 && <span className="rounded-full bg-[#ffe27a] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#6b4700]">-{off}%</span>}
                         </span>
-                        {/* CTA: deixa claro que é só tocar para adicionar (o cartão inteiro continua clicável) */}
+                        {/* CTA largo com o quadrado de marcar: deixa claro que é só tocar (o cartão inteiro continua clicável) */}
                         <span
                           className={cn(
-                            'inline-flex h-8 shrink-0 items-center gap-1 rounded-full border-2 px-3 text-[12.5px] font-bold transition-colors duration-200',
+                            'flex h-10 w-full items-center gap-2.5 rounded-[calc(var(--ck-r)*.6)] border-2 px-3 text-[13.5px] font-bold transition-colors duration-200 @lg:w-auto @lg:min-w-[190px]',
                             b.recurring && method === 'card'
                               ? 'border-ck-border text-ck-muted'
                               : on
@@ -759,7 +759,11 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                                 : 'border-brand bg-ck-surface text-brand group-hover:bg-brand/[.08]',
                           )}
                         >
-                          {b.recurring && method === 'card' ? 'Só no Pix' : on ? <><Check className="h-3.5 w-3.5" strokeWidth={3.5} /> Adicionado</> : <><Plus className="h-3.5 w-3.5" strokeWidth={3} /> {b.recurring ? 'Assinar' : 'Adicionar'}</>}
+                          <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : b.recurring && method === 'card' ? 'border-ck-border bg-ck-surface' : 'border-brand bg-ck-surface')}>
+                            {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
+                          </span>
+                          <span className="flex-1 text-left">{b.recurring && method === 'card' ? 'Disponível só no Pix' : on ? (b.recurring ? 'Assinatura adicionada' : 'Oferta adicionada') : b.recurring ? 'Assinar esta oferta' : 'Adicionar oferta'}</span>
+                          {!on && !(b.recurring && method === 'card') && <Plus className="h-4 w-4 shrink-0" strokeWidth={3} />}
                         </span>
                       </span>
                       {b.recurring && (b.monthly_cents ?? b.price_cents) !== b.price_cents && <span className="mt-0.5 block text-[11.5px] font-semibold text-brand">1º mês hoje, depois {brl(b.monthly_cents!)}/mês</span>}
