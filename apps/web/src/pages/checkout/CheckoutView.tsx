@@ -163,15 +163,6 @@ function CkField({
  * largura do próprio checkout, então funciona igual no celular, no desktop e
  * na pré-visualização do painel.
  */
-/** Selo da assinatura mensal no order bump (Pix Automático). No cartão fica indisponível. */
-function SubNote({ card }: { card: boolean }) {
-  return (
-    <span className={cn('mt-1.5 inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-bold leading-tight', card ? 'bg-ck-surface-2 text-ck-muted' : 'bg-brand/10 text-brand')}>
-      <Repeat className="h-3 w-3 shrink-0" /> {card ? 'Assinatura: disponível só no Pix' : 'Assinatura mensal · cancele quando quiser'}
-    </span>
-  );
-}
-
 export function CheckoutView({ checkout, preview = false }: { checkout: PublicCheckout; preview?: boolean }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -673,9 +664,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
             </>}
           </Section>
 
-          {/* Order bumps: 1 aviso de urgência para a seção, o 1º em destaque e os demais compactos */}
+          {/* Order bumps: um cartão completo por oferta (faixa com desconto, foto, descrição, preço e "Sim! Quero…") */}
           {checkout.bumps.length > 0 && (
-            <div className="space-y-3">
+            <div className="space-y-3.5">
               <div className="flex items-center gap-3 pt-1">
                 <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand/10 text-brand"><Gift className="h-5 w-5" /></span>
                 <div className="min-w-0 flex-1">
@@ -683,79 +674,70 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                   <p className="mt-0.5 flex items-center gap-1 text-[12px] font-bold text-[#8a5a00]"><Zap className="h-3.5 w-3.5 fill-current" /> Oferta relâmpago: só nesta página</p>
                 </div>
               </div>
-              {checkout.bumps.map((b, i) => {
+              {checkout.bumps.map((b) => {
                 const on = bumps.includes(b.id);
                 const off = b.compare_at_cents && b.compare_at_cents > b.price_cents ? Math.round((1 - b.price_cents / b.compare_at_cents) * 100) : 0;
-                const thumb = (px: number, cls: string) =>
-                  b.image_url ? (
-                    <img {...thumbProps(b.image_url, px)} alt="" width={px} height={px} decoding="async" loading="lazy" className={cn('shrink-0 rounded-[calc(var(--ck-r)*.5)] object-cover shadow-sm ring-1 ring-ck-border', cls)} />
-                  ) : (
-                    <div className={cn('flex shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.5)] bg-[#fff1b8] text-[#7a5200]', cls)}><Gift className="h-1/2 w-1/2" /></div>
-                  );
-                const box = (
-                  <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand bg-brand text-brand-fg' : 'border-[#c9a227] bg-[#fff]')}>
-                    {on && <Check className="h-4 w-4" strokeWidth={3.5} />}
-                  </span>
-                );
-                if (i === 0)
-                  return (
-                    <button
-                      key={b.id}
-                      type="button"
-                      onClick={() => toggleBump(b.id)}
-                      aria-pressed={on}
-                      className={cn(
-                        'relative block w-full overflow-hidden rounded-ck border-2 border-dashed text-left transition-all duration-300',
-                        on ? 'border-brand bg-brand/[.06] shadow-xl shadow-brand/15' : 'ck-bump-idle border-amber-300 bg-ck-surface',
-                      )}
-                    >
-                      <div className="flex gap-3.5 p-3.5 @lg:p-4">
-                        <div className="relative">
-                          {thumb(88, 'h-[76px] w-[76px] @md:h-[88px] @md:w-[88px]')}
-                          {off > 0 && <span className="absolute -left-1.5 -top-1.5 rounded-full bg-[#e11d48] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#fff] shadow">-{off}%</span>}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[14.5px] font-bold leading-snug">{b.title}</p>
-                          {b.description && <p className="mt-0.5 text-[12.5px] leading-snug text-ck-muted">{b.description}</p>}
-                          <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2">
-                            {b.compare_at_cents ? <span className="text-[12px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
-                            <span className="text-[19px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
-                            {b.recurring && (b.monthly_cents ?? b.price_cents) === b.price_cents && <span className="text-[13px] font-bold text-brand">/mês</span>}
-                          </div>
-                          {b.recurring && (b.monthly_cents ?? b.price_cents) !== b.price_cents && <p className="mt-0.5 text-[12px] font-semibold text-brand">1º mês hoje, depois {brl(b.monthly_cents!)}/mês</p>}
-                          {b.recurring && <SubNote card={method === 'card'} />}
-                        </div>
-                      </div>
-                      <div className={cn('flex items-center gap-2.5 border-t-2 border-dashed px-3.5 py-2.5 text-[13px] font-bold transition-colors duration-300', on ? 'border-brand/30 bg-brand text-brand-fg' : 'border-amber-200 bg-[#fff9e0] text-[#5c3d00]')}>
-                        {!on && <ArrowRight className="ck-nudge h-4 w-4 shrink-0" strokeWidth={3} />}
-                        <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-[#c9a227] bg-[#fff]')}>
-                          {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
-                        </span>
-                        <span className="flex-1 leading-snug">{on ? (b.recurring ? 'Assinatura adicionada! Você garantiu esta oferta' : 'Adicionado! Você garantiu esta oferta') : b.recurring ? `Sim! Quero assinar por ${brl(b.monthly_cents ?? b.price_cents)}/mês` : `Sim! Quero levar junto por só ${brl(b.price_cents)}`}</span>
-                      </div>
-                    </button>
-                  );
+                const monthly = b.monthly_cents ?? b.price_cents;
+                const blocked = Boolean(b.recurring && method === 'card'); // assinatura só no Pix
                 return (
                   <button
                     key={b.id}
                     type="button"
                     onClick={() => toggleBump(b.id)}
                     aria-pressed={on}
-                    className={cn('flex w-full items-start gap-3 rounded-ck border-2 p-3 text-left transition-all duration-200', on ? 'border-brand bg-brand/[.06] shadow-md shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-amber-300')}
+                    disabled={blocked}
+                    className={cn(
+                      'group relative block w-full overflow-hidden rounded-ck border-2 text-left transition-all duration-300',
+                      on ? 'border-brand bg-brand/[.05] shadow-xl shadow-brand/15' : 'ck-bump-idle border-dashed border-amber-300 bg-ck-surface hover:-translate-y-px hover:shadow-lg hover:shadow-amber-500/10',
+                      blocked && 'cursor-not-allowed opacity-60',
+                    )}
                   >
-                    <span className="mt-4 shrink-0">{box}</span>
-                    {thumb(56, 'h-14 w-14 self-start')}
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[13.5px] font-bold leading-snug">{b.title}</span>
-                      {b.description && <span className="mt-0.5 block text-[12px] leading-snug text-ck-muted">{b.description}</span>}
-                      <span className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
-                        {b.compare_at_cents ? <span className="text-[11.5px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
-                        <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}{b.recurring && (b.monthly_cents ?? b.price_cents) === b.price_cents && <span className="text-[12px] font-bold">/mês</span>}</span>
-                        {off > 0 && <span className="rounded-full bg-[#ffe27a] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#6b4700]">-{off}%</span>}
+                    {/* faixa superior */}
+                    <div className={cn('flex items-center justify-between gap-2 px-3.5 py-2 text-[11px] font-extrabold uppercase tracking-wider transition-colors duration-300', on ? 'bg-brand text-brand-fg' : 'bg-gradient-to-r from-[#fff1b8] to-[#fff8dc] text-[#7a5200]')}>
+                      <span className="flex min-w-0 items-center gap-1.5">
+                        {b.recurring ? <Repeat className="h-3.5 w-3.5 shrink-0" strokeWidth={2.6} /> : <Zap className="h-3.5 w-3.5 shrink-0 fill-current" />}
+                        <span className="truncate">{b.recurring ? (blocked ? 'Assinatura: só no Pix' : 'Assinatura mensal') : 'Oferta especial para você'}</span>
                       </span>
-                      {b.recurring && (b.monthly_cents ?? b.price_cents) !== b.price_cents && <span className="mt-0.5 block text-[11.5px] font-semibold text-brand">1º mês hoje, depois {brl(b.monthly_cents!)}/mês</span>}
-                      {b.recurring && <SubNote card={method === 'card'} />}
-                    </span>
+                      {off > 0 && <span className={cn('shrink-0 rounded-full px-2 py-0.5 text-[11px] tracking-normal', on ? 'bg-black/15' : 'bg-[#e11d48] text-[#fff] shadow-sm')}>-{off}%</span>}
+                    </div>
+
+                    <div className="flex gap-3.5 p-3.5 @lg:p-4">
+                      {b.image_url ? (
+                        <img {...thumbProps(b.image_url, 84)} alt="" width={84} height={84} decoding="async" loading="lazy" className="h-[72px] w-[72px] shrink-0 rounded-[calc(var(--ck-r)*.55)] object-cover shadow-md ring-1 ring-black/5 @md:h-[84px] @md:w-[84px]" />
+                      ) : (
+                        <div className="flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.55)] bg-[#fff1b8] text-[#7a5200] @md:h-[84px] @md:w-[84px]"><Gift className="h-8 w-8" /></div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[15px] font-bold leading-snug text-ck-text">{b.title}</p>
+                        {b.description && <p className="mt-1 text-[12.5px] leading-snug text-ck-muted">{b.description}</p>}
+                        <div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                          {b.compare_at_cents ? <span className="text-[12.5px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
+                          <span className="text-[20px] font-extrabold leading-none tracking-tight text-brand">{brl(b.price_cents)}</span>
+                          {b.recurring && monthly === b.price_cents && <span className="text-[13px] font-bold text-brand">/mês</span>}
+                        </div>
+                        {b.recurring && monthly !== b.price_cents && <p className="mt-1 text-[12px] font-semibold text-brand">1º mês hoje, depois {brl(monthly)}/mês</p>}
+                        {b.recurring && !blocked && <p className="mt-1 flex items-center gap-1 text-[11.5px] font-semibold text-ck-muted"><Repeat className="h-3 w-3 shrink-0" /> Pix Automático · cancele quando quiser</p>}
+                      </div>
+                    </div>
+
+                    {/* barra de ação */}
+                    <div className={cn('flex items-center gap-2.5 border-t-2 px-3.5 py-3 text-[13.5px] font-bold transition-colors duration-300', on ? 'border-brand/20 bg-brand text-brand-fg' : 'border-dashed border-amber-200 bg-[#fffaeb] text-[#5c3d00] group-hover:bg-[#fff4cc]')}>
+                      {!on && !blocked && <ArrowRight className="ck-nudge h-4 w-4 shrink-0" strokeWidth={3} />}
+                      <span className={cn('flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : 'border-[#c9a227] bg-[#fff]')}>
+                        {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
+                      </span>
+                      <span className="flex-1 leading-snug">
+                        {blocked
+                          ? 'Disponível só no Pix'
+                          : on
+                            ? b.recurring
+                              ? 'Assinatura adicionada! Você garantiu esta oferta'
+                              : 'Adicionado! Você garantiu esta oferta'
+                            : b.recurring
+                              ? `Sim! Quero assinar por ${brl(monthly)}/mês`
+                              : `Sim! Quero levar junto por só ${brl(b.price_cents)}`}
+                      </span>
+                    </div>
                   </button>
                 );
               })}
