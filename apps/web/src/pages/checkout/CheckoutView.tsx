@@ -1,6 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowRight, BadgeCheck, Check, ChevronDown, Clock, CreditCard, Gift, Lock, Mail, Megaphone, Phone, Repeat, ShieldCheck, Star, Tag, User, X, Zap } from 'lucide-react';
+import { ArrowRight, BadgeCheck, Check, ChevronDown, Clock, CreditCard, Gift, Lock, Mail, Megaphone, Phone, Plus, Repeat, ShieldCheck, Star, Tag, User, X, Zap } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useForm, type UseFormRegisterReturn } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -692,11 +692,6 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                   ) : (
                     <div className={cn('flex shrink-0 items-center justify-center rounded-[calc(var(--ck-r)*.5)] bg-[#fff1b8] text-[#7a5200]', cls)}><Gift className="h-1/2 w-1/2" /></div>
                   );
-                const box = (
-                  <span className={cn('flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand bg-brand text-brand-fg' : 'border-[#c9a227] bg-[#fff]')}>
-                    {on && <Check className="h-4 w-4" strokeWidth={3.5} />}
-                  </span>
-                );
                 if (i === 0)
                   return (
                     <button
@@ -741,17 +736,31 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                     type="button"
                     onClick={() => toggleBump(b.id)}
                     aria-pressed={on}
-                    className={cn('flex w-full items-start gap-3 rounded-ck border-2 p-3 text-left transition-all duration-200', on ? 'border-brand bg-brand/[.06] shadow-md shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-amber-300')}
+                    className={cn('group flex w-full items-start gap-3 rounded-ck border-2 p-3 text-left transition-all duration-200', on ? 'border-brand bg-brand/[.06] shadow-md shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-amber-300')}
                   >
-                    <span className="mt-4 shrink-0">{box}</span>
                     {thumb(56, 'h-14 w-14 self-start')}
                     <span className="min-w-0 flex-1">
                       <span className="block text-[13.5px] font-bold leading-snug">{b.title}</span>
                       {b.description && <span className="mt-0.5 block text-[12px] leading-snug text-ck-muted">{b.description}</span>}
-                      <span className="mt-1 flex flex-wrap items-baseline gap-x-1.5">
-                        {b.compare_at_cents ? <span className="text-[11.5px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
-                        <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}{b.recurring && (b.monthly_cents ?? b.price_cents) === b.price_cents && <span className="text-[12px] font-bold">/mês</span>}</span>
-                        {off > 0 && <span className="rounded-full bg-[#ffe27a] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#6b4700]">-{off}%</span>}
+                      <span className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
+                        <span className="flex flex-wrap items-baseline gap-x-1.5">
+                          {b.compare_at_cents ? <span className="text-[11.5px] text-ck-muted line-through">{brl(b.compare_at_cents)}</span> : null}
+                          <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}{b.recurring && (b.monthly_cents ?? b.price_cents) === b.price_cents && <span className="text-[12px] font-bold">/mês</span>}</span>
+                          {off > 0 && <span className="rounded-full bg-[#ffe27a] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#6b4700]">-{off}%</span>}
+                        </span>
+                        {/* CTA: deixa claro que é só tocar para adicionar (o cartão inteiro continua clicável) */}
+                        <span
+                          className={cn(
+                            'inline-flex h-8 shrink-0 items-center gap-1 rounded-full border-2 px-3 text-[12.5px] font-bold transition-colors duration-200',
+                            b.recurring && method === 'card'
+                              ? 'border-ck-border text-ck-muted'
+                              : on
+                                ? 'border-brand bg-brand text-brand-fg'
+                                : 'border-brand bg-ck-surface text-brand group-hover:bg-brand/[.08]',
+                          )}
+                        >
+                          {b.recurring && method === 'card' ? 'Só no Pix' : on ? <><Check className="h-3.5 w-3.5" strokeWidth={3.5} /> Adicionado</> : <><Plus className="h-3.5 w-3.5" strokeWidth={3} /> {b.recurring ? 'Assinar' : 'Adicionar'}</>}
+                        </span>
                       </span>
                       {b.recurring && (b.monthly_cents ?? b.price_cents) !== b.price_cents && <span className="mt-0.5 block text-[11.5px] font-semibold text-brand">1º mês hoje, depois {brl(b.monthly_cents!)}/mês</span>}
                       {b.recurring && <SubNote card={method === 'card'} />}
