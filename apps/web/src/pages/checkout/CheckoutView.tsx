@@ -730,14 +730,31 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                       </div>
                     </button>
                   );
+                // CTA largo com o quadrado de marcar: no celular ocupa a largura toda do cartão; no computador fica na linha do preço
+                const cta = (cls: string) => (
+                  <span
+                    className={cn(
+                      'min-h-11 items-center gap-2.5 rounded-[calc(var(--ck-r)*.6)] border-2 px-3 py-2 text-[14px] font-bold leading-tight transition-colors duration-200',
+                      cls,
+                      b.recurring && method === 'card' ? 'border-ck-border text-ck-muted' : on ? 'border-brand bg-brand text-brand-fg' : 'border-brand bg-ck-surface text-brand group-hover:bg-brand/[.08]',
+                    )}
+                  >
+                    <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : b.recurring && method === 'card' ? 'border-ck-border bg-ck-surface' : 'border-brand bg-ck-surface')}>
+                      {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
+                    </span>
+                    <span className="flex-1 text-left">{b.recurring && method === 'card' ? 'Disponível só no Pix' : on ? (b.recurring ? 'Assinatura adicionada' : 'Oferta adicionada') : b.recurring ? 'Sim, quero assinar também' : 'Sim, quero adicionar também'}</span>
+                    {!on && !(b.recurring && method === 'card') && <Plus className="h-4 w-4 shrink-0" strokeWidth={3} />}
+                  </span>
+                );
                 return (
                   <button
                     key={b.id}
                     type="button"
                     onClick={() => toggleBump(b.id)}
                     aria-pressed={on}
-                    className={cn('group flex w-full items-start gap-3 rounded-ck border-2 p-3 text-left transition-all duration-200', on ? 'border-brand bg-brand/[.06] shadow-md shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-amber-300')}
+                    className={cn('group block w-full rounded-ck border-2 p-3 text-left transition-all duration-200', on ? 'border-brand bg-brand/[.06] shadow-md shadow-brand/10' : 'border-ck-border bg-ck-surface hover:border-amber-300')}
                   >
+                    <span className="flex items-start gap-3">
                     {thumb(56, 'h-14 w-14 self-start')}
                     <span className="min-w-0 flex-1">
                       <span className="block text-[13.5px] font-bold leading-snug">{b.title}</span>
@@ -748,27 +765,13 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                           <span className="text-[15px] font-extrabold leading-none text-brand">+ {brl(b.price_cents)}{b.recurring && (b.monthly_cents ?? b.price_cents) === b.price_cents && <span className="text-[12px] font-bold">/mês</span>}</span>
                           {off > 0 && <span className="rounded-full bg-[#ffe27a] px-1.5 py-0.5 text-[10.5px] font-extrabold leading-none text-[#6b4700]">-{off}%</span>}
                         </span>
-                        {/* CTA largo com o quadrado de marcar: deixa claro que é só tocar (o cartão inteiro continua clicável) */}
-                        <span
-                          className={cn(
-                            'flex h-10 w-full items-center gap-2.5 rounded-[calc(var(--ck-r)*.6)] border-2 px-3 text-[13.5px] font-bold transition-colors duration-200 @lg:w-auto @lg:min-w-[190px]',
-                            b.recurring && method === 'card'
-                              ? 'border-ck-border text-ck-muted'
-                              : on
-                                ? 'border-brand bg-brand text-brand-fg'
-                                : 'border-brand bg-ck-surface text-brand group-hover:bg-brand/[.08]',
-                          )}
-                        >
-                          <span className={cn('flex h-5 w-5 shrink-0 items-center justify-center rounded-md border-2 transition', on ? 'border-brand-fg bg-brand-fg text-brand' : b.recurring && method === 'card' ? 'border-ck-border bg-ck-surface' : 'border-brand bg-ck-surface')}>
-                            {on && <Check className="h-3.5 w-3.5" strokeWidth={3.5} />}
-                          </span>
-                          <span className="flex-1 text-left">{b.recurring && method === 'card' ? 'Disponível só no Pix' : on ? (b.recurring ? 'Assinatura adicionada' : 'Oferta adicionada') : b.recurring ? 'Assinar esta oferta' : 'Adicionar oferta'}</span>
-                          {!on && !(b.recurring && method === 'card') && <Plus className="h-4 w-4 shrink-0" strokeWidth={3} />}
-                        </span>
+                        {cta('hidden @lg:flex @lg:w-auto @lg:min-w-[250px]')}
                       </span>
                       {b.recurring && (b.monthly_cents ?? b.price_cents) !== b.price_cents && <span className="mt-0.5 block text-[11.5px] font-semibold text-brand">1º mês hoje, depois {brl(b.monthly_cents!)}/mês</span>}
                       {b.recurring && <SubNote card={method === 'card'} />}
                     </span>
+                    </span>
+                    {cta('mt-3 flex w-full @lg:hidden')}
                   </button>
                 );
               })}
