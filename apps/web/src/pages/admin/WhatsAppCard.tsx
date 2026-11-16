@@ -241,6 +241,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
                 <Field label="2º lembrete após (min)"><Input type="number" min={10} value={c.recovery.secondMinutes} onChange={(e) => set({ recovery: { ...c.recovery, secondMinutes: Number(e.target.value) } })} className="h-11" /></Field>
                 <Field label="3º e último (min)" hint="Padrão: 720 min = 12 h"><Input type="number" min={30} max={2880} value={c.recovery.thirdMinutes ?? 720} onChange={(e) => set({ recovery: { ...c.recovery, thirdMinutes: Number(e.target.value) } })} className="h-11" /></Field>
                 {(c.recovery.secondMinutes <= c.recovery.firstMinutes || (c.recovery.thirdMinutes ?? 720) <= c.recovery.secondMinutes) && <p className="text-xs text-amber-600 sm:col-span-3">Use tempos crescentes: 1º &lt; 2º &lt; 3º (contados a partir da geração do Pix).</p>}
+                <p className="text-xs text-zinc-500 sm:col-span-3">Recuperação manual (botão em Vendas): sai na hora por e-mail e WhatsApp e conta como o próximo lembrete; o automático seguinte conta a partir dela.</p>
                 <div className="sm:col-span-3"><Switch checked={c.recovery.includePix} onChange={(v) => set({ recovery: { ...c.recovery, includePix: v } })} label="Incluir o Pix copia e cola na mensagem" /></div>
               </div>
             )}
@@ -301,7 +302,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
                 {logs.data.map((l, i) => (
                   <li key={i} className="flex items-start gap-2 text-xs">
                     {l.ok ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-500" /> : <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500" />}
-                    <span className="shrink-0 font-medium text-zinc-700">{({ approved: 'Aprovado', recovery_1: '1º lembrete', recovery_2: '2º lembrete', test_approved: 'Teste', test_recovery: 'Teste', test_text: 'Teste' } as Record<string, string>)[l.event] ?? l.event}</span>
+                    <span className="shrink-0 font-medium text-zinc-700">{({ approved: 'Aprovado', recovery_1: '1º lembrete', recovery_2: '2º lembrete', recovery_3: '3º lembrete', recovery_1_manual: '1º lembrete (manual)', recovery_2_manual: '2º lembrete (manual)', recovery_3_manual: '3º lembrete (manual)', test_approved: 'Teste', test_recovery: 'Teste', test_text: 'Teste' } as Record<string, string>)[l.event] ?? (/^recovery_\d+_manual$/.test(l.event) ? 'Lembrete manual' : l.event)}</span>
                     <span className={cn('min-w-0 flex-1 break-words', l.ok ? 'text-zinc-500' : 'text-red-600')}>{l.message}</span>
                     <span className="shrink-0 text-zinc-400">{new Date(l.created_at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
                   </li>

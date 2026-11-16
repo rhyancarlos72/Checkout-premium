@@ -797,6 +797,58 @@ export async function recoveryEmailFallback(orderId: string, customerId: string,
   }
 }
 
+const WA_RECOVERY_SELECT = 'id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, total_cents, tracking, customer:customers(name, phone), checkout:checkouts(slug), items:order_items(kind, name)';
+
+/** Minutos de espera para o lembrete `n`: o 1º conta da hora do Pix; os seguintes, do lembrete anterior (automático ou manual). */
+function recoveryGapMinutes(cfg: WhatsAppConfig, n: number) {
+  const r = cfg.recovery;
+  if (n <= 1) return r.firstMinutes;
+  if (n === 2) return Math.max(10, r.secondMinutes - r.firstMinutes);
+  return Math.max(10, r.thirdMinutes - r.secondMinutes);
+}
+
+/**
+ * Envia UM lembrete de recuperação no WhatsApp (link curto + código Pix numa mensagem separada).
+ * Reserva a tentativa ANTES de enviar (nunca duplica). Automático: se o WhatsApp falhar, vai por e-mail no lugar.
+ */
+async function sendOneWaRecovery(o: any, attempt: number, cfg: WhatsAppConfig, opts: { manual?: boolean; waDown?: string | null } = {}) {
+  const { error } = await supabase.from('events').insert({ order_id: o.id, checkout_id: o.checkout_id, type: 'wa_recovery', data: { attempt, ...(opts.manual ? { manual: true } : {}) } });
+  if (error) return { ok: false, error: 'tentativa já registrada', viaEmail: false } as SendResult & { viaEmail: boolean };
+  const phone = normalizePhoneBR(o.customer.phone);
+  const pixValid = cfg.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
+  // link direto para o Pix pendente (se vencer, a página gera outro com um toque, sem preencher nada)
+  const link = `${env.PUBLIC_URL}/r/${shortOrderCode(o.number)}`; // link curto e exclusivo da venda
+  // Evolution fora do ar nesta rodada? não espera o tempo esgotar de novo: vai direto para o e-mail
+  const r: SendResult = opts.waDown
+    ? { ok: false, error: opts.waDown }
+    : await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: Math.min(attempt, 3), pixCode: pixValid ? o.pix_code : null, product: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? null, totalCents: o.total_cents }), cfg);
+  // Pix copia e cola numa mensagem SÓ com o código (fácil de copiar inteiro), do mesmo número do lembrete
+  if (r.ok && pixValid && o.pix_code) await sendWhatsAppText(phone, o.pix_code, cfg, { instance: r.instance }).catch(() => null);
+  let viaEmail = false;
+  if (!r.ok && !opts.manual) viaEmail = await recoveryEmailFallback(o.id, o.customer_id, attempt); // manual já manda o e-mail junto
+  await logWa(o.id, `recovery_${attempt}${opts.manual ? '_manual' : ''}`, viaEmail ? { ...r, hint: `${r.hint ? `${r.hint} ` : ''}Lembrete enviado por e-mail no lugar.` } : r);
+  return { ...r, viaEmail };
+}
+
+/**
+ * Recuperação manual (botão "Recuperar" em Vendas): manda o WhatsApp na hora e conta como a próxima
+ * tentativa da sequência (ex.: o 1º automático já foi → este é o 2º); o próximo automático conta a partir dele.
+ */
+export async function sendWhatsAppRecoveryNow(orderId: string): Promise<{ ok: boolean; message: string; attempt?: number }> {
+  const cfg = await getWhatsAppConfig();
+  if (!cfg.enabled) return { ok: false, message: 'WhatsApp desligado em Integrações' };
+  const { data } = await supabase.from('orders').select(WA_RECOVERY_SELECT).eq('id', orderId).maybeSingle();
+  const o: any = data;
+  if (!o) return { ok: false, message: 'pedido não encontrado' };
+  if (!o.customer?.phone) return { ok: false, message: 'cliente sem telefone' };
+  const owner = await ownerOrgId();
+  if (owner && (await orgOfOrder(o.id)) !== owner) return { ok: false, message: 'o WhatsApp da plataforma é só para as vendas da Prime' };
+  const { count } = await supabase.from('events').select('id', { count: 'exact', head: true }).eq('order_id', o.id).eq('type', 'wa_recovery');
+  const attempt = (count ?? 0) + 1;
+  const r = await sendOneWaRecovery(o, attempt, cfg, { manual: true });
+  return r.ok ? { ok: true, message: `${attempt}º lembrete`, attempt } : { ok: false, message: r.error ?? 'falhou' };
+}
+
 /** Recuperação de Pix pendente (até 3 tentativas espaçadas). Chamado pelo job a cada 2 min. */
 export async function sendWhatsAppRecoveries(max = 10) {
   const cfg = await getWhatsAppConfig();
@@ -804,7 +856,7 @@ export async function sendWhatsAppRecoveries(max = 10) {
   const since = new Date(Date.now() - 48 * 3600_000).toISOString();
   const { data } = await supabase
     .from('orders')
-    .select('id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, total_cents, tracking, customer:customers(name, phone), checkout:checkouts(slug), items:order_items(kind, name)')
+    .select(WA_RECOVERY_SELECT)
     .in('status', ['pending', 'expired'])
     .gte('created_at', since)
     .order('created_at', { ascending: true })
@@ -820,41 +872,32 @@ export async function sendWhatsAppRecoveries(max = 10) {
   if (!orders.length) return;
   // uma consulta para as tentativas e outra para quem já comprou (antes eram 2 consultas por pedido)
   const [evRes, paidRes] = await Promise.all([
-    supabase.from('events').select('order_id').eq('type', 'wa_recovery').in('order_id', orders.map((o) => o.id)),
+    supabase.from('events').select('order_id, created_at').eq('type', 'wa_recovery').in('order_id', orders.map((o) => o.id)),
     supabase.from('orders').select('customer_id').eq('status', 'paid').gte('created_at', since).in('customer_id', [...new Set(orders.map((o) => o.customer_id).filter(Boolean))]),
   ]);
   const attempts = new Map<string, number>();
-  for (const e of evRes.data ?? []) attempts.set(e.order_id, (attempts.get(e.order_id) ?? 0) + 1);
+  const lastAt = new Map<string, number>(); // hora do último lembrete (automático ou manual)
+  for (const e of (evRes.data ?? []) as any[]) {
+    attempts.set(e.order_id, (attempts.get(e.order_id) ?? 0) + 1);
+    const t = new Date(e.created_at).getTime();
+    if (t > (lastAt.get(e.order_id) ?? 0)) lastAt.set(e.order_id, t);
+  }
   const buyers = new Set((paidRes.data ?? []).map((p: any) => p.customer_id));
 
   let sent = 0;
   let waDown: string | null = null;
   for (const o of orders) {
     if (sent >= max) break;
-    const minutes = (Date.now() - new Date(o.created_at).getTime()) / 60000;
     const next = (attempts.get(o.id) ?? 0) + 1;
     if (next > 3) continue;
-    const wait = next === 1 ? cfg.recovery.firstMinutes : next === 2 ? cfg.recovery.secondMinutes : cfg.recovery.thirdMinutes;
-    if (minutes < wait) continue;
+    // 1º lembrete: conta da hora do Pix; os seguintes: do lembrete anterior (inclusive o manual)
+    const from = next === 1 ? new Date(o.created_at).getTime() : (lastAt.get(o.id) ?? new Date(o.created_at).getTime());
+    if ((Date.now() - from) / 60000 < recoveryGapMinutes(cfg, next)) continue;
     if (o.tracking?.upsell_of || o.tracking?.renewed_from) continue; // upsell e Pix renovado não entram nos lembretes
     if (buyers.has(o.customer_id)) continue; // já comprou depois? não incomoda
-    // reserva a tentativa ANTES de enviar (nunca reenviar em duplicidade)
-    const { error } = await supabase.from('events').insert({ order_id: o.id, checkout_id: o.checkout_id, type: 'wa_recovery', data: { attempt: next } });
-    if (error) continue;
-    const phone = normalizePhoneBR(o.customer.phone);
-    const pixValid = cfg.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
-    // link direto para o Pix pendente (se vencer, a página gera outro com um toque, sem preencher nada)
-    const link = `${env.PUBLIC_URL}/r/${shortOrderCode(o.number)}`; // link curto e exclusivo da venda
-    // Evolution fora do ar nesta rodada? não espera o tempo esgotar de novo: vai direto para o e-mail
-    const r: SendResult = waDown
-      ? { ok: false, error: waDown }
-      : await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: next, pixCode: pixValid ? o.pix_code : null, product: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? null, totalCents: o.total_cents }), cfg);
-    // Pix copia e cola numa mensagem SÓ com o código (fácil de copiar inteiro), do mesmo número do lembrete
-    if (r.ok && pixValid && o.pix_code) await sendWhatsAppText(phone, o.pix_code, cfg, { instance: r.instance }).catch(() => null);
+    const r = await sendOneWaRecovery(o, next, cfg, { waDown });
+    if (r.error === 'tentativa já registrada') continue;
     if (!r.ok && !waDown && isWaUnavailable(r.error)) waDown = r.error ?? 'WhatsApp indisponível';
-    let viaEmail = false;
-    if (!r.ok) viaEmail = await recoveryEmailFallback(o.id, o.customer_id, next);
-    await logWa(o.id, `recovery_${next}`, viaEmail ? { ...r, hint: `${r.hint ? `${r.hint} ` : ''}Lembrete enviado por e-mail no lugar.` } : r);
     sent++;
     if (r.ok) await sleep(3500); // pausa natural entre envios
   }

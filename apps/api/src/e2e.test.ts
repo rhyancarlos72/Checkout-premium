@@ -321,17 +321,22 @@ describe('recuperação pelo WhatsApp', () => {
     // só os lembretes (sem as mensagens que levam apenas o código Pix)
     const mine = () => waSent.slice(before).filter((w) => String(w.body?.number ?? '').includes('33332222') && w.body.text !== o.pix_code);
     expect(mine()).toHaveLength(1); // ainda não deu o tempo do 2º
-    o.created_at = new Date(Date.now() - 200 * 60_000).toISOString(); // 3h20
+    // os lembretes seguintes contam do anterior: 2º = 3 h − 20 min depois do 1º
+    const ago = (min: number) => db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === o.id).forEach((e) => (e.created_at = new Date(Date.now() - min * 60_000).toISOString()));
+    ago(150);
+    await sendWhatsAppRecoveries();
+    expect(mine()).toHaveLength(1); // 2h30 desde o 1º: ainda não
+    ago(165);
     await sendWhatsAppRecoveries();
     expect(mine()).toHaveLength(2);
     const second = mine()[1].body.text ?? mine()[1].body.textMessage?.text;
     expect(second).not.toMatch(/último/i);
-    o.created_at = new Date(Date.now() - 13 * 60 * 60_000).toISOString(); // 13h
+    ago(545); // 3º = 12 h − 3 h depois do 2º
     await sendWhatsAppRecoveries();
     expect(mine()).toHaveLength(3);
     const third = mine()[2].body.text ?? mine()[2].body.textMessage?.text;
     expect(third).toMatch(/SAIR/);
-    o.created_at = new Date(Date.now() - 40 * 60 * 60_000).toISOString();
+    ago(40 * 60);
     await sendWhatsAppRecoveries();
     expect(mine()).toHaveLength(3); // nunca um 4º
   }, 15_000);
@@ -372,7 +377,8 @@ describe('recuperação independente do WhatsApp', () => {
       await sendRecoveries();
       await sendWhatsAppRecoveries();
       expect(emails()).toHaveLength(1);
-      o.created_at = new Date(Date.now() - 200 * 60_000).toISOString(); // 3h20 → 2º lembrete
+      // 2º lembrete: 3 h − 20 min depois do 1º
+      db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === o.id).forEach((e) => (e.created_at = new Date(Date.now() - 165 * 60_000).toISOString()));
       await sendWhatsAppRecoveries();
       expect(emails()).toHaveLength(2);
       expect(emails()[1].event).toBe('recovery_2');
@@ -1262,4 +1268,36 @@ describe('marketplace multiusuário', () => {
       clearCheckoutCache();
     }
   });
+  it('recuperação manual (botão em Vendas): e-mail + WhatsApp na hora; conta como o próximo lembrete e o automático segue a partir dele', async () => {
+    const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
+    const r = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.55.1.2' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Rosa Manual', email: 'rosa.manual@x.com', phone: '11971234567' }, bump_ids: [], tracking: {} }) }).then((x) => x.json());
+    const o = db.orders.find((x) => x.public_token === r.token)!;
+    const mine = () => waSent.filter((w) => String(w.body?.number ?? '').includes('71234567') && w.body.text !== o.pix_code);
+    const evs = () => db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === o.id);
+    o.created_at = new Date(Date.now() - 25 * 60_000).toISOString();
+    await sendWhatsAppRecoveries();
+    expect(mine()).toHaveLength(1); // 1º automático
+
+    // botão: manda e-mail + WhatsApp agora e vira o 2º lembrete
+    expect((await as('b', 'POST', `/api/admin/orders/${o.id}/recovery-email`)).status).not.toBe(200); // pedido da Prime: produtor não acessa
+    const m = await as('owner', 'POST', `/api/admin/orders/${o.id}/recovery-email`);
+    expect(m.status).toBe(200);
+    expect(m.body).toMatchObject({ ok: true, whatsapp: true });
+    expect(m.body.message).toMatch(/WhatsApp enviado \(2º lembrete\)/);
+    expect(mine()).toHaveLength(2);
+    expect(waSent.some((w) => String(w.body?.number ?? '').includes('71234567') && w.body.text === o.pix_code)).toBe(true); // + código Pix
+    expect(evs().map((e) => e.data)).toEqual([{ attempt: 1 }, { attempt: 2, manual: true }]);
+    expect(o.recovery_sent_at).toBeTruthy();
+
+    // o automático NÃO manda logo depois do manual; o 3º conta a partir do manual (12 h − 3 h = 9 h)
+    await sendWhatsAppRecoveries();
+    expect(mine()).toHaveLength(2);
+    evs().forEach((e) => (e.created_at = new Date(Date.now() - 8 * 60 * 60_000).toISOString()));
+    await sendWhatsAppRecoveries();
+    expect(mine()).toHaveLength(2); // 8 h depois do manual: ainda não
+    evs().forEach((e) => (e.created_at = new Date(Date.now() - 9.2 * 60 * 60_000).toISOString()));
+    await sendWhatsAppRecoveries();
+    expect(mine()).toHaveLength(3);
+    expect(evs().at(-1)!.data).toEqual({ attempt: 3 });
+  }, 20_000);
 });

@@ -153,7 +153,7 @@ export default function OrdersPage() {
   );
 }
 
-/** Ícone ao lado do status: envia na hora o e-mail de recuperação para o cliente do pedido pendente. */
+/** Ícone ao lado do status: envia na hora a recuperação (e-mail + WhatsApp) para o cliente do pedido pendente. */
 function RecoveryEmailButton({ order }: { order: OrderRow }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -166,7 +166,7 @@ function RecoveryEmailButton({ order }: { order: OrderRow }) {
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao enviar'),
   });
   const sent = Boolean(order.recovery_sent_at);
-  const title = sent ? `Recuperação enviada em ${dateTime(order.recovery_sent_at!)}. Clique para enviar de novo` : `Enviar e-mail de recuperação para ${order.customer?.email ?? 'o cliente'}`;
+  const title = sent ? `Recuperação enviada em ${dateTime(order.recovery_sent_at!)}. Clique para enviar de novo (e-mail + WhatsApp)` : `Enviar recuperação por e-mail e WhatsApp para ${order.customer?.name ?? 'o cliente'}`;
   return (
     <>
       <button

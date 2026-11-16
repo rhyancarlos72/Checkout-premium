@@ -20,7 +20,7 @@ import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
-import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
+import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
 import { recordRefund } from '../services/ledger.js';
@@ -630,9 +630,10 @@ adminRouter.post('/orders/:id/resend-delivery', async (req, res) => {
   res.json({ ok: true });
 });
 /** Recuperação manual por e-mail (ícone ao lado do status, só pedidos pendentes). */
+// Recuperação manual (botão em Vendas): e-mail + WhatsApp na hora. No WhatsApp conta como a próxima tentativa
+// da sequência automática (ex.: o 1º já saiu → este é o 2º) e o próximo automático conta a partir deste.
 adminRouter.post('/orders/:id/recovery-email', async (req, res) => {
   const id = uuid.parse(req.params.id);
-  if (!mailConfig().configured) return res.json({ ok: false, message: 'Configure o SMTP em Integrações → E-mail para enviar e-mails de recuperação' });
   const { data: o }: any = await supabase
     .from('orders')
     .select(RECOVERY_ORDER_SELECT)
@@ -640,18 +641,31 @@ adminRouter.post('/orders/:id/recovery-email', async (req, res) => {
     .maybeSingle();
   if (!o) throw new HttpError(404, 'Pedido não encontrado');
   if (o.status !== 'pending' && o.status !== 'expired') throw new HttpError(400, 'Só pedidos pendentes recebem recuperação');
-  if (!o.customer?.email || !o.checkout) throw new HttpError(400, 'Pedido sem e-mail do cliente');
-  const ok = await sendRecoveryForOrder(o);
-  if (!ok) {
+
+  // e-mail
+  let email: { ok: boolean; text: string };
+  if (!mailConfig().configured) email = { ok: false, text: 'e-mail: SMTP não configurado' };
+  else if (!o.customer?.email || !o.checkout) email = { ok: false, text: 'e-mail: pedido sem e-mail do cliente' };
+  else if (await sendRecoveryForOrder(o)) email = { ok: true, text: `e-mail enviado para ${o.customer.email}` };
+  else {
     // mostra o motivo real (ex.: senha do SMTP recusada, cliente descadastrado)
     const { data: last } = await supabase.from('integration_logs').select('message').eq('order_id', id).eq('integration', 'email').eq('event', 'recovery').order('created_at', { ascending: false }).limit(1).maybeSingle();
     const why = String((last as any)?.message ?? '');
-    const hint = /auth|535|credentials|password|login/i.test(why) ? ' Confira SMTP_USER e SMTP_PASS (senha do e-mail na Hostinger).' : /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout/i.test(why) ? ' Confira SMTP_HOST=smtp.hostinger.com e SMTP_PORT=465.' : '';
-    return res.json({ ok: false, message: `E-mail não enviado${why ? `: ${why}` : ''}.${hint}` });
+    const hint = /auth|535|credentials|password|login/i.test(why) ? ' (confira usuário e senha do SMTP)' : /ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout/i.test(why) ? ' (confira servidor e porta do SMTP)' : '';
+    email = { ok: false, text: `e-mail não enviado${why ? `: ${why}` : ''}${hint}` };
   }
-  const sentAt = new Date().toISOString();
-  await supabase.from('orders').update({ recovery_sent_at: sentAt }).eq('id', id);
-  res.json({ ok: true, message: `E-mail de recuperação enviado para ${o.customer.email}`, sent_at: sentAt });
+
+  // WhatsApp (mesmo número e mensagem dos lembretes automáticos, com o código Pix em seguida)
+  const wa = await sendWhatsAppRecoveryNow(id).catch((e) => ({ ok: false, message: String(e?.message ?? e) }));
+  const waText = wa.ok ? `WhatsApp enviado (${wa.message})` : `WhatsApp não enviado: ${wa.message}`;
+
+  const ok = email.ok || wa.ok;
+  let sentAt: string | null = null;
+  if (ok) {
+    sentAt = new Date().toISOString();
+    await supabase.from('orders').update({ recovery_sent_at: sentAt }).eq('id', id);
+  }
+  res.json({ ok, message: `${email.ok ? 'Recuperação enviada: ' : ''}${email.text} · ${waText}`, sent_at: sentAt, email: email.ok, whatsapp: wa.ok });
 });
 
 // ------------------------------------------------------------------ nota fiscal do pedido (Spedy)
