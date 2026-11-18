@@ -1860,4 +1860,30 @@ describe('marketplace multiusuário', () => {
     expect((db.wa_queue ?? []).some((q) => q.order_id === o.id)).toBe(false);
     await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
   });
+  it('rodízio dos áudios da recuperação: 1º lembrete reveza, mas nunca usa o áudio reservado ao último', async () => {
+    const wa = await import('./services/waAudio.js');
+    const now = new Date().toISOString();
+    const A = '0c000000-0000-4000-8000-0000000000b1', B = '0c000000-0000-4000-8000-0000000000b2', LAST = '0c000000-0000-4000-8000-0000000000b3';
+    const keep = db.wa_audios;
+    db.wa_audios = [
+      { id: A, kind: 'recovery', name: 'Rec A', file_url: 'https://x/a.mp3', active: true, created_at: now },
+      { id: B, kind: 'recovery', name: 'Rec B', file_url: 'https://x/b.mp3', active: true, created_at: now },
+      { id: LAST, kind: 'recovery', name: 'Última chance', file_url: 'https://x/l.mp3', active: true, created_at: now },
+    ];
+    const cfg = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...cfg, windowStart: 0, windowEnd: 24, recovery: { ...cfg.recovery, enabled: true, attempts: [1, 3], audioFirst: '', audioLast: LAST, product_ids: ['00000000-0000-4000-8000-000000000001'] } });
+    const used = new Set<string>();
+    for (let i = 0; i < 24; i++) {
+      const o = { id: crypto.randomUUID(), customer_id: null, customer: { phone: '11977770000' }, items: [{ kind: 'main', product_id: '00000000-0000-4000-8000-000000000001' }] };
+      db.orders.push({ id: o.id, status: 'pending', created_at: now, public_token: crypto.randomBytes(24).toString('hex') });
+      expect(await wa.queueRecoveryAudio(o, 1)).toBe(true);
+      used.add(db.wa_queue.find((q) => q.order_id === o.id)!.audio_id);
+      expect(await wa.queueRecoveryAudio(o, 3)).toBe(true);
+      expect(db.wa_queue.find((q) => q.order_id === o.id && q.attempt === 3)!.audio_id).toBe(LAST); // último: sempre o reservado
+    }
+    expect(used.has(LAST)).toBe(false); // 1º lembrete nunca usa o de "última chance"
+    expect([...used].sort()).toEqual([A, B].sort()); // e reveza entre os outros
+    db.wa_audios = keep;
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
+  });
 });

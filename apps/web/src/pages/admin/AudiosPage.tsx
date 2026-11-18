@@ -267,6 +267,7 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
                 </Field>
               ))}
             </div>
+            <p className="-mt-1 text-xs text-zinc-500">“Revezar os ativos” sorteia entre os áudios de recuperação ativos (compare no relatório qual vende mais). O áudio escolhido para um lembrete nunca entra no revezamento do outro.</p>
             <Field label="Áudio sai após (s)" hint="Tempo entre a 1ª mensagem e o áudio"><Input type="number" min={10} value={c.recovery.gapSeconds} onChange={(e) => setC({ ...c, recovery: { ...c.recovery, gapSeconds: num(e.target.value) } })} /></Field>
           </div>
           <ProductPicker

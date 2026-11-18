@@ -155,12 +155,19 @@ export function fillText(tpl: string, v: { nome?: string; produto?: string; link
 }
 
 // ------------------------------------------------------------------ áudios
-async function pickAudio(kind: 'recovery' | 'upsell', preferId?: string | null) {
+/**
+ * Áudio a enviar: o escolhido (se ativo) ou, no "revezar", um dos ativos ao acaso (para comparar no relatório qual
+ * vende mais). `avoid`: áudio reservado a outro lembrete (ex.: o de "última chance") não entra no revezamento.
+ */
+async function pickAudio(kind: 'recovery' | 'upsell', preferId?: string | null, avoid?: string | null) {
   const { data, error } = await supabase.from('wa_audios').select('id, file_url, name').eq('kind', kind).eq('active', true);
   if (error || !data?.length) return null;
-  const list = data as { id: string; file_url: string; name: string }[];
-  // várias versões ativas: reveza ao acaso (comparar no relatório qual vende mais)
-  return list.find((a) => a.id === preferId) ?? list[Math.floor(Math.random() * list.length)];
+  const all = data as { id: string; file_url: string; name: string }[];
+  const chosen = all.find((a) => a.id === preferId);
+  if (chosen) return chosen;
+  const list = all.filter((a) => a.id !== avoid);
+  const pool = list.length ? list : all; // só existe o reservado: usa ele mesmo
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 async function audioById(id: string | null | undefined) {
   if (!id) return null;
@@ -313,7 +320,7 @@ export async function queueRecoveryAudio(o: any, attempt = 3): Promise<boolean> 
   const phone = normalizePhoneBR(o.customer?.phone);
   if (!phone) return false;
   const last = attempt === Math.max(...cfg.recovery.attempts) && attempt > 1;
-  const audio = await pickAudio('recovery', (last ? cfg.recovery.audioLast : cfg.recovery.audioFirst) || null);
+  const audio = await pickAudio('recovery', (last ? cfg.recovery.audioLast : cfg.recovery.audioFirst) || null, (last ? cfg.recovery.audioFirst : cfg.recovery.audioLast) || null);
   if (!audio) return false;
   const { error } = await supabase.from('wa_queue').insert({ kind: 'recovery', attempt, status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone, audio_id: audio.id, run_at: new Date().toISOString() });
   if (error && /attempt/i.test(error.message)) logger.warn('Rode no Supabase o SQL 20261122000000_wa_queue_attempt.sql (recuperação por áudio em mais de um lembrete)');
