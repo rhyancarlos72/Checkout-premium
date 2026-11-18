@@ -20,7 +20,7 @@ import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
-import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
+import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
 import { recordRefund } from '../services/ledger.js';
@@ -1247,6 +1247,14 @@ adminRouter.post('/whatsapp/instances', async (req, res) => {
   if (!r.ok) return res.json(r);
   await saveWhatsAppConfig({ ...cfg, instances: [...cfg.instances, { name: b.name, token: r.token, active: true }] });
   res.json({ ok: true, name: b.name, qr: r.qr, pairingCode: r.pairingCode });
+});
+// reconectar uma instância que caiu (QR Code novo + código), sem criar outra
+adminRouter.post('/whatsapp/instances/:name/reconnect', async (req, res) => {
+  const name = z.string().regex(/^[A-Za-z0-9_-]{2,40}$/).parse(req.params.name);
+  const number = z.object({ number: z.string().trim().max(30).optional().nullable() }).parse(req.body ?? {}).number ?? null;
+  const cfg = await getWhatsAppConfig();
+  if (!cfg.instances.some((i) => i.name === name)) throw new HttpError(404, 'Instância não cadastrada no checkout');
+  res.set('Cache-Control', 'no-store').json(await evolutionReconnect(cfg, name, number));
 });
 adminRouter.get('/whatsapp/instances/:name/connect', async (req, res) => {
   const name = z.string().regex(/^[A-Za-z0-9_-]{2,40}$/).parse(req.params.name);

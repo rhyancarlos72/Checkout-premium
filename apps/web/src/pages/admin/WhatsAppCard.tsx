@@ -34,7 +34,8 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
   const { data } = useQuery({ queryKey: ['whatsapp'], queryFn: () => adminApi.get<Config>('/whatsapp') });
   const preview = useQuery({ queryKey: ['whatsapp-preview'], queryFn: () => adminApi.get<{ approved: string; recovery1: string; recovery2: string; recovery3?: string }>('/whatsapp/preview') });
   const [c, setC] = useState<Config | null>(null);
-  const [status, setStatus] = useState<Record<string, { ok: boolean; message: string; hint?: string }>>({});
+  const [status, setStatus] = useState<Record<string, { ok: boolean; message: string; hint?: string; disconnected?: boolean }>>({});
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string; hint?: string } | null>(null);
   const [diag, setDiag] = useState<{ steps: { label: string; ok: boolean | null; detail: string; hint?: string }[] } | null>(null);
   const logs = useQuery({ queryKey: ['whatsapp-logs'], queryFn: () => adminApi.get<{ event: string; ok: boolean; message: string; created_at: string }[]>('/whatsapp/logs'), refetchInterval: 30_000 });
@@ -77,7 +78,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro ao salvar'),
   });
   const check = useMutation({
-    mutationFn: () => adminApi.get<{ name: string; ok: boolean; message: string; hint?: string }[]>('/whatsapp/status'),
+    mutationFn: () => adminApi.get<{ name: string; ok: boolean; message: string; hint?: string; disconnected?: boolean }[]>('/whatsapp/status'),
     onSuccess: (r) => {
       setStatus(Object.fromEntries(r.map((x) => [x.name, x])));
       const on = r.filter((x) => x.ok).length;
@@ -91,7 +92,7 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
     onError: (e) => setTestResult({ ok: false, message: e instanceof ApiError ? e.message : 'Erro' }),
   });
   const diagnose = useMutation({
-    mutationFn: () => adminApi.get<{ steps: { label: string; ok: boolean | null; detail: string; hint?: string }[]; instances: { name: string; ok: boolean; message: string; hint?: string }[] }>('/whatsapp/diagnose'),
+    mutationFn: () => adminApi.get<{ steps: { label: string; ok: boolean | null; detail: string; hint?: string }[]; instances: { name: string; ok: boolean; message: string; hint?: string; disconnected?: boolean }[] }>('/whatsapp/diagnose'),
     onSuccess: (r) => (setDiag(r), setStatus(Object.fromEntries(r.instances.map((x) => [x.name, x])))),
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
   });
@@ -221,7 +222,12 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
                   </div>
                   {status[inst.name] && (
                     <div className={cn('col-span-3 rounded-lg px-2.5 py-1.5 text-xs', status[inst.name].ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700')}>
-                      {status[inst.name].message}
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span>{status[inst.name].message}</span>
+                        {status[inst.name].disconnected && saved(inst.name) && (
+                          <Button size="sm" className="h-8" onClick={() => setReconnecting(inst.name)}><QrCode className="h-3.5 w-3.5" /> Reconectar</Button>
+                        )}
+                      </div>
                       {status[inst.name].hint && <span className="mt-0.5 block text-zinc-600">💡 {status[inst.name].hint}</span>}
                     </div>
                   )}
@@ -312,6 +318,14 @@ export function WhatsAppCard({ toast }: { toast: Toast }) {
           </div>
         </div>
       </div>
+      {reconnecting && (
+        <ConnectInstanceModal
+          existing={data?.instances.map((x) => x.name) ?? []}
+          reconnect={reconnecting}
+          onClose={() => (setReconnecting(null), check.mutate())}
+          toast={toast}
+        />
+      )}
       {connecting && <ConnectInstanceModal existing={data?.instances.map((x) => x.name) ?? []} onClose={() => setConnecting(false)} toast={toast} />}
     </section>
   );

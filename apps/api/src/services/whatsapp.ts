@@ -256,6 +256,8 @@ export interface InstanceCheck {
   state: string | null;
   message: string;
   hint?: string;
+  /** a instância existe na Evolution, mas o WhatsApp está desconectado: dá para reconectar pelo painel (QR Code ou código) */
+  disconnected?: boolean;
 }
 
 /** Verifica uma instância e explica o resultado (rede, token, nome, conexão do WhatsApp). */
@@ -277,7 +279,7 @@ export async function checkInstance(cfg: WhatsAppConfig, instIn: { name: string;
     r.state = state == null ? null : String(state);
     if (state == null) return { ...r, ok: true, message: 'Instância encontrada (estado não informado pela Evolution).' };
     if (['open', 'connected', 'online'].includes(String(state).toLowerCase())) return { ...r, ok: true, message: 'Conectada ao WhatsApp' };
-    return { ...r, message: `WhatsApp desconectado nesta instância (estado: ${state})`, hint: 'Abra a Evolution, entre na instância e escaneie o QR Code com o celular do número para conectar.' };
+    return { ...r, disconnected: true, message: `WhatsApp desconectado nesta instância (estado: ${state})`, hint: 'Clique em “Reconectar” e leia o QR Code com o celular do número (ou use o código de conexão).' };
   } catch (e) {
     const d = describeNetworkError(e, cfg.apiUrl);
     return { ...r, message: d.message, hint: d.hint };
@@ -955,6 +957,27 @@ export async function evolutionCreateInstance(cfg: WhatsAppConfig, name: string,
     const d = describeNetworkError(e, cfg.apiUrl);
     return { ok: false as const, error: d.message, hint: d.hint };
   }
+}
+
+/**
+ * Reconectar uma instância que caiu: se o WhatsApp não está conectado, encerra a sessão antiga na Evolution
+ * (sessão travada em "connecting" não gera QR novo) e devolve um QR Code novo + o código de conexão.
+ * Nunca desconecta uma instância que está conectada.
+ */
+export async function evolutionReconnect(cfg: WhatsAppConfig, name: string, number?: string | null) {
+  const inst = cfg.instances.find((i) => i.name === name);
+  const key = (inst && tokenFor(cfg, inst)) || cfg.globalApiKey;
+  if (!key) return { ok: false as const, error: 'Instância sem token' };
+  try {
+    const st = await evoCall(cfg, 'GET', `/instance/connectionState/${encodeURIComponent(name)}`, key);
+    if (st.status === 404) return { ok: false as const, error: `Instância “${name}” não existe na Evolution`, hint: 'Confira o nome (maiúsculas contam) ou use “Conectar novo número”.' };
+    const state = String(st.json?.instance?.state ?? st.json?.state ?? '').toLowerCase();
+    if (!['open', 'connected'].includes(state)) await evoCall(cfg, 'DELETE', `/instance/logout/${encodeURIComponent(name)}`, key).catch(() => null);
+  } catch (e) {
+    const d = describeNetworkError(e, cfg.apiUrl);
+    return { ok: false as const, error: d.message, hint: d.hint };
+  }
+  return evolutionConnectStatus(cfg, name, number);
 }
 
 /** QR Code atualizado (ele expira em ~40 s) + se já conectou, com o número do WhatsApp. */

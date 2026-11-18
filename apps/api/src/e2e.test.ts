@@ -16,6 +16,8 @@ const spedyCalls: any[] = [];
 const ptCalls: { event: string; body: any; headers: http.IncomingHttpHeaders }[] = [];
 const waSent: { instance: string; body: any }[] = [];
 let evoDown = false; // simula a Evolution fora do ar
+const evoState: Record<string, string> = {}; // estado do WhatsApp por instância (padrão: conectado)
+const evoCalls: string[] = [];
 let ptStatus = 200; // simula a PayTracking recusando (ex.: 403 por alguns minutos)
 // Efí API de Cobranças simulada (cartão)
 const efiCharges = new Map<string, { status: string; body: any; total: number }>();
@@ -43,7 +45,15 @@ const fake = http.createServer((req, res) => {
       spedyCalls.push(body);
       return json(201, { id: `inv-${spedyCalls.length}`, status: 'enqueued' });
     }
-    if (req.url!.startsWith('/evo/instance/connectionState/')) return json(200, { instance: { state: 'open' } });
+    if (req.url!.startsWith('/evo/instance/connectionState/')) return json(200, { instance: { state: evoState[decodeURIComponent(req.url!.split('/').pop()!)] ?? 'open' } });
+    if (req.url!.startsWith('/evo/instance/logout/') && req.method === 'DELETE') return evoCalls.push(`logout ${decodeURIComponent(req.url!.split('/').pop()!)}`), json(200, { status: 'SUCCESS' });
+    if (req.url!.startsWith('/evo/instance/connect/')) {
+      const u = new URL(req.url!, 'http://x');
+      const name = decodeURIComponent(u.pathname.split('/').pop()!);
+      evoCalls.push(`connect ${name}${u.searchParams.get('number') ? ` ${u.searchParams.get('number')}` : ''}`);
+      if ((evoState[name] ?? 'open') === 'open') return json(200, { instance: { state: 'open' } });
+      return json(200, { base64: 'data:image/png;base64,QRNOVO', pairingCode: u.searchParams.get('number') ? 'WZYX1234' : null, count: 1 });
+    }
     if (req.url!.startsWith('/evo/message/sendText/')) {
       if (evoDown) return json(502, { error: 'bad gateway' });
       waSent.push({ instance: decodeURIComponent(req.url!.split('/').pop()!), body });
@@ -1300,4 +1310,40 @@ describe('marketplace multiusuário', () => {
     expect(mine()).toHaveLength(3);
     expect(evs().at(-1)!.data).toEqual({ attempt: 3 });
   }, 20_000);
+  it('WhatsApp desconectou: a verificação mostra "desconectada" e o Reconectar gera QR Code novo e o código (sem derrubar instância conectada)', async () => {
+    const wa = db.settings.find((x) => x.key === 'whatsapp')!;
+    const before = wa.value;
+    wa.value = { ...wa.value, instances: [...wa.value.instances, { name: 'caiu', token: 't3', active: true }] };
+    const { saveWhatsAppConfig, getWhatsAppConfig } = await import('./services/whatsapp.js');
+    await saveWhatsAppConfig({ ...(await getWhatsAppConfig()), instances: wa.value.instances }); // limpa o cache da configuração
+    evoState.caiu = 'close';
+    try {
+      const st = (await as('owner', 'GET', '/api/admin/whatsapp/status')).body as any[];
+      expect(st.find((x) => x.name === 'caiu')).toMatchObject({ ok: false, disconnected: true });
+      expect(st.find((x) => x.name === 'checkout1')).toMatchObject({ ok: true });
+      expect(st.find((x) => x.name === 'checkout1').disconnected).toBeUndefined();
+
+      // só o Super Admin
+      expect((await as('b', 'POST', '/api/admin/whatsapp/instances/caiu/reconnect', {})).status).toBe(403);
+      evoCalls.length = 0;
+      const r = await as('owner', 'POST', '/api/admin/whatsapp/instances/caiu/reconnect', { number: '(11) 98888-7777' });
+      expect(r.status).toBe(200);
+      expect(r.body).toMatchObject({ ok: true, connected: false, qr: 'data:image/png;base64,QRNOVO', pairingCode: 'WZYX1234' });
+      expect(evoCalls).toEqual(['logout caiu', 'connect caiu 5511988887777']); // limpa a sessão travada e pede QR + código
+
+      // leu o QR: a consulta seguinte mostra conectado
+      evoState.caiu = 'open';
+      expect((await as('owner', 'GET', '/api/admin/whatsapp/instances/caiu/connect')).body).toMatchObject({ ok: true, connected: true });
+
+      // instância conectada: reconectar não derruba nada
+      evoCalls.length = 0;
+      expect((await as('owner', 'POST', '/api/admin/whatsapp/instances/checkout1/reconnect', {})).body).toMatchObject({ ok: true, connected: true });
+      expect(evoCalls.some((c) => c.startsWith('logout'))).toBe(false);
+      expect((await as('owner', 'POST', '/api/admin/whatsapp/instances/naoexiste/reconnect', {})).status).toBe(404);
+    } finally {
+      delete evoState.caiu;
+      wa.value = before;
+      await saveWhatsAppConfig({ ...(await getWhatsAppConfig()), instances: before.instances });
+    }
+  });
 });
