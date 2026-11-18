@@ -1346,4 +1346,112 @@ describe('marketplace multiusuário', () => {
       await saveWhatsAppConfig({ ...(await getWhatsAppConfig()), instances: before.instances });
     }
   });
+  it('Clube (área de membros recorrente): planos fundador/padrão com preço travado, compra só no Pix, acesso com tolerância e cancelar pelo perfil', async () => {
+    const { efi } = await import('./providers/index.js');
+    const { refreshGateways } = await import('./services/gateways.js');
+    const { clearCheckoutCache, syncOrderWithProvider } = await import('./services/orders.js');
+    const subs = await import('./services/subscriptions.js');
+    const { ownedProductIds, createMemberSession } = await import('./services/members.js');
+    const DAY = 86_400_000;
+    const g = db.settings.find((x) => x.key === 'gateways')!;
+    const before = g.value;
+    g.value = { ...g.value, efi: { ...(g.value.efi ?? {}), clientId: 'cid', clientSecret: 'csec', pixKey: 'pix@prime.com', certBase64: Buffer.from('cert').toString('base64'), webhookSecret: 'whsec123' }, pixAuto: { enabled: true, account: '7654321' } };
+    await refreshGateways(true);
+    const cob = new Map<string, string>();
+    let recSeq = 100;
+    const realAuthed = (efi as any).authed;
+    (efi as any).authed = async (method: string, path: string, body?: any) => {
+      const [p, qs] = path.split('?');
+      let m;
+      if ((m = p.match(/^\/v2\/cob\/(\w+)$/)) && method === 'PUT') return cob.set(m[1], 'ATIVA'), { txid: m[1], pixCopiaECola: `000201COB${m[1]}` };
+      if ((m = p.match(/^\/v2\/cob\/(\w+)$/)) && method === 'GET') return { status: cob.get(m[1]), pix: cob.get(m[1]) === 'CONCLUIDA' ? [{ valor: body?.valor ?? '999.00' }] : [] };
+      if (p === '/v2/locrec') return { id: 7 };
+      if (p === '/v2/rec' && method === 'POST') return { idRec: `RC${++recSeq}` };
+      if ((m = p.match(/^\/v2\/rec\/(\w+)$/)) && method === 'GET') return { idRec: m[1], status: 'CRIADA', ...(qs ? { dadosQR: { pixCopiaECola: `000201REC${m[1]}` } } : {}) };
+      if ((m = p.match(/^\/v2\/rec\/(\w+)$/)) && method === 'PATCH') return { idRec: m[1], status: 'CANCELADA' };
+      throw new Error(`Efí falsa: ${method} ${path}`);
+    };
+    const member = (session: string, method: string, path: string, body?: unknown) =>
+      fetch(`${base}/api/members${path}`, { method, headers: { 'Content-Type': 'application/json', Authorization: `Member ${session}` }, body: body === undefined ? undefined : JSON.stringify(body) }).then(async (r) => ({ status: r.status, body: await r.json().catch(() => null) }));
+    const buy = (email: string, slug: string, doc: string | null = '52998224725') =>
+      fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.66.1.1' }, body: JSON.stringify({ checkout_slug: slug, customer: { name: 'Professora Ana', email, phone: '11987650000', ...(doc ? { document: doc } : {}) }, bump_ids: [], tracking: {} }) }).then(async (r) => ({ status: r.status, body: await r.json() }));
+    try {
+      // produto do Clube (área de membros por mensalidade): só o Super Admin cria
+      const created = await as('owner', 'POST', '/api/admin/products', { name: 'Clube de Atividades', price_cents: 1990, delivery_type: 'members', active: true });
+      expect(created.status).toBe(201);
+      const CLUB = created.body.id;
+      const slug = created.body.checkout.slug;
+      expect((await as('b', 'PUT', `/api/admin/products/${CLUB}`, { club: true })).status).not.toBe(200);
+      expect((await as('owner', 'POST', '/api/admin/club/plans', { product_id: CLUB, name: 'Fundador', price_cents: 990, on_sale: true })).status).toBe(400); // ainda não é Clube
+      expect((await as('owner', 'PUT', `/api/admin/products/${CLUB}`, { club: true })).status).toBe(200);
+      expect(db.products.find((x) => x.id === CLUB)).toMatchObject({ club: true, members_enabled: true }); // salvar só "club" não muda a entrega
+      const fundador = (await as('owner', 'POST', '/api/admin/club/plans', { product_id: CLUB, name: 'Fundador', price_cents: 990, on_sale: true })).body;
+      const padrao = (await as('owner', 'POST', '/api/admin/club/plans', { product_id: CLUB, name: 'Padrão', price_cents: 1990 })).body;
+      expect((await as('b', 'GET', `/api/admin/club/plans?product_id=${CLUB}`)).status).toBe(403);
+      clearCheckoutCache();
+
+      // checkout do Clube: preço do plano à venda, mensal, só Pix
+      const pub = (await api('GET', `/api/public/checkouts/${slug}`)).body;
+      expect(pub.price_cents).toBe(990);
+      expect(pub.club).toMatchObject({ monthly_cents: 990, plan: 'Fundador', auto: true });
+      expect(pub.payment.card).toBeNull();
+      expect((await buy('sem.cpf@x.com', slug, null)).status).toBe(400); // Pix Automático exige CPF
+
+      // fundadora assina por R$ 9,90 (1 QR: paga e autoriza)
+      const r = await buy('ana.fundadora@x.com', slug);
+      expect(r.status).toBe(201);
+      const o = db.orders.find((x) => x.public_token === r.body.token)!;
+      expect(o).toMatchObject({ total_cents: 990, provider: 'efi' });
+      expect(db.order_items.find((i) => i.order_id === o.id && i.kind === 'main')).toMatchObject({ product_id: CLUB, recurring: true });
+      const sub = db.subscriptions.find((x) => x.origin_order_id === o.id)!;
+      expect(sub).toMatchObject({ price_cents: 990, plan_id: fundador.id, plan_name: 'Fundador', method: 'pix_automatico', status: 'pending' });
+      cob.set(o.provider_charge_id, 'CONCLUIDA');
+      expect(await syncOrderWithProvider(o.id)).toBe('paid');
+      expect(sub.status).toBe('active');
+      expect(sub.started_at).toBeTruthy();
+      expect((await ownedProductIds(o.customer_id)).has(CLUB)).toBe(true);
+
+      // plano à venda agora é o Padrão: novos pagam R$ 19,90; a fundadora continua em R$ 9,90
+      expect((await as('owner', 'POST', `/api/admin/club/plans/${padrao.id}/on-sale`)).status).toBe(200);
+      expect((await api('GET', `/api/public/checkouts/${slug}`)).body.price_cents).toBe(1990);
+      const r2 = await buy('bia.padrao@x.com', slug);
+      const sub2 = db.subscriptions.find((x) => x.origin_order_id === db.orders.find((y) => y.public_token === r2.body.token)!.id)!;
+      expect(sub2).toMatchObject({ price_cents: 1990, plan_name: 'Padrão' });
+      expect(sub.price_cents).toBe(990);
+      const plans = (await as('owner', 'GET', `/api/admin/club/plans?product_id=${CLUB}`)).body;
+      expect(plans.find((p: any) => p.id === fundador.id)).toMatchObject({ on_sale: false, active_subscribers: 1 });
+
+      // em atraso há 2 dias: acesso continua (tolerância); há 4 dias: pausa
+      sub.paid_until = new Date(Date.now() - 2 * DAY).toISOString();
+      sub.status = 'past_due';
+      expect((await ownedProductIds(o.customer_id)).has(CLUB)).toBe(true);
+      sub.paid_until = new Date(Date.now() - 4 * DAY).toISOString();
+      await subs.runSubscriptionJobs();
+      expect(sub.status).toBe('expired');
+      expect((await ownedProductIds(o.customer_id)).has(CLUB)).toBe(false);
+
+      // perfil do membro: vê a assinatura e cancela em 2 cliques (motivo opcional)
+      sub.status = 'active';
+      sub.paid_until = new Date(Date.now() + 20 * DAY).toISOString();
+      const session = createMemberSession(o.customer_id);
+      const mine = await member(session, 'GET', '/subscriptions');
+      expect(mine.body[0]).toMatchObject({ id: sub.id, status_label: 'ativa', plan: 'Fundador', price_cents: 990, can_cancel: true });
+      const other = createMemberSession(db.orders.find((y) => y.public_token === r2.body.token)!.customer_id);
+      expect((await member(other, 'POST', `/subscriptions/${sub.id}/cancel`, {})).status).toBe(404); // só a própria assinatura
+      expect((await member(session, 'POST', `/subscriptions/${sub.id}/cancel`, { reason: 'Está caro no momento' })).status).toBe(200);
+      expect(sub).toMatchObject({ status: 'canceled', canceled_by: 'cliente', cancel_reason: 'Está caro no momento', rec_status: 'CANCELADA' });
+      expect((await ownedProductIds(o.customer_id)).has(CLUB)).toBe(true); // segue até o fim do mês pago
+      sub.paid_until = new Date(Date.now() - 1000).toISOString();
+      expect((await ownedProductIds(o.customer_id)).has(CLUB)).toBe(false);
+
+      // voltou depois de cancelar: entra no plano à venda (Padrão)
+      const back = await buy('ana.fundadora@x.com', slug);
+      expect(db.subscriptions.find((x) => x.origin_order_id === db.orders.find((y) => y.public_token === back.body.token)!.id)).toMatchObject({ price_cents: 1990, plan_name: 'Padrão' });
+    } finally {
+      (efi as any).authed = realAuthed;
+      g.value = before;
+      await refreshGateways(true);
+      clearCheckoutCache();
+    }
+  });
 });

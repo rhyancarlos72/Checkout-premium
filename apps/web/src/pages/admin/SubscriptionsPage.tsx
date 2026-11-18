@@ -24,6 +24,11 @@ interface Sub {
   payments: number;
   received_cents: number;
   renew_url: string;
+  plan_name: string | null;
+  method: 'pix_automatico' | 'cartao';
+  started_at: string | null;
+  cancel_reason: string | null;
+  canceled_by: 'cliente' | 'admin' | 'banco' | null;
 }
 
 const statusText: Record<Sub['status'], string> = { pending: 'Aguardando 1º pagamento', active: 'Em dia', past_due: 'Vencida (tolerância)', expired: 'Pausada', canceled: 'Cancelada' };
@@ -77,11 +82,13 @@ export default function SubscriptionsPage() {
               <div key={s.id} className="flex flex-col gap-3 px-5 py-4 lg:flex-row lg:items-center">
                 <div className="min-w-0 flex-1">
                   <p className="pv truncate font-medium">{s.customer?.name ?? '—'} <span className="font-normal text-gray-500">· {s.customer?.email}</span></p>
-                  <p className="truncate text-sm text-gray-600">{s.items.map((i) => i.name).join(' + ')} · <b className="pv">{brl(s.price_cents)}/mês</b></p>
+                  <p className="truncate text-sm text-gray-600">{s.items.map((i) => i.name).join(' + ')} · <b className="pv">{brl(s.price_cents)}/mês</b>{s.plan_name && <> · plano {s.plan_name}</>}</p>
                   <p className="mt-0.5 text-xs text-gray-500">
                     {recText(s)}
+                    {s.started_at && <> · desde {new Date(s.started_at).toLocaleDateString('pt-BR')}</>}
                     {s.paid_until && <> · acesso pago até {new Date(s.paid_until).toLocaleDateString('pt-BR')}</>}
                     {s.payments > 0 && <> · {s.payments} pagamento{s.payments > 1 ? 's' : ''} ({<span className="pv">{brl(s.received_cents)}</span>})</>}
+                    {s.status === 'canceled' && (s.canceled_by || s.cancel_reason) && <> · cancelada {s.canceled_by === 'cliente' ? 'pelo cliente' : s.canceled_by === 'banco' ? 'no banco' : 'pelo admin'}{s.cancel_reason ? `: “${s.cancel_reason}”` : ''}</>}
                     {s.origin && <> · <Link to="/admin/pedidos" className="text-blue-600 hover:underline">pedido ID: {productCode(s.origin.number)}</Link></>}
                   </p>
                 </div>

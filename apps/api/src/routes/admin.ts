@@ -30,7 +30,7 @@ adminRouter.use(requireAdmin);
 // a partir daqui, toda consulta usa a organização de quem está logado
 adminRouter.use((req, _res, next) => tenantCtx.run({ orgId: req.orgId ?? null }, () => next()));
 // gateways, credenciais, WhatsApp da plataforma, equipe da Prime, jobs e gestão da plataforma: só o Super Admin
-export const SUPER_ADMIN_PATH = /^\/(gateways|whatsapp|team|jobs|platform|subscriptions)(\/|$)|^\/integrations\/?$|^\/integrations\/(email|efi)(\/|$)/i;
+export const SUPER_ADMIN_PATH = /^\/(gateways|whatsapp|team|jobs|platform|subscriptions|club)(\/|$)|^\/integrations\/?$|^\/integrations\/(email|efi)(\/|$)/i;
 // webhooks/PayTracking e nota fiscal da própria organização: só o dono da organização (não a equipe)
 export const OWNER_ONLY_PATH = /^\/webhooks(\/|$)|^\/integrations\/(invoices|paytracking)(\/|$)/i;
 adminRouter.use((req, res, next) => (SUPER_ADMIN_PATH.test(req.path) ? requireSuperAdmin(req, res, next) : OWNER_ONLY_PATH.test(req.path) ? requireOwner(req, res, next) : next()));
@@ -215,18 +215,29 @@ const productSchema = z.object({
   // assinatura mensal por Pix Automático quando o produto é oferecido como order bump (só a Prime)
   recurring: z.boolean().optional(),
   recurring_price_cents: z.number().int().min(100, 'Mensalidade mínima de R$ 1,00').nullable().optional(),
+  // Clube: área de membros RECORRENTE (o produto principal é a mensalidade; sem pagamento o acesso pausa)
+  club: z.boolean().optional(),
 });
 // Assinatura (Pix Automático): só o Super Admin liga (vendas da Prime); banco sem o SQL → os campos novos são ignorados
 const subsColumns: Record<string, boolean> = {};
 adminRouter.use(/^\/(products|bumps)(\/[0-9a-f-]{36})?$/, async (req, _res, next) => {
   if (req.method !== 'POST' && req.method !== 'PUT') return next();
   const b = req.body ?? {};
-  if (!('recurring' in b) && !('recurring_price_cents' in b)) return next();
+  if (!('recurring' in b) && !('recurring_price_cents' in b) && !('club' in b)) return next();
   if (b.recurring && !req.isSuperAdmin) return next(new HttpError(403, 'Assinatura mensal só pode ser ligada pelo administrador da plataforma'));
   const table = req.path.startsWith('/products') ? 'products' : 'order_bumps';
+  // Clube (área de membros recorrente): só o Super Admin; exige o SQL do Clube
+  if ('club' in b) {
+    if (b.club && !req.isSuperAdmin) return next(new HttpError(403, 'Só o administrador da plataforma cria o Clube'));
+    if (!subsColumns.club) subsColumns.club = !(await supabase.from('products').select('club').limit(1)).error;
+    if (!subsColumns.club) {
+      if (b.club) return next(new HttpError(400, 'Rode no Supabase o SQL do Clube (20261118000000_club_base.sql) para criar a área de membros recorrente'));
+      delete b.club;
+    }
+  }
   // só guarda o "sim": se o SQL ainda não tinha sido rodado, confere de novo na próxima vez (sem precisar reiniciar o servidor)
   if (!subsColumns[table]) subsColumns[table] = !(await supabase.from(table).select('recurring').limit(1)).error;
-  if (!subsColumns[table]) {
+  if (('recurring' in b || 'recurring_price_cents' in b) && !subsColumns[table]) {
     if (b.recurring) return next(new HttpError(400, 'Rode no Supabase o SQL das assinaturas (20261114000000_subscriptions.sql e 20261115000000_product_subscriptions.sql) para ligar a assinatura mensal'));
     delete b.recurring;
     delete b.recurring_price_cents;
@@ -1019,6 +1030,58 @@ adminRouter.post('/integrations/efi/register-auto-webhooks', async (_req, res) =
   res.json({ ok: true, message: 'Avisos do Pix Automático registrados na Efí (autorizações e mensalidades)' });
 });
 
+// ---------------------------------------------------------------- Clube: planos (fundador, padrão...). O preço fica travado em cada assinatura.
+const planSchema = z.object({
+  name: z.string().trim().min(2, 'Nome do plano').max(60),
+  price_cents: z.number().int().min(100, 'Mensalidade mínima de R$ 1,00'),
+});
+const clubTableError = (e: { message: string } | null) => (e && /club_plans|does not exist|schema cache/i.test(e.message) ? new HttpError(503, 'Rode no Supabase o SQL do Clube (20261118000000_club_base.sql)') : e ? new HttpError(500, e.message) : null);
+adminRouter.get('/club/plans', async (req, res) => {
+  const productId = uuid.parse(req.query.product_id);
+  const { data, error } = await supabase.from('club_plans').select('*').eq('product_id', productId).order('created_at', { ascending: true });
+  const err = clubTableError(error);
+  if (err) throw err;
+  // quantos assinantes ativos em cada plano (o preço deles não muda)
+  const { data: subs } = await supabase.from('subscriptions').select('plan_id, status').in('status', ['active', 'past_due']);
+  const count = new Map<string, number>();
+  for (const s2 of (subs ?? []) as any[]) if (s2.plan_id) count.set(s2.plan_id, (count.get(s2.plan_id) ?? 0) + 1);
+  res.json(((data ?? []) as any[]).map((p) => ({ ...p, active_subscribers: count.get(p.id) ?? 0 })));
+});
+adminRouter.post('/club/plans', async (req, res) => {
+  const b = planSchema.extend({ product_id: uuid, on_sale: z.boolean().default(false) }).parse(req.body);
+  const { data: prod } = await supabase.from('products').select('id, club').eq('id', b.product_id).maybeSingle();
+  if (!(prod as any)?.club) throw new HttpError(400, 'Marque o produto como Clube (área de membros recorrente) antes de criar planos');
+  if (b.on_sale) await supabase.from('club_plans').update({ on_sale: false }).eq('product_id', b.product_id);
+  const { data, error } = await supabase.from('club_plans').insert(b).select('*').single();
+  const err = clubTableError(error);
+  if (err) throw err;
+  clearCheckoutCache();
+  res.status(201).json(data);
+});
+adminRouter.put('/club/plans/:id', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const b = planSchema.partial().parse(req.body);
+  const row = must(await supabase.from('club_plans').update(b).eq('id', id).select('*').single());
+  clearCheckoutCache();
+  res.json(row);
+});
+/** Plano à venda: o checkout do Clube passa a cobrar este preço de quem assinar daqui em diante. */
+adminRouter.post('/club/plans/:id/on-sale', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const plan = must(await supabase.from('club_plans').select('id, product_id, name, price_cents').eq('id', id).maybeSingle(), 'Plano não encontrado') as any;
+  await supabase.from('club_plans').update({ on_sale: false }).eq('product_id', plan.product_id);
+  must(await supabase.from('club_plans').update({ on_sale: true }).eq('id', id).select('id').single());
+  clearCheckoutCache();
+  res.json({ ok: true, message: `Plano "${plan.name}" à venda: novos assinantes pagam ${(plan.price_cents / 100).toFixed(2).replace('.', ',')}/mês. Quem já assina continua no preço dele.` });
+});
+adminRouter.delete('/club/plans/:id', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const { error } = await supabase.from('club_plans').delete().eq('id', id);
+  if (error) throw new HttpError(409, error.message);
+  clearCheckoutCache();
+  res.status(204).end();
+});
+
 // ---------------------------------------------------------------- assinaturas (Pix Automático)
 adminRouter.get('/subscriptions', async (req, res) => {
   const status = z.enum(['all', 'pending', 'active', 'past_due', 'expired', 'canceled']).default('all').parse(req.query.status ?? 'all');
@@ -1051,6 +1114,11 @@ adminRouter.get('/subscriptions', async (req, res) => {
       cobr_status: r.cobr_status,
       canceled_at: r.canceled_at,
       created_at: r.created_at,
+      plan_name: r.plan_name ?? null,
+      method: r.method ?? 'pix_automatico',
+      started_at: r.started_at ?? null,
+      cancel_reason: r.cancel_reason ?? null,
+      canceled_by: r.canceled_by ?? null,
       payments: totals.get(r.id)?.n ?? 0,
       received_cents: totals.get(r.id)?.cents ?? 0,
       renew_url: renewUrl(r.id),
@@ -1059,7 +1127,7 @@ adminRouter.get('/subscriptions', async (req, res) => {
 });
 adminRouter.post('/subscriptions/:id/cancel', async (req, res) => {
   const id = uuid.parse(req.params.id);
-  await cancelSubscription(id);
+  await cancelSubscription(id, { by: 'admin' });
   res.json({ ok: true, message: 'Assinatura cancelada: os débitos param e o acesso segue até o fim do mês já pago' });
 });
 

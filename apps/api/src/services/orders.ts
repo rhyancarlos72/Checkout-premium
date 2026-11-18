@@ -119,6 +119,12 @@ export async function loadCheckout(slug: string) {
   return refreshCheckout(slug);
 }
 
+/** Plano do Clube à venda agora (banco sem a tabela de planos: null, e vale o preço do produto). */
+async function clubPlanOnSale(productId: string): Promise<{ id: string; name: string; price_cents: number } | null> {
+  const { data, error } = await supabase.from('club_plans').select('id, name, price_cents').eq('product_id', productId).eq('on_sale', true).maybeSingle();
+  return error || !data ? null : (data as any);
+}
+
 async function loadCheckoutFresh(slug: string) {
   const checkout = must(
     await supabase
@@ -131,7 +137,9 @@ async function loadCheckoutFresh(slug: string) {
   ) as any;
   if (!checkout.product?.active) throw new HttpError(404, 'Produto indisponível');
   const bumps = visibleBumps(checkout.checkout_bumps);
-  return { ...checkout, bumps, price_cents: checkout.price_cents ?? checkout.product.price_cents };
+  // Clube (área de membros recorrente): o preço é o do plano à venda (fundador, padrão...) e fica travado na assinatura
+  const clubPlan = checkout.product.club ? await clubPlanOnSale(checkout.product.id) : null;
+  return { ...checkout, bumps, club_plan: clubPlan, price_cents: clubPlan?.price_cents ?? checkout.price_cents ?? checkout.product.price_cents };
 }
 
 async function findCoupon(code: string | null | undefined, orgId?: string | null): Promise<CouponRow | null> {
@@ -146,7 +154,14 @@ async function findCoupon(code: string | null | undefined, orgId?: string | null
 export async function quote(slug: string, bumpIds: string[], couponCode?: string | null) {
   const checkout = await loadCheckout(slug);
   const lines: PriceLine[] = [
-    { kind: 'main', name: checkout.product.name, price_cents: checkout.price_cents, product_id: checkout.product.id },
+    {
+      kind: 'main',
+      name: checkout.product.name,
+      price_cents: checkout.price_cents,
+      product_id: checkout.product.id,
+      // Clube: o produto principal é a mensalidade (o acesso vale enquanto a assinatura estiver em dia)
+      ...(checkout.product.club ? { recurring: true, monthly_cents: checkout.price_cents } : {}),
+    },
   ];
   // assinatura mensal só vale com o Pix Automático ligado e em vendas da Prime; senão o bump é compra única
   const subsOn = checkout.bumps.some(bumpIsRecurring) && subscriptionsAvailable(await isOwnerOrg(checkout.org_id ?? null));
@@ -202,13 +217,15 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
   }
   // assinatura mensal (Pix Automático): só no Pix, sempre pela Efí, com CPF (exigência do Banco Central)
   const subLines = recurringLines(q.lines);
+  const ownerSale = await isOwnerOrg(checkout.org_id); // em memória: venda da Prime não consulta produtor nem split
+  // Pix Automático (débito mensal sozinho) só com ele ligado em Integrações; sem ele, o Clube renova pelo link todo mês
+  const autoCharge = subLines.length > 0 && subscriptionsAvailable(ownerSale);
   if (subLines.length) {
     if (card) throw new HttpError(400, 'A assinatura mensal é paga só no Pix. Escolha Pix ou desmarque a assinatura.');
-    if (!isValidCpf(doc) && !isValidCnpj(doc)) throw new HttpError(400, 'Informe seu CPF para a assinatura mensal (Pix Automático)');
+    if (autoCharge && !isValidCpf(doc) && !isValidCnpj(doc)) throw new HttpError(400, 'Informe seu CPF para a assinatura mensal (Pix Automático)');
   }
-  // gateway: cartão → o do cartão (Super Admin); Pix → o do produtor, senão o global (Integrações), senão o do checkout
-  const ownerSale = await isOwnerOrg(checkout.org_id); // em memória: venda da Prime não consulta produtor nem split
-  const providerName = (subLines.length ? 'efi' : card ? card.provider : ((ownerSale ? null : (await orgInfo(checkout.org_id))?.pix_provider) ?? globalProvider() ?? checkout.provider)) as ProviderName;
+  // gateway: assinatura com Pix Automático → Efí; cartão → o do cartão (Super Admin); Pix → o do produtor, senão o global, senão o do checkout
+  const providerName = (autoCharge ? 'efi' : card ? card.provider : ((ownerSale ? null : (await orgInfo(checkout.org_id))?.pix_provider) ?? globalProvider() ?? checkout.provider)) as ProviderName;
   // cartão Efí usa a API de Cobranças (sem certificado/chave Pix): não exige o Pix da Efí configurado
   const provider = card?.provider === 'efi' ? null : getProvider(providerName);
   const customer = await upsertCustomer(input.customer);
@@ -304,7 +321,7 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
       };
     }
 
-    const charge = subLines.length
+    const charge = autoCharge
       ? // 1 QR Code: paga o pedido agora e autoriza a mensalidade no app do banco (Jornada 3 do Pix Automático)
         await issueAutoCharge({
           orderId: order.id,
@@ -326,7 +343,7 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
           cardInstallments: card?.maxInstallments,
           split: ownerSale ? null : await splitFor(order.id), // venda de produtor: a parte dele vai direto para o recebedor dele
         });
-    if (subLines.length) await createSubscriptionForOrder({ orderId: order.id, orgId: checkout.org_id ?? null, customerId: customer.id, lines: q.lines, recId: (charge as any).recId ?? null });
+    if (subLines.length) await createSubscriptionForOrder({ orderId: order.id, orgId: checkout.org_id ?? null, customerId: customer.id, lines: q.lines, recId: (charge as any).recId ?? null, plan: checkout.club_plan ?? null });
     // QR Code gerado aqui mesmo a partir do copia e cola: sai na hora, sem baixar imagem do gateway
     const qrImage = charge.pixCode ? ((await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage) : null;
     const expiresAt = charge.expiresAt.toISOString();

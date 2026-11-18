@@ -217,7 +217,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const [tokenizing, setTokenizing] = useState(false);
   const cardTokenRef = useRef<{ payment_token: string; tds_identifier: string; installments: number } | null>(null);
   // assinatura mensal (Pix Automático) marcada: pede CPF e só aceita Pix
-  const subOn = checkout.bumps.some((b) => b.recurring && bumps.includes(b.id));
+  // Clube: o produto principal é a mensalidade; com Pix Automático pede CPF (autorização no banco)
+  const club = checkout.club ?? null;
+  const subOn = Boolean(club?.auto) || checkout.bumps.some((b) => b.recurring && bumps.includes(b.id));
   const schema = useMemo(() => makeSchema(checkout.fields, method === 'card' || subOn), [checkout.fields, method, subOn]);
   const { register, handleSubmit, setValue, formState, watch, reset, getFieldState } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -270,7 +272,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
   const subtotal = checkout.price_cents + selectedBumps.reduce((s, b) => s + b.price_cents, 0);
   const discount = coupon ? Math.min(coupon.discount, subtotal - 1) : 0;
   const total = subtotal - discount;
-  const monthlyTotal = selectedBumps.filter((b) => b.recurring).reduce((n, b) => n + (b.monthly_cents ?? b.price_cents), 0);
+  const monthlyTotal = (club ? club.monthly_cents : 0) + selectedBumps.filter((b) => b.recurring).reduce((n, b) => n + (b.monthly_cents ?? b.price_cents), 0);
 
   const quote = useMutation({
     mutationFn: (p: { code: string; bump_ids: string[] }) =>
@@ -386,7 +388,7 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
           <p className="font-medium leading-snug">{checkout.product.name}</p>
           <p className="mt-0.5 text-xs text-ck-muted">{checkout.product.number ? `ID: ${productCode(checkout.product.number)} · ` : ''}Acesso digital imediato</p>
         </div>
-        <p className="shrink-0 font-semibold tabular-nums">{brl(checkout.price_cents)}</p>
+        <p className="shrink-0 font-semibold tabular-nums">{brl(checkout.price_cents)}{club && <span className="text-xs font-medium text-ck-muted">/mês</span>}</p>
       </div>
       {selectedBumps.map((b) => (
         <div key={b.id} className="animate-fade-in flex items-center justify-between gap-3 text-sm">
@@ -549,8 +551,15 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                 )}
                 <p className={cn('flex flex-wrap items-baseline gap-x-2', compareAt > checkout.price_cents ? 'mt-0.5' : 'mt-1.5')}>
                   <span className="font-display text-[24px] font-extrabold leading-tight tracking-tight text-brand tabular-nums @lg:text-[28px]">{brl(checkout.price_cents)}</span>
-                  <span className="text-[13px] text-ck-muted">à vista no Pix</span>
+                  <span className="text-[13px] text-ck-muted">{club ? <><b className="text-brand">/mês</b> no Pix{club.auto ? ' Automático' : ''}</> : 'à vista no Pix'}</span>
                 </p>
+                {club && (
+                  <p className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] font-semibold text-ck-muted">
+                    <Repeat className="h-3.5 w-3.5 text-brand" />
+                    {club.plan && <span className="rounded-md bg-brand/10 px-1.5 py-0.5 text-brand">Plano {club.plan}</span>}
+                    Assinatura mensal · cancele quando quiser
+                  </p>
+                )}
               </div>
             </div>
             {(t.subheadline || checkout.product.description) && (
@@ -631,6 +640,9 @@ export function CheckoutView({ checkout, preview = false }: { checkout: PublicCh
                   </p>
                 )}
               </div>
+            )}
+            {method === 'pix' && club && !club.auto && (
+              <p className="mt-3 flex items-start gap-2 text-[13px] font-medium text-ck-muted"><Repeat className="mt-0.5 h-4 w-4 shrink-0 text-brand" /> Assinatura mensal: todo mês você recebe o link para renovar pelo Pix. Cancele quando quiser.</p>
             )}
             {method === 'pix' && subOn && (
               <div className="mt-4 space-y-2.5">

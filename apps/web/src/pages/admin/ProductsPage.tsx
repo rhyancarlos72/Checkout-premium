@@ -15,6 +15,7 @@ import { ProductBumpsModal } from './ProductBumpsModal';
 import { UpsellModal, UpsellSection, type Upsell } from './ProductUpsell';
 import { useCrud } from './crud';
 import { useMe } from '@/lib/me';
+import { ClubPlans } from './ClubPlans';
 
 export interface Product {
   id: string;
@@ -33,6 +34,8 @@ export interface Product {
   /** assinatura mensal (Pix Automático) quando oferecido como order bump */
   recurring?: boolean;
   recurring_price_cents?: number | null;
+  /** Clube: área de membros recorrente (o produto principal é a mensalidade) */
+  club?: boolean;
   checkouts?: { id: string; slug: string; name: string; active: boolean; created_at?: string; checkout_bumps?: { sort: number; bump: { id: string; product_id: string; title: string; price_cents: number } | null }[] }[];
 }
 
@@ -112,6 +115,7 @@ const schema = z.object({
   active: z.boolean(),
   recurring: z.boolean(),
   monthly: z.string().optional(),
+  club: z.boolean(),
 });
 type Form = z.infer<typeof schema>;
 
@@ -161,6 +165,7 @@ export default function ProductsPage() {
                       {p.number && <button type="button" title="Copiar ID" onClick={() => navigator.clipboard.writeText(productCode(p.number)).then(() => toast.ok(`ID ${productCode(p.number)} copiado`))} className="mb-1 inline-block rounded-md bg-zinc-100 px-2 py-0.5 text-[13px] font-medium text-zinc-500 transition hover:text-zinc-800">ID: {productCode(p.number)}</button>}
                       <p className="pv font-semibold leading-snug">{p.name}</p>
                     </div>
+                    {p.club && <Badge tone="on">Clube · mensal</Badge>}
                     {p.recurring && <Badge tone="info">Assinatura{p.recurring_price_cents ? ` ${brl(p.recurring_price_cents)}/mês` : ''}</Badge>}
                     <Badge tone={p.active ? 'on' : 'off'}>{p.active ? 'Ativo' : 'Inativo'}</Badge>
                   </div>
@@ -235,10 +240,12 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
       active: product?.active ?? true,
       recurring: product?.recurring ?? false,
       monthly: centsToInput(product?.recurring_price_cents),
+      club: product?.club ?? false,
     },
   });
   const type = watch('delivery_type');
   const recurring = watch('recurring');
+  const club = watch('club');
   const superAdmin = Boolean(useMe().data?.superAdmin);
   const e = formState.errors;
 
@@ -246,7 +253,7 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
     <Modal open onClose={onClose} title={product ? `Editar produto${product.number ? ` · ID: ${productCode(product.number)}` : ''}` : 'Novo produto'}>
       <form
         className="space-y-4"
-        onSubmit={handleSubmit(async ({ price, recurring, monthly, ...v }) => {
+        onSubmit={handleSubmit(async ({ price, recurring, monthly, club, ...v }) => {
           setError(null);
           if (recurring && monthly && parseMoney(monthly) < 100) return setError('Mensalidade mínima de R$ 1,00');
           try {
@@ -258,7 +265,8 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
               delivery_url: v.delivery_url || null,
               delivery_note: v.delivery_note || null,
               // só o Super Admin vê a opção (assinatura vale nas vendas da Prime)
-              ...(superAdmin ? { recurring, recurring_price_cents: recurring && monthly ? parseMoney(monthly) : null } : {}),
+              ...(superAdmin ? { recurring: club ? false : recurring, recurring_price_cents: !club && recurring && monthly ? parseMoney(monthly) : null } : {}),
+              ...(superAdmin && (club || product?.club) ? { club } : {}),
             });
           } catch (err) {
             setError(err instanceof ApiError ? err.message : 'Erro ao salvar');
@@ -289,6 +297,21 @@ function ProductForm({ product, onClose, onSave }: { product: Product | null; on
         )}
         <Field label="Instruções no e-mail de entrega (opcional)"><Textarea {...register('delivery_note')} rows={2} /></Field>
         {superAdmin && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3.5">
+            <Controller control={control} name="club" render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Área de membros recorrente (Clube)" />} />
+            {club ? (
+              <div className="mt-2 space-y-3">
+                <p className="text-xs leading-relaxed text-emerald-900/80">
+                  O checkout deste produto cobra a <b>mensalidade</b> (Pix Automático: o cliente paga o 1º mês e autoriza o débito no mesmo QR Code). O acesso à área de membros vale enquanto a assinatura estiver em dia, com 3 dias de tolerância. O preço vem do <b>plano à venda</b>; quem assina fica com o preço do plano dele (ex.: fundador) enquanto pagar. Use a entrega "Área de membros".
+                </p>
+                {product?.id && product.club ? <ClubPlans productId={product.id} /> : <p className="text-xs font-medium text-emerald-900">Salve o produto para cadastrar os planos (ex.: Fundador R$ 9,90 e Padrão R$ 19,90).</p>}
+              </div>
+            ) : (
+              <p className="mt-1.5 text-xs text-emerald-900/70">Desligado: o produto é vendido uma vez e o acesso é para sempre.</p>
+            )}
+          </div>
+        )}
+        {superAdmin && !club && (
           <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3.5">
             <Controller control={control} name="recurring" render={({ field }) => <Switch checked={field.value} onChange={field.onChange} label="Assinatura mensal (Pix Automático)" />} />
             {recurring ? (

@@ -75,7 +75,9 @@ export async function publicCheckoutData(slug: string) {
     })),
     store: { name: s.store.name, supportEmail: s.store.supportEmail, document: s.store.document },
     // formas de pagamento além do Pix (cartão só quando liberado pelo Super Admin para este produtor)
-    payment: { card: await cardOptionFor(c.org_id ?? null) },
+    payment: { card: c.product.club ? null : await cardOptionFor(c.org_id ?? null) }, // Clube: mensalidade só no Pix
+    // Clube (área de membros recorrente): mensalidade, plano à venda e se o débito é automático (Pix Automático)
+    club: c.product.club ? { monthly_cents: c.price_cents, plan: c.club_plan?.name ?? null, auto: subscriptionsAvailable(await isOwnerOrg(c.org_id ?? null)) } : null,
   };
 }
 

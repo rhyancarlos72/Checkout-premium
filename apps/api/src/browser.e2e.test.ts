@@ -621,3 +621,71 @@ describe.skipIf(!RUN)('página do Pix aberta pelo link', () => {
     }
   });
 });
+
+describe.skipIf(!RUN)('Clube (área de membros recorrente) no navegador', () => {
+  it('checkout mensal do Clube, "Minha assinatura" no perfil, cancelar em 2 cliques com motivo e aviso de acesso pausado', async () => {
+    const now = new Date().toISOString();
+    const CLUB = '0c100000-0000-4000-8000-00000000c1b1';
+    db.products.push({ id: CLUB, number: 5151, name: 'Clube de Atividades', description: 'Atividades novas toda semana.', price_cents: 1990, active: true, members_enabled: true, club: true, delivery_type: 'none', created_at: now });
+    db.checkouts.push({ id: '0c100000-0000-4000-8000-00000000c1c1', product_id: CLUB, slug: '5555555', name: 'Clube', price_cents: null, active: true, provider: 'woovi', pix_expires_minutes: 120, theme: {}, fields: { phone: true }, tracking: {}, created_at: now });
+    db.club_plans = [{ id: '0c100000-0000-4000-8000-00000000c1a1', product_id: CLUB, name: 'Fundador', price_cents: 990, on_sale: true, created_at: now }];
+    db.member_sections = [...(db.member_sections ?? []), { id: '0c100000-0000-4000-8000-00000000c1e1', product_id: CLUB, title: 'Alfabetização', sort: 0, created_at: now }];
+    db.member_modules = [...(db.member_modules ?? []), { id: '0c100000-0000-4000-8000-00000000c1f1', product_id: CLUB, section_id: '0c100000-0000-4000-8000-00000000c1e1', title: 'Kit Alfabeto', subtitle: 'Atividades da semana', cover_url: null, sort: 0, created_at: now }];
+    const { clearCheckoutCache } = await import('./services/orders.js');
+    clearCheckoutCache();
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'pt-BR' });
+    const p = await ctx.newPage();
+    const errors: string[] = [];
+    p.on('pageerror', (e: Error) => errors.push(e.message));
+    try {
+      // checkout do Clube: R$ 9,90/mês, plano Fundador, assinatura mensal
+      await p.goto(`${base}/checkout?produto_id=5555555`);
+      await p.getByText('Plano Fundador').first().waitFor();
+      expect(await p.getByText('R$ 9,90').count()).toBeGreaterThan(0);
+      expect(await p.getByText('Assinatura mensal · cancele quando quiser').count()).toBeGreaterThan(0);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/clube-checkout.png` });
+      await p.fill('input[autocomplete=name]', 'Ana Professora');
+      await p.fill('input[type=email]', 'ana.clube@x.com');
+      await p.locator('input[inputmode=tel]').pressSequentially('11987654321');
+      await p.locator('form#ck-form button[type=submit]').first().click();
+      await p.waitForURL(/\/pedido\//, { timeout: 15_000 });
+      const token = p.url().split('/pedido/')[1];
+      const order = db.orders.find((o) => o.public_token === token)!;
+      await pay(order.id);
+      await new Promise((r) => setTimeout(r, 300));
+      const sub = db.subscriptions.find((s) => s.origin_order_id === order.id)!;
+      expect(sub).toMatchObject({ status: 'active', price_cents: 990, plan_name: 'Fundador' });
+
+      // área de membros: "Minha assinatura" e cancelar (2 cliques, motivo opcional)
+      const { createMemberSession } = await import('./services/members.js');
+      const session = createMemberSession(order.customer_id);
+      await p.addInitScript((s: string) => localStorage.setItem('ck_member_session', s), session);
+      await p.goto(`${base}/membros`);
+      await p.getByText('Kit Alfabeto').first().waitFor();
+      await p.getByTitle('Minha assinatura').click();
+      await p.getByRole('heading', { name: 'Minha assinatura' }).waitFor();
+      await p.getByText('Plano Fundador', { exact: false }).first().waitFor();
+      expect(await p.getByText('Ativa').count()).toBe(1);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/clube-minha-assinatura.png`, fullPage: true });
+      await p.getByText('Cancelar assinatura').click();
+      await p.getByText('Está caro no momento').click();
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/clube-cancelar.png`, fullPage: true });
+      await p.getByText('Confirmar cancelamento').click();
+      await p.getByText(/Assinatura cancelada\. Nenhuma nova cobrança/).waitFor();
+      expect(sub).toMatchObject({ status: 'canceled', canceled_by: 'cliente', cancel_reason: 'Está caro no momento' });
+
+      // acesso pausado (venceu e passou a tolerância): aviso com "Renovar pelo Pix" na home
+      sub.status = 'expired';
+      sub.canceled_at = null;
+      sub.paid_until = new Date(Date.now() - 5 * 86_400_000).toISOString();
+      await p.goto(`${base}/membros`);
+      await p.getByText(/está pausado/).waitFor();
+      expect(await p.getByText('Kit Alfabeto').count()).toBe(0); // conteúdo do Clube fechado
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/clube-pausado.png` });
+      expect(errors).toEqual([]);
+      ok('Clube: checkout mensal, Minha assinatura, cancelar com motivo e acesso pausado com Renovar');
+    } finally {
+      await ctx.close();
+    }
+  });
+});

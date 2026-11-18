@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Download, Eye, EyeOff, KeyRound, LayoutGrid, Lock, LogIn, LogOut, Mail, Play, PlayCircle, Sparkles } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, Download, Eye, EyeOff, KeyRound, LayoutGrid, Lock, LogIn, LogOut, Mail, Play, PlayCircle, Repeat, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { cn } from '@/components/ui';
@@ -20,6 +20,7 @@ export default function MembersApp() {
         <Route path="entrar" element={<EnterWithOrder />} />
         <Route path="login" element={<Login />} />
         <Route path="senha" element={<RequireSession><ChangePassword /></RequireSession>} />
+        <Route path="assinatura" element={<RequireSession><SubscriptionPage /></RequireSession>} />
         <Route path="modulo/:id" element={<RequireSession><ModulePage /></RequireSession>} />
         <Route path="*" element={<RequireSession><HomePage /></RequireSession>} />
       </Routes>
@@ -204,6 +205,7 @@ type Store = { name: string; logo_url: string | null };
 function TopBar({ store, back, overlay }: { store?: Store; back?: ReactNode; overlay?: boolean }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const hasSubs = (useSubscriptions().data?.length ?? 0) > 0;
   const [solid, setSolid] = useState(!overlay);
   useEffect(() => {
     if (!overlay) return;
@@ -220,6 +222,11 @@ function TopBar({ store, back, overlay }: { store?: Store; back?: ReactNode; ove
           {store?.logo_url ? <img src={store.logo_url} alt={store.name} className="h-8 w-auto max-w-[160px] object-contain" /> : <span className="truncate text-[18px] font-extrabold tracking-tight">{store?.name ?? 'Área de membros'}</span>}
         </div>
         <div className="flex items-center gap-1">
+        {hasSubs && (
+          <Link to="/membros/assinatura" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-white/70 transition hover:bg-white/10 hover:text-white" title="Minha assinatura">
+            <Repeat className="h-4 w-4" /> <span className="hidden sm:inline">Minha assinatura</span>
+          </Link>
+        )}
         <Link to="/membros/senha" className="flex items-center gap-1.5 rounded-md px-2.5 py-2 text-sm text-white/70 transition hover:bg-white/10 hover:text-white" title="Alterar senha">
           <KeyRound className="h-4 w-4" /> <span className="hidden sm:inline">Alterar senha</span>
         </Link>
@@ -256,17 +263,19 @@ function HomePage() {
   // destaque: o curso em andamento (ou o primeiro)
   const featured = data.courses.find((c) => c.progress.completed > 0 && c.progress.completed < c.progress.total) ?? data.courses[0];
   const watching = data.courses.flatMap((c) => allModules(c).filter((m) => m.completed > 0 && m.completed < m.lessons));
+  const paused = data.extras.some((x) => x.badge === 'Renovar assinatura'); // assinatura vencida: o conteúdo volta ao renovar
   return (
     <>
       <TopBar store={data.store} overlay />
+      <SubscriptionAlert />
       {featured ? (
         <Hero course={featured} greeting={first} />
       ) : (
         <div className="px-4 pb-6 pt-28 sm:px-10">
           <h1 className="text-[28px] font-extrabold tracking-tight">Olá{first ? `, ${cap(first)}` : ''}!</h1>
           <div className="mt-6 rounded-2xl border border-white/10 bg-white/[.03] p-8 text-center">
-            <p className="font-semibold">Nenhum conteúdo liberado ainda</p>
-            <p className="mt-1 text-sm text-white/55">Assim que o pagamento for confirmado, seus cursos aparecem aqui.</p>
+            <p className="font-semibold">{paused ? 'Seu conteúdo está pausado' : 'Nenhum conteúdo liberado ainda'}</p>
+            <p className="mt-1 text-sm text-white/55">{paused ? 'Renove a assinatura pelo Pix e tudo volta na hora.' : 'Assim que o pagamento for confirmado, seus cursos aparecem aqui.'}</p>
           </div>
         </div>
       )}
@@ -587,5 +596,122 @@ function BackLink() {
     <Link to="/membros" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-white/70 transition hover:bg-white/5 hover:text-white" aria-label="Voltar ao início">
       <ArrowLeft className="h-5 w-5" />
     </Link>
+  );
+}
+
+// ------------------------------------------------------------------ assinatura (Clube): perfil, aviso de atraso e cancelar
+type MemberSub = {
+  id: string;
+  status: 'pending' | 'active' | 'past_due' | 'expired' | 'canceled';
+  status_label: string;
+  names: string[];
+  plan: string | null;
+  price_cents: number;
+  paid_until: string | null;
+  next_due: string | null;
+  auto: boolean;
+  grace_until: string | null;
+  can_cancel: boolean;
+  renew_url: string | null;
+  canceled_at: string | null;
+};
+function useSubscriptions() {
+  return useQuery({ queryKey: ['members', 'subscriptions'], queryFn: () => membersApi.get<MemberSub[]>('/subscriptions'), retry: false, staleTime: 60_000 });
+}
+const brlM = (c: number) => (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const dateM = (d: string | null) => (d ? new Date(d.length === 10 ? `${d}T12:00:00` : d).toLocaleDateString('pt-BR') : '');
+
+/** Faixa no topo da home: mensalidade vencida (tolerância) ou acesso pausado, com o botão de renovar pelo Pix. */
+function SubscriptionAlert() {
+  const s = useSubscriptions().data?.find((x) => x.status === 'past_due' || x.status === 'expired');
+  if (!s || !s.renew_url) return null;
+  return (
+    <div className="relative z-30 px-4 pt-20 sm:px-10 sm:pt-24">
+      <div className="mx-auto flex max-w-[1600px] flex-col gap-3 rounded-xl border border-amber-400/30 bg-amber-500/10 p-4 sm:flex-row sm:items-center">
+        <AlertTriangle className="h-5 w-5 shrink-0 text-amber-300" />
+        <p className="flex-1 text-sm text-amber-50">
+          {s.status === 'past_due'
+            ? <>Sua mensalidade de <b>{s.names.join(' + ')}</b> venceu. O acesso continua até <b>{dateM(s.grace_until)}</b>: renove para não perder.</>
+            : <>Seu acesso a <b>{s.names.join(' + ')}</b> está pausado. Renove pelo Pix e ele volta na hora.</>}
+        </p>
+        <a href={s.renew_url} className="flex h-10 items-center justify-center rounded-lg bg-amber-400 px-4 text-sm font-bold text-black hover:bg-amber-300">Renovar pelo Pix</a>
+      </div>
+    </div>
+  );
+}
+
+const reasons = ['Está caro no momento', 'Não estou usando', 'Não encontrei o que precisava', 'Vou voltar depois'];
+
+/** Perfil: minha assinatura. Cancelar em 2 cliques (com motivo opcional); o acesso segue até o fim do mês pago. */
+function SubscriptionPage() {
+  const qc = useQueryClient();
+  const { data, isLoading, error } = useSubscriptions();
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [reason, setReason] = useState('');
+  const [done, setDone] = useState<string | null>(null);
+  const cancel = useMutation({
+    mutationFn: (id: string) => membersApi.post(`/subscriptions/${id}/cancel`, { reason: reason.trim() || null }),
+    onSuccess: (_r, id) => {
+      const s = data?.find((x) => x.id === id);
+      setDone(s?.paid_until ? `Assinatura cancelada. Nenhuma nova cobrança será feita, e seu acesso continua até ${dateM(s.paid_until)}.` : 'Assinatura cancelada. Nenhuma nova cobrança será feita.');
+      setConfirming(null);
+      qc.invalidateQueries({ queryKey: ['members'] });
+    },
+  });
+  if (error instanceof ApiError && error.status === 401) return <Navigate to="/membros/login" replace />;
+  return (
+    <>
+      <TopBar back={<BackLink />} />
+      <main className="mx-auto max-w-2xl space-y-4 px-4 pb-24 pt-6 sm:px-6">
+        <h1 className="text-[24px] font-extrabold tracking-tight">Minha assinatura</h1>
+        {done && <p className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">{done}</p>}
+        {isLoading ? (
+          <Loader />
+        ) : !data?.length ? (
+          <p className="rounded-xl border border-white/10 bg-white/[.03] p-6 text-center text-sm text-white/60">Você não tem assinatura.</p>
+        ) : (
+          data.map((s) => (
+            <section key={s.id} className="space-y-3 rounded-2xl border border-white/10 bg-white/[.04] p-5">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[17px] font-bold leading-snug">{s.names.join(' + ')}</p>
+                  <p className="mt-0.5 text-sm text-white/60">{brlM(s.price_cents)}/mês{s.plan ? ` · plano ${s.plan}` : ''}</p>
+                </div>
+                <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-bold', s.status === 'active' ? 'bg-emerald-500/15 text-emerald-300' : s.status === 'past_due' ? 'bg-amber-500/15 text-amber-300' : 'bg-white/10 text-white/60')}>{cap(s.status_label)}</span>
+              </div>
+              <ul className="space-y-1 text-sm text-white/70">
+                {s.paid_until && <li>Acesso garantido até <b className="text-white">{dateM(s.paid_until)}</b></li>}
+                {s.status === 'past_due' && s.grace_until && <li className="text-amber-200">Mensalidade em atraso: o acesso continua até {dateM(s.grace_until)}</li>}
+                {s.next_due && s.status === 'active' && <li>Próxima cobrança: {dateM(s.next_due)} {s.auto ? '(débito automático no Pix)' : '(você recebe o link para pagar)'}</li>}
+                {s.status === 'canceled' && <li>Cancelada{s.canceled_at ? ` em ${dateM(s.canceled_at)}` : ''}: nenhuma nova cobrança será feita.</li>}
+              </ul>
+              {s.renew_url && <a href={s.renew_url} className="flex h-11 items-center justify-center rounded-xl bg-amber-400 text-sm font-bold text-black hover:bg-amber-300">Renovar pelo Pix</a>}
+              {s.can_cancel && confirming !== s.id && (
+                <button onClick={() => (setConfirming(s.id), setReason(''), setDone(null))} className="text-sm font-medium text-white/50 underline-offset-2 hover:text-white hover:underline">
+                  Cancelar assinatura
+                </button>
+              )}
+              {confirming === s.id && (
+                <div className="space-y-3 rounded-xl border border-red-400/25 bg-red-500/[.07] p-4">
+                  <p className="text-sm font-semibold">Quer mesmo cancelar?</p>
+                  <p className="text-xs text-white/60">Não haverá novas cobranças. {s.paid_until ? `Seu acesso continua até ${dateM(s.paid_until)}.` : ''} Se quiser, conte o motivo (opcional):</p>
+                  <div className="flex flex-wrap gap-2">
+                    {reasons.map((r) => (
+                      <button key={r} type="button" onClick={() => setReason(reason === r ? '' : r)} className={cn('rounded-full border px-3 py-1.5 text-xs', reason === r ? 'border-white bg-white text-black' : 'border-white/20 text-white/70 hover:border-white/50')}>{r}</button>
+                    ))}
+                  </div>
+                  <input value={reasons.includes(reason) ? '' : reason} onChange={(e) => setReason(e.target.value.slice(0, 300))} placeholder="Outro motivo (opcional)" className={inputCls} />
+                  {cancel.isError && <p className="text-sm text-red-400">{cancel.error instanceof ApiError ? cancel.error.message : 'Não foi possível cancelar. Tente de novo.'}</p>}
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <button onClick={() => cancel.mutate(s.id)} disabled={cancel.isPending} className="flex h-11 w-full items-center justify-center rounded-xl bg-red-600 text-sm font-bold hover:bg-red-500 disabled:opacity-60 sm:flex-1">{cancel.isPending ? 'Cancelando…' : 'Confirmar cancelamento'}</button>
+                    <button onClick={() => setConfirming(null)} className="flex h-11 w-full items-center justify-center rounded-xl border border-white/15 text-sm font-semibold hover:bg-white/5 sm:flex-1">Manter assinatura</button>
+                  </div>
+                </div>
+              )}
+            </section>
+          ))
+        )}
+      </main>
+    </>
   );
 }

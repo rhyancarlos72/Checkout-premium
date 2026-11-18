@@ -47,6 +47,8 @@ export interface PublicCheckout {
   bumps: { id: string; title: string; description: string | null; price_cents: number; compare_at_cents: number | null; image_url: string | null; recurring?: boolean; monthly_cents?: number }[];
   store: { name: string; supportEmail: string; document: string };
   /** formas além do Pix (cartão só quando liberado pela plataforma) */
+  /** Clube (área de membros recorrente): mensalidade, plano à venda e se o débito é automático (Pix Automático) */
+  club?: { monthly_cents: number; plan: string | null; auto: boolean } | null;
   payment?: { card: { maxInstallments: number; provider?: 'woovi' | 'efi'; efi?: { payeeCode: string; sandbox: boolean } | null } | null };
 }
 

@@ -3,11 +3,11 @@ import { env } from '../config/env.js';
 import { HttpError, logger, must, onlyDigits, productCode, supabase } from '../lib/core.js';
 import { pixQrDataUrl } from '../lib/qr.js';
 import { runAsOrg } from '../lib/tenant.js';
-import { efi } from '../providers/index.js';
+import { efi, getProvider, type ProviderName } from '../providers/index.js';
 import type { CreatedCharge } from '../providers/types.js';
 import { sendSubscriptionEmail } from './email.js';
 import { feeFieldsFor } from './fees.js';
-import { pixAutoConfig, pixExpiresMinutes } from './gateways.js';
+import { globalProvider, pixAutoConfig, pixExpiresMinutes } from './gateways.js';
 import { emitInvoice } from './invoices.js';
 import { recordSale } from './ledger.js';
 import { sendWhatsAppText } from './whatsapp.js';
@@ -93,25 +93,25 @@ export async function issueAutoCharge(p: {
 }
 
 /** Cria a assinatura (pendente) do pedido e liga os dois. Sem a tabela (SQL não rodado): não faz nada. */
-export async function createSubscriptionForOrder(p: { orderId: string; orgId: string | null; customerId: string; lines: SubLine[]; recId: string | null }) {
+export async function createSubscriptionForOrder(p: { orderId: string; orgId: string | null; customerId: string; lines: SubLine[]; recId: string | null; plan?: { id: string; name: string } | null }) {
   const subLines = recurringLines(p.lines);
   if (!subLines.length) return null;
   const items = subLines.map((l) => ({ product_id: l.product_id ?? null, bump_id: l.bump_id ?? null, name: l.name, price_cents: l.monthly_cents ?? l.price_cents }));
-  const { data, error } = await supabase
-    .from('subscriptions')
-    .insert({
-      org_id: p.orgId,
-      customer_id: p.customerId,
-      origin_order_id: p.orderId,
-      status: 'pending',
-      price_cents: monthlyCentsOf(p.lines),
-      product_ids: items.map((i) => i.product_id).filter(Boolean),
-      items,
-      rec_id: p.recId,
-      rec_status: p.recId ? 'CRIADA' : null,
-    })
-    .select('id')
-    .single();
+  const base = {
+    org_id: p.orgId,
+    customer_id: p.customerId,
+    origin_order_id: p.orderId,
+    status: 'pending',
+    price_cents: monthlyCentsOf(p.lines), // preço contratado: não muda mesmo se o plano à venda mudar (fundador)
+    product_ids: items.map((i) => i.product_id).filter(Boolean),
+    items,
+    rec_id: p.recId,
+    rec_status: p.recId ? 'CRIADA' : null,
+  };
+  const extra = { method: 'pix_automatico', ...(p.plan ? { plan_id: p.plan.id, plan_name: p.plan.name } : {}) };
+  let { data, error } = await supabase.from('subscriptions').insert({ ...base, ...extra }).select('id').single();
+  // banco sem o SQL do Clube (colunas de plano/método): registra sem elas
+  if (error && /plan_|method/.test(error.message)) ({ data, error } = await supabase.from('subscriptions').insert(base).select('id').single());
   if (error || !data) {
     logger.error({ err: error?.message, orderId: p.orderId }, 'Assinatura não registrada');
     return null;
@@ -148,6 +148,8 @@ export async function onOrderPaid(orderId: string) {
       updated_at: new Date().toISOString(),
     })
     .eq('id', sub.id);
+  // início da assinatura = 1º pagamento (coluna do SQL do Clube; sem ela, segue sem gravar)
+  if (!sub.started_at) await supabase.from('subscriptions').update({ started_at: new Date(order.paid_at ?? now).toISOString() }).eq('id', sub.id).then(() => {}, () => {});
 }
 
 /** Renovação paga pelo link (Pix): avisa o cliente (sem PayTracking/WhatsApp de venda: não é venda de anúncio). */
@@ -258,6 +260,8 @@ export async function renewalOrderFor(subId: string): Promise<string> {
     if (p && (p.status === 'paid' || (p.status === 'pending' && p.expires_at && new Date(p.expires_at).getTime() > Date.now() + 5 * 60_000))) return p.public_token;
   }
   const { data: origin } = await supabase.from('orders').select('checkout_id, tracking').eq('id', sub.origin_order_id).maybeSingle();
+  // Pix Automático ligado: Efí (o mesmo QR pede a autorização). Desligado: Pix comum pelo gateway em uso
+  const pixProvider = pixAutoConfig().enabled ? efi : efi.isConfigured() ? efi : getProvider((globalProvider() ?? 'woovi') as ProviderName);
   return runAsOrg(sub.org_id ?? null, async () => {
     const lines = (sub.items as any[]).map((i) => ({ kind: 'main', name: i.name, price_cents: i.price_cents, product_id: i.product_id, recurring: true }));
     const order = must(
@@ -266,7 +270,7 @@ export async function renewalOrderFor(subId: string): Promise<string> {
         .insert({
           checkout_id: (origin as any)?.checkout_id ?? null,
           customer_id: sub.customer_id,
-          provider: 'efi',
+          provider: pixProvider.name,
           kind: 'renewal',
           subscription_id: sub.id,
           subtotal_cents: sub.price_cents,
@@ -282,11 +286,11 @@ export async function renewalOrderFor(subId: string): Promise<string> {
     await supabase.from('order_items').insert(lines.map((l) => ({ ...l, order_id: order.id })));
     const c = sub.customer ?? {};
     // autorização ainda válida: só o Pix do mês; sem autorização: o mesmo QR já pede a autorização de novo
-    const needsAuth = sub.rec_status !== 'APROVADA' && onlyDigits(c.document).length >= 11;
+    const needsAuth = pixAutoConfig().enabled && sub.rec_status !== 'APROVADA' && onlyDigits(c.document).length >= 11;
     const base = sub.paid_until && new Date(sub.paid_until).getTime() + GRACE_DAYS * DAY > Date.now() ? new Date(sub.paid_until) : new Date();
     const charge = needsAuth
       ? await issueAutoCharge({ orderId: order.id, orderNumber: order.number, totalCents: sub.price_cents, description: `Mensalidade #${order.number} - ${namesOf(sub.items)}`, customer: c, monthlyCents: sub.price_cents, items: sub.items, firstDue: addMonths(base, 1) })
-      : { ...(await efi.createCharge({ orderId: order.id, amountCents: sub.price_cents, description: `Mensalidade #${order.number} - ${namesOf(sub.items)}`, expiresInSeconds: pixExpiresMinutes() * 60, customer: c })), recId: null };
+      : { ...(await pixProvider.createCharge({ orderId: order.id, amountCents: sub.price_cents, description: `Mensalidade #${order.number} - ${namesOf(sub.items)}`, expiresInSeconds: pixExpiresMinutes() * 60, customer: c })), recId: null };
     const qr = (await pixQrDataUrl(charge.pixCode)) ?? charge.qrImage;
     await Promise.all([
       supabase.from('orders').update({ provider_charge_id: charge.chargeId, pix_code: charge.pixCode, pix_qr_image: qr, expires_at: charge.expiresAt.toISOString(), ...(charge.recId ? { rec_id: charge.recId } : {}) }).eq('id', order.id),
@@ -380,13 +384,15 @@ export async function runSubscriptionJobs(now = Date.now()) {
 
 // ------------------------------------------------------------------ cancelamento
 /** Cancela a assinatura: para os débitos (autorização cancelada na Efí); o acesso segue até o fim do mês pago. */
-export async function cancelSubscription(subId: string) {
+export async function cancelSubscription(subId: string, opts: { by?: 'cliente' | 'admin' | 'banco'; reason?: string | null } = {}) {
   const { data } = await supabase.from('subscriptions').select('id, rec_id, rec_status, status').eq('id', subId).maybeSingle();
   const sub: any = data;
   if (!sub) throw new HttpError(404, 'Assinatura não encontrada');
   if (sub.status === 'canceled') return;
   if (sub.rec_id && ['CRIADA', 'APROVADA'].includes(sub.rec_status ?? '')) await efi.cancelRec(sub.rec_id).catch((e) => logger.warn({ err: e?.message }, 'Efí não cancelou a autorização'));
   await supabase.from('subscriptions').update({ status: 'canceled', canceled_at: new Date().toISOString(), rec_status: sub.rec_id ? 'CANCELADA' : sub.rec_status, updated_at: new Date().toISOString() }).eq('id', subId);
+  // quem cancelou e por quê (colunas do SQL do Clube; sem elas, segue sem gravar)
+  await supabase.from('subscriptions').update({ canceled_by: opts.by ?? 'admin', cancel_reason: opts.reason?.slice(0, 300) || null }).eq('id', subId).then(() => {}, () => {});
 }
 
 // ------------------------------------------------------------------ acesso na área de membros

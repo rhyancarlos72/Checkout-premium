@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { clientIp, HttpError, supabase } from '../lib/core.js';
 import { sendMemberCode } from '../services/email.js';
 import { getSettings } from '../services/settings.js';
+import { cancelByMember, memberSubscriptions } from '../services/club.js';
 import { createMemberSession, hashCode, loginWithPassword, memberHome, memberModule, newCode, ownedProductIds, readMemberSession, setLessonDone, setMemberPassword } from '../services/members.js';
 
 /** Área de membros do aluno: login por código no e-mail ou pelo link do pedido. */
@@ -92,6 +93,19 @@ membersRouter.get('/me', async (req, res) => {
   // nome e logo exibidos no topo da área (os mesmos da loja / do sistema)
   const name = st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : st.brand.name;
   res.json({ ...home, store: { name, logo_url: st.brand.logoUrl || null } });
+});
+
+// ---------------------------------------------------------------- assinatura (Clube): perfil do membro
+membersRouter.get('/subscriptions', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json(await memberSubscriptions(customerOf(req)));
+});
+/** "Cancelar assinatura" no perfil (2 cliques, motivo opcional): para os débitos; o acesso segue até o fim do mês pago. */
+membersRouter.post('/subscriptions/:id/cancel', async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const reason = z.object({ reason: z.string().trim().max(300).optional().nullable() }).parse(req.body ?? {}).reason ?? null;
+  await cancelByMember(customerOf(req), id, reason);
+  res.json({ ok: true });
 });
 
 membersRouter.get('/modules/:id', async (req, res) => {
