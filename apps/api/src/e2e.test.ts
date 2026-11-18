@@ -3,6 +3,7 @@
  * checkout → cotação com bump/cupom → Pix → webhook → pago (1 vez só) → entrega,
  * nota fiscal única, PayTracking → upsell → Pix vencido renovado em um toque.
  */
+import crypto from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -1763,5 +1764,59 @@ describe('marketplace multiusuário', () => {
     // página pausada sai do ar
     await as('owner', 'PUT', `/api/admin/upsell-pages/${created.body.id}`, { ...created.body, checkout: undefined, active: false });
     expect((await api('GET', '/api/public/offers/clube')).status).toBe(404);
+  }, 30_000);
+  it('upsell por áudio para compradores antigos: 1 pessoa a cada 30 min, mais recentes primeiro, uma vez por pessoa, só no horário', async () => {
+    const wa = await import('./services/waAudio.js');
+    const P1 = '00000000-0000-4000-8000-000000000001';
+    const DAY = 24 * 3600_000;
+    const mk = (n: number, daysAgo: number, product = P1) => {
+      const cid = `0f000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`;
+      if (!db.customers.some((c) => c.id === cid)) db.customers.push({ id: cid, name: `Antigo ${n}`, email: `antigo${n}@x.com`, phone: `1198000${String(n).padStart(4, '0')}`, created_at: new Date().toISOString() });
+      const oid = crypto.randomUUID();
+      const at = new Date(Date.now() - daysAgo * DAY).toISOString();
+      db.orders.push({ id: oid, number: 9000 + n * 10 + daysAgo, public_token: crypto.randomBytes(24).toString('hex'), status: 'paid', paid_at: at, created_at: at, customer_id: cid, checkout_id: '00000000-0000-4000-8000-0000000000c1', org_id: OWNER_ORG, total_cents: 1999, tracking: {}, kind: 'sale' });
+      db.order_items.push({ id: crypto.randomUUID(), order_id: oid, kind: 'main', product_id: product, name: 'Pack', price_cents: 1999 });
+      return { oid, cid };
+    };
+    const a = mk(61, 2); // mais recente
+    mk(61, 20); // mesma pessoa, compra antiga: não recebe duas vezes
+    const b = mk(62, 5);
+    mk(63, 200); // fora do período (90 dias)
+    mk(64, 3, '00000000-0000-4000-8000-000000000002'); // produto não marcado
+    const cfg = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...cfg, windowStart: 0, windowEnd: 24, upsell: { ...cfg.upsell, enabled: true, page_slug: '', checkout_slug: '8931499', product_ids: [P1] }, backfill: { enabled: true, daysBack: 90, intervalMinutes: 30 } });
+    db.settings = db.settings.filter((x) => x.key !== 'wa_audio_backfill');
+    const queuedFor = (cid: string) => (db.wa_queue ?? []).filter((q) => q.customer_id === cid && q.kind === 'upsell');
+    const t0 = Date.now();
+    const first = await wa.runUpsellBackfill(t0);
+    expect(first).toBe(a.oid); // mais recente primeiro
+    expect(queuedFor(a.cid)).toHaveLength(1);
+    expect(await wa.runUpsellBackfill(t0 + 5 * 60_000)).toBeNull(); // ainda não deu 30 min
+    const second = await wa.runUpsellBackfill(t0 + 31 * 60_000);
+    expect(second).toBe(b.oid);
+    // os próximos nunca repetem quem já recebeu, nem quem está fora do período ou comprou produto não marcado
+    for (let i = 2; i < 30; i++) {
+      const id = await wa.runUpsellBackfill(t0 + i * 31 * 60_000);
+      if (id) expect([a.oid, b.oid]).not.toContain(id);
+    }
+    expect(queuedFor(a.cid)).toHaveLength(1);
+    expect(queuedFor('0f000000-0000-4000-8000-000000000063')).toHaveLength(0);
+    expect(queuedFor('0f000000-0000-4000-8000-000000000064')).toHaveLength(0);
+    // painel mostra o andamento
+    const st = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.backfill;
+    expect(st.sent).toBeGreaterThanOrEqual(2);
+    expect(st.remaining).toBe(0);
+    // fora do horário (20h30 em Brasília com janela 8h–20h): espera
+    const c2 = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...c2, windowStart: 8, windowEnd: 20 });
+    mk(65, 1);
+    db.settings = db.settings.filter((x) => x.key !== 'wa_audio_backfill');
+    expect(await wa.runUpsellBackfill(Date.parse('2026-11-20T23:30:00Z'))).toBeNull();
+    expect(await wa.runUpsellBackfill(Date.parse('2026-11-21T12:00:00Z'))).toBeTruthy(); // 9h: segue
+    // desligado: não envia
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...c2, backfill: { ...c2.backfill, enabled: false } });
+    mk(66, 1);
+    db.settings = db.settings.filter((x) => x.key !== 'wa_audio_backfill');
+    expect(await wa.runUpsellBackfill(Date.parse('2026-11-21T13:00:00Z'))).toBeNull();
   }, 30_000);
 });

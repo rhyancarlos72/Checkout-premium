@@ -21,7 +21,7 @@ import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProv
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
 import { OFFER_NEW_FIELDS, OFFER_SELECT, OFFER_SELECT_BASE, missingOfferColumns, offerSchema, offerStats, selectOffers } from '../services/offers.js';
-import { evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
+import { backfillStatus, evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
 import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, phoneVariants, saveWhatsAppConfig, sendWhatsAppAudio, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
@@ -1439,6 +1439,7 @@ adminRouter.get('/whatsapp/audio', async (_req, res) => {
     checkouts: (checkouts.data ?? []).filter((c: any) => c.active !== false).map((c: any) => ({ slug: c.slug, name: c.name })),
     products: (products.data ?? []).map((p: any) => ({ id: p.id, name: p.name, active: p.active !== false })),
     pages: ((offerPages.data ?? []) as any[]).map((p) => ({ slug: p.slug, title: p.title, active: p.active !== false })),
+    backfill: await backfillStatus().catch(() => null),
   });
 });
 adminRouter.put('/whatsapp/audio/config', async (req, res) => {

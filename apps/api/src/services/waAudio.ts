@@ -75,6 +75,14 @@ export const waAudioSchema = z.object({
         .default(UPSELL_LINK_TEXT),
     })
     .prefault({}),
+  /** compradores antigos dos produtos marcados no upsell: 1 pessoa a cada `intervalMinutes`, dentro do horário */
+  backfill: z
+    .object({
+      enabled: z.boolean().default(false),
+      daysBack: z.number().int().min(1).max(730).default(90),
+      intervalMinutes: z.number().int().min(10).max(1440).default(30),
+    })
+    .prefault({}),
 });
 export type WaAudioConfig = z.infer<typeof waAudioSchema>;
 
@@ -500,4 +508,98 @@ export async function waAudioReport() {
       return { ...a, ...x, conversion: x.sent ? Math.round((x.paid / x.sent) * 1000) / 10 : 0 };
     }),
   };
+}
+
+
+// ------------------------------------------------------------------ compradores antigos (envio espaçado)
+const BACKFILL_KEY = 'wa_audio_backfill'; // estado: quando foi o último envio e quantos já foram
+type BackfillState = { last_at: string | null; sent: number; last_order?: string | null };
+async function backfillState(): Promise<BackfillState> {
+  const { data } = await supabase.from('settings').select('value').eq('key', BACKFILL_KEY).maybeSingle();
+  const v = (data as any)?.value ?? {};
+  return { last_at: v.last_at ?? null, sent: Number(v.sent ?? 0), last_order: v.last_order ?? null };
+}
+
+/**
+ * Compradores antigos que ainda podem receber: pagos nos últimos N dias (fora as últimas horas, que já seguem o fluxo
+ * normal), de um produto marcado, um por pessoa (a compra mais recente), que nunca receberam upsell por áudio.
+ * Ordem: mais recentes primeiro. `limit` = quantos devolver depois de passar pelas regras (assinante, já comprou, SAIR, 7 dias).
+ */
+async function backfillCandidates(cfg: WaAudioConfig, ck: any, limit: number, check = true) {
+  const ids = cfg.upsell.product_ids;
+  if (!ids.length) return { list: [] as any[], total: 0 };
+  const since = new Date(Date.now() - cfg.backfill.daysBack * 24 * 3600_000).toISOString();
+  const before = new Date(Date.now() - Math.max(cfg.upsell.delayMinutes, 60) * 60_000).toISOString();
+  const owner = await ownerOrgId();
+  // quem já recebeu (ou está na fila) qualquer upsell por áudio — em páginas de 1000 (limite do Supabase)
+  const skip = new Set<string>();
+  for (let page = 0; page < 200; page++) {
+    const { data: queued } = await supabase.from('wa_queue').select('customer_id').eq('kind', 'upsell').order('created_at', { ascending: true }).range(page * 1000, page * 1000 + 999);
+    for (const q of (queued ?? []) as any[]) if (q.customer_id) skip.add(q.customer_id);
+    if (!queued || queued.length < 1000) break;
+  }
+  const out: any[] = [];
+  let total = 0;
+  for (let page = 0; page < 40; page++) {
+    const { data, error } = await supabase
+      .from('orders')
+      .select('id, org_id, kind, tracking, customer_id, paid_at, customer:customers(phone), items:order_items(product_id)')
+      .eq('status', 'paid')
+      .gte('paid_at', since)
+      .lte('paid_at', before)
+      .order('paid_at', { ascending: false })
+      .range(page * 500, page * 500 + 499);
+    if (error || !data?.length) break;
+    for (const o of data as any[]) {
+      if (!o.customer_id || skip.has(o.customer_id)) continue;
+      skip.add(o.customer_id); // uma vez por pessoa (a compra mais recente)
+      if (owner && o.org_id && o.org_id !== owner) continue;
+      if (o.kind === 'renewal' || o.tracking?.upsell_of || o.tracking?.renewed_from) continue;
+      const pids = (o.items ?? []).map((i: any) => i.product_id);
+      if (!pids.some((p: string) => ids.includes(p)) || pids.includes(ck.product_id)) continue;
+      const phone = normalizePhoneBR(o.customer?.phone);
+      if (!phone) continue;
+      total++;
+      if (out.length >= limit) continue;
+      if (check && (await upsellBlocked({ customerId: o.customer_id, phone, productId: ck.product_id }))) {
+        total--;
+        continue;
+      }
+      out.push({ ...o, phone });
+    }
+    if (data.length < 500) break;
+  }
+  return { list: out, total };
+}
+
+/** Rotina: na hora certa (1 a cada N min, dentro do horário), coloca o próximo comprador antigo na fila do upsell. */
+export async function runUpsellBackfill(now = Date.now()) {
+  const [cfg, wa] = await Promise.all([getWaAudioConfig(), getWhatsAppConfig()]);
+  if (!cfg.enabled || !cfg.upsell.enabled || !cfg.backfill.enabled || !wa.enabled || !cfg.upsell.product_ids.length) return null;
+  if (!inWindow(cfg, now)) return null;
+  const st = await backfillState();
+  if (st.last_at && now - new Date(st.last_at).getTime() < cfg.backfill.intervalMinutes * 60_000) return null;
+  const target = await upsellTarget(cfg);
+  if (!target?.ck?.product_id || !(await pickAudio('upsell'))) return null;
+  const { list } = await backfillCandidates(cfg, target.ck, 1);
+  const o = list[0];
+  if (!o) return null;
+  const { error } = await supabase.from('wa_queue').insert({ kind: 'upsell', status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone: o.phone, run_at: new Date(now).toISOString() });
+  if (error) {
+    logger.warn({ err: error.message }, 'Compradores antigos: não entrou na fila');
+    return null;
+  }
+  await supabase.from('settings').upsert({ key: BACKFILL_KEY, value: { last_at: new Date(now).toISOString(), sent: st.sent + 1, last_order: o.id }, updated_at: new Date().toISOString() });
+  return o.id as string;
+}
+
+/** Painel: quantos já foram, quantos faltam (aproximado: sem conferir assinatura/compra de cada um) e o próximo horário. */
+export async function backfillStatus() {
+  const cfg = await getWaAudioConfig();
+  const st = await backfillState();
+  const target = await upsellTarget(cfg).catch(() => null);
+  const remaining = target?.ck?.product_id ? (await backfillCandidates(cfg, target.ck, 0, false)).total : 0;
+  const next = st.last_at ? new Date(st.last_at).getTime() + cfg.backfill.intervalMinutes * 60_000 : Date.now();
+  const nextAt = inWindow(cfg, Math.max(next, Date.now())) ? Math.max(next, Date.now()) : nextWindowStart(cfg, Math.max(next, Date.now()));
+  return { sent: st.sent, last_at: st.last_at, remaining, next_at: cfg.backfill.enabled && remaining ? new Date(nextAt).toISOString() : null };
 }

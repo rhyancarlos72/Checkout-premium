@@ -35,6 +35,7 @@ interface Config {
   windowEnd: number;
   recovery: { enabled: boolean; product_ids: string[]; linkText: string };
   upsell: { enabled: boolean; checkout_slug: string; page_slug: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
+  backfill: { enabled: boolean; daysBack: number; intervalMinutes: number };
 }
 interface QueueRow { id: string; kind: Kind; step: number; status: string; phone: string; run_at: string; error: string | null; created_at: string }
 interface Data {
@@ -48,6 +49,7 @@ interface Data {
   checkouts: { slug: string; name: string }[];
   products: { id: string; name: string; active: boolean }[];
   pages: { slug: string; title: string; active: boolean }[];
+  backfill: { sent: number; last_at: string | null; remaining: number; next_at: string | null } | null;
 }
 
 const kindLabel: Record<Kind, string> = { recovery: 'Recuperação (3º lembrete)', upsell: 'Upsell' };
@@ -281,6 +283,25 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
             <Textarea rows={5} value={c.upsell.linkText} onChange={(e) => up({ linkText: e.target.value })} />
           </Field>
           <p className="text-xs text-zinc-500">No máximo 1 upsell a cada 7 dias por pessoa. Link rastreável com UTMs whatsapp / audio / upsell / id do áudio.</p>
+        </div>
+
+        <div className="space-y-3 border-t border-zinc-100 pt-4">
+          <Switch checked={c.backfill.enabled} onChange={(v) => setC({ ...c, backfill: { ...c.backfill, enabled: v } })} label="Enviar o upsell para compradores antigos" />
+          <p className="text-xs text-zinc-500">Quem já comprou um dos produtos marcados acima recebe a mesma sequência (texto → áudio → link), <b>uma pessoa por vez</b>, espaçado, só no horário de envio. Começa pelos mais recentes. Cada pessoa recebe uma vez só; assinantes, quem já comprou e quem respondeu SAIR ficam de fora.</p>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="1 pessoa a cada (min)"><Input type="number" min={10} value={c.backfill.intervalMinutes} onChange={(e) => setC({ ...c, backfill: { ...c.backfill, intervalMinutes: num(e.target.value) } })} /></Field>
+            <Field label="Compras dos últimos (dias)"><Input type="number" min={1} max={730} value={c.backfill.daysBack} onChange={(e) => setC({ ...c, backfill: { ...c.backfill, daysBack: num(e.target.value) } })} /></Field>
+          </div>
+          {data.backfill && (
+            <div className="grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-lg bg-zinc-50 px-2 py-1.5"><p className="text-[11px] text-zinc-500">Já enviados</p><p className="text-sm font-semibold tabular-nums">{data.backfill.sent}</p></div>
+              <div className="rounded-lg bg-zinc-50 px-2 py-1.5"><p className="text-[11px] text-zinc-500">Faltam (aprox.)</p><p className="text-sm font-semibold tabular-nums">{data.backfill.remaining}</p></div>
+              <div className="rounded-lg bg-zinc-50 px-2 py-1.5"><p className="text-[11px] text-zinc-500">Próximo</p><p className="text-sm font-semibold tabular-nums">{data.backfill.next_at ? new Date(data.backfill.next_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '—'}</p></div>
+            </div>
+          )}
+          {c.backfill.enabled && data.backfill && (
+            <p className="text-xs text-zinc-500">No ritmo de 1 a cada {c.backfill.intervalMinutes} min, são cerca de {Math.floor(((c.windowEnd - c.windowStart) * 60) / Math.max(10, c.backfill.intervalMinutes))} por dia{data.backfill.remaining ? `: todos em ~${Math.max(1, Math.ceil(data.backfill.remaining / Math.max(1, Math.floor(((c.windowEnd - c.windowStart) * 60) / Math.max(10, c.backfill.intervalMinutes)))))} dia(s)` : ''}.</p>
+          )}
         </div>
         <Button type="button" className="w-full" loading={save.isPending} onClick={() => save.mutate()}>Salvar configuração</Button>
       </div>
