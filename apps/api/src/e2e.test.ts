@@ -1479,7 +1479,12 @@ describe('marketplace multiusuário', () => {
     db.checkouts.push({ id: '0c000000-0000-4000-8000-0000000000c9', product_id: CLUBE, org_id: OWNER_ORG, slug: '8931499', name: 'Clube', price_cents: 990, active: true, provider: 'woovi', pix_expires_minutes: 30, theme: {}, fields: { phone: true, document: false }, tracking: {}, created_at: now });
     // painel: só o dono da plataforma configura; janela 0h–24h para o teste rodar a qualquer hora
     expect((await as('b', 'PUT', '/api/admin/whatsapp/audio/config', {})).status).toBe(403);
-    const put = await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { windowStart: 0, windowEnd: 24, upsell: { enabled: true, checkout_slug: '8931499' } });
+    const P1 = '00000000-0000-4000-8000-000000000001'; // Pack Etiquetas (produto do checkout 8931442)
+    const P2 = '00000000-0000-4000-8000-000000000002';
+    // sem produto marcado: nem recuperação por áudio nem upsell
+    expect((await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config).toMatchObject({ recovery: { product_ids: [] }, upsell: { product_ids: [] } });
+    expect((await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.products.map((p: any) => p.id)).toEqual(expect.arrayContaining([P1, P2, CLUBE]));
+    const put = await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { windowStart: 0, windowEnd: 24, recovery: { enabled: true, product_ids: [P1] }, upsell: { enabled: true, checkout_slug: '8931499', product_ids: [P2, P1] } });
     expect(put.status).toBe(200);
     expect(put.body.upsell).toMatchObject({ delayMinutes: 120, validityHours: 48, opener: 'Oi {nome}, tudo bem? Posso falar com você um segundo?' });
     const buy = (name: string, email: string, phone: string, slug = '8931442', tracking: Record<string, string> = {}) =>
@@ -1587,6 +1592,18 @@ describe('marketplace multiusuário', () => {
     expect(db.wa_queue.some((q) => q.kind === 'upsell' && q.order_id === o.id)).toBe(true); // a Joana pagou pela recuperação: também recebe o convite
     const dani = db.orders.find((x) => x.public_token === d.token)!;
     expect(await wa.upsellBlocked({ customerId: dani.customer_id, phone: '5511966667777', productId: CLUBE })).toBeNull(); // nunca recebeu e não comprou
+
+    // só os produtos marcados no painel: upsell para quem pagou um deles; recuperação por áudio só desses produtos
+    const cfgNow = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...cfgNow, recovery: { enabled: true, product_ids: [P2] }, upsell: { ...cfgNow.upsell, product_ids: [P2] } });
+    const f = await buy('Fabio Outro', 'fabio.outro@x.com', '11988887777');
+    const fo = db.orders.find((x) => x.public_token === f.token)!;
+    expect(await wa.queueRecoveryAudio({ ...fo, customer: { phone: '11988887777' }, items: [{ kind: 'main', product_id: P1 }] })).toBe(false); // Pack Etiquetas não marcado: 3º em texto
+    expect(await wa.queueRecoveryAudio({ ...fo, customer: { phone: '11988887777' }, items: [{ kind: 'main', product_id: P2 }] })).toBe(true);
+    db.wa_queue = db.wa_queue.filter((q) => q.order_id !== fo.id);
+    await pay(fo.id); // comprou só o Pack Etiquetas (não marcado no upsell)
+    expect(db.wa_queue.some((q) => q.order_id === fo.id)).toBe(false);
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfgNow);
 
     // ---------- SAIR pelo WhatsApp: descadastra (só com o endereço assinado) e cancela o que estava na fila
     const e = await buy('Elisa Sair', 'elisa.sair@x.com', '11977778888');

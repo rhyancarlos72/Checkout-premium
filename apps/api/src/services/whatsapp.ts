@@ -871,7 +871,7 @@ export async function recoveryEmailFallback(orderId: string, customerId: string,
   }
 }
 
-export const WA_RECOVERY_SELECT = 'id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, total_cents, tracking, customer:customers(name, phone), checkout:checkouts(slug), items:order_items(kind, name)';
+export const WA_RECOVERY_SELECT = 'id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, total_cents, tracking, customer:customers(name, phone), checkout:checkouts(slug), items:order_items(kind, name, product_id)';
 
 /** Minutos de espera para o lembrete `n`: o 1º conta da hora do Pix; os seguintes, do lembrete anterior (automático ou manual). */
 function recoveryGapMinutes(cfg: WhatsAppConfig, n: number) {

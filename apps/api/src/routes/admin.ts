@@ -1357,12 +1357,13 @@ const audioMissing = (e: { message?: string } | null) => !!e && /wa_audios|wa_qu
 const AUDIO_SQL_MSG = 'Rode no Supabase o SQL dos áudios (supabase/migrations/20261119000000_wa_audio.sql) e recarregue.';
 
 adminRouter.get('/whatsapp/audio', async (_req, res) => {
-  const [config, report, queue, optouts, checkouts] = await Promise.all([
+  const [config, report, queue, optouts, checkouts, products] = await Promise.all([
     getWaAudioConfig(),
     waAudioReport(),
     supabase.from('wa_queue').select('id, kind, step, status, phone, run_at, error, audio_id, created_at, updated_at').order('created_at', { ascending: false }).limit(30),
     supabase.from('wa_optouts').select('phone, word, created_at').order('created_at', { ascending: false }).limit(50),
     supabase.from('checkouts').select('slug, name, active').order('created_at', { ascending: false }).limit(200),
+    supabase.from('products').select('id, name, active').order('name', { ascending: true }).limit(500),
   ]);
   res.set('Cache-Control', 'no-store').json({
     ready: report.ready && !queue.error,
@@ -1373,6 +1374,7 @@ adminRouter.get('/whatsapp/audio', async (_req, res) => {
     queue: queue.data ?? [],
     optouts: optouts.data ?? [],
     checkouts: (checkouts.data ?? []).filter((c: any) => c.active !== false).map((c: any) => ({ slug: c.slug, name: c.name })),
+    products: (products.data ?? []).map((p: any) => ({ id: p.id, name: p.name, active: p.active !== false })),
   });
 });
 adminRouter.put('/whatsapp/audio/config', async (req, res) => {

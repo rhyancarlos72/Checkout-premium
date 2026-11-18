@@ -39,12 +39,20 @@ export const waAudioSchema = z.object({
   /** janela de envio, horário de Brasília: das `windowStart` até as `windowEnd` horas */
   windowStart: z.number().int().min(0).max(23).default(8),
   windowEnd: z.number().int().min(1).max(24).default(20),
-  recovery: z.object({ enabled: z.boolean().default(true) }).default({ enabled: true }),
+  recovery: z
+    .object({
+      enabled: z.boolean().default(true),
+      /** produtos cuja recuperação usa áudio no 3º lembrete (nenhum marcado = o 3º segue em texto) */
+      product_ids: z.array(z.string().uuid()).max(200).default([]),
+    })
+    .prefault({}),
   upsell: z
     .object({
       enabled: z.boolean().default(false),
       /** checkout oferecido (ex.: o do Clube) */
       checkout_slug: z.string().trim().max(60).default(''),
+      /** produtos que, PAGOS, disparam o upsell (nenhum marcado = upsell não sai) */
+      product_ids: z.array(z.string().uuid()).max(200).default([]),
       delayMinutes: z.number().int().min(10).max(2880).default(120),
       validityHours: z.number().int().min(1).max(720).default(48),
       /** segundos entre o texto de abertura e o áudio */
@@ -230,10 +238,12 @@ export async function upsellBlocked(p: { customerId: string; phone: string; prod
 /** Venda aprovada → agenda o upsell por áudio (só vendas da plataforma, não renovação nem upsell). */
 export async function scheduleUpsell(orderId: string) {
   const [cfg, wa] = await Promise.all([getWaAudioConfig(), getWhatsAppConfig()]);
-  if (!cfg.enabled || !cfg.upsell.enabled || !cfg.upsell.checkout_slug || !wa.enabled) return null;
-  const { data: o } = await supabase.from('orders').select('id, kind, status, checkout_id, customer_id, tracking, paid_at, customer:customers(phone)').eq('id', orderId).maybeSingle();
+  if (!cfg.enabled || !cfg.upsell.enabled || !cfg.upsell.checkout_slug || !cfg.upsell.product_ids.length || !wa.enabled) return null;
+  const { data: o } = await supabase.from('orders').select('id, kind, status, checkout_id, customer_id, tracking, paid_at, customer:customers(phone), items:order_items(product_id)').eq('id', orderId).maybeSingle();
   const order = o as any;
   if (!order || order.status !== 'paid' || order.kind === 'renewal' || order.tracking?.upsell_of || order.tracking?.renewed_from) return null;
+  // só quem pagou um dos produtos escolhidos no painel (produto principal ou order bump)
+  if (!(order.items ?? []).some((i: any) => cfg.upsell.product_ids.includes(i.product_id))) return null;
   const phone = normalizePhoneBR(order.customer?.phone);
   if (!phone) return null;
   const owner = await ownerOrgId();
@@ -253,6 +263,8 @@ export async function scheduleUpsell(orderId: string) {
 export async function queueRecoveryAudio(o: any): Promise<boolean> {
   const cfg = await getWaAudioConfig();
   if (!cfg.enabled || !cfg.recovery.enabled) return false;
+  // só a recuperação dos produtos escolhidos no painel vai por áudio; os outros seguem em texto
+  if (!(o.items ?? []).some((i: any) => i.kind === 'main' && cfg.recovery.product_ids.includes(i.product_id))) return false;
   const phone = normalizePhoneBR(o.customer?.phone);
   if (!phone || !(await pickAudio('recovery'))) return false;
   const { error } = await supabase.from('wa_queue').insert({ kind: 'recovery', status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone, run_at: new Date().toISOString() });

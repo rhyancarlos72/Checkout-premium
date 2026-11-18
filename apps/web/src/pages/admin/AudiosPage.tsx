@@ -33,8 +33,8 @@ interface Config {
   enabled: boolean;
   windowStart: number;
   windowEnd: number;
-  recovery: { enabled: boolean };
-  upsell: { enabled: boolean; checkout_slug: string; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
+  recovery: { enabled: boolean; product_ids: string[] };
+  upsell: { enabled: boolean; checkout_slug: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
 }
 interface QueueRow { id: string; kind: Kind; step: number; status: string; phone: string; run_at: string; error: string | null; created_at: string }
 interface Data {
@@ -46,6 +46,7 @@ interface Data {
   queue: QueueRow[];
   optouts: { phone: string; word: string | null; created_at: string }[];
   checkouts: { slug: string; name: string }[];
+  products: { id: string; name: string; active: boolean }[];
 }
 
 const kindLabel: Record<Kind, string> = { recovery: 'Recuperação (3º lembrete)', upsell: 'Upsell' };
@@ -228,12 +229,28 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
         <p className="-mt-2 text-xs text-zinc-500">Horário de Brasília. Fora dele, o envio espera a próxima abertura.</p>
 
         <div className="border-t border-zinc-100 pt-4">
-          <Switch checked={c.recovery.enabled} onChange={(v) => setC({ ...c, recovery: { enabled: v } })} label="Recuperação: 3º lembrete por áudio" />
+          <Switch checked={c.recovery.enabled} onChange={(v) => setC({ ...c, recovery: { ...c.recovery, enabled: v } })} label="Recuperação: 3º lembrete por áudio" />
           <p className="mt-1 text-xs text-zinc-500">O 1º e o 2º continuam em texto. No 3º vai o áudio e, logo depois, o link e o Pix.</p>
+          <ProductPicker
+            label="Produtos com recuperação por áudio"
+            hint="Pix pendente de um destes produtos recebe o 3º lembrete em áudio. Os outros seguem em texto."
+            empty="Nenhum marcado: o 3º lembrete segue em texto para todos."
+            products={data.products}
+            value={c.recovery.product_ids}
+            onChange={(ids) => setC({ ...c, recovery: { ...c.recovery, product_ids: ids } })}
+          />
         </div>
 
         <div className="space-y-3 border-t border-zinc-100 pt-4">
           <Switch checked={c.upsell.enabled} onChange={(v) => up({ enabled: v })} label="Upsell por áudio depois da compra" />
+          <ProductPicker
+            label="Quem comprou (produtos pagos)"
+            hint="Recebe o upsell quem PAGOU um destes produtos (como produto principal ou order bump)."
+            empty="Nenhum marcado: o upsell não é enviado."
+            products={data.products}
+            value={c.upsell.product_ids}
+            onChange={(ids) => up({ product_ids: ids })}
+          />
           <Field label="Checkout oferecido" hint="Ex.: o checkout do Clube. Quem já comprou ou assina não recebe.">
             <Select value={c.upsell.checkout_slug} onChange={(e) => up({ checkout_slug: e.target.value })}>
               <option value="">Escolha…</option>
@@ -256,6 +273,32 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
         <Button type="button" className="w-full" loading={save.isPending} onClick={() => save.mutate()}>Salvar configuração</Button>
       </div>
     </Card>
+  );
+}
+
+/** Marca vários produtos (botões com caixinha, como na vitrine da área de membros). */
+function ProductPicker({ label, hint, empty, products, value, onChange }: { label: string; hint: string; empty: string; products: Data['products']; value: string[]; onChange: (ids: string[]) => void }) {
+  const [q, setQ] = useState('');
+  const list = products.filter((p) => (p.active || value.includes(p.id)) && p.name.toLowerCase().includes(q.trim().toLowerCase()));
+  return (
+    <div className="mt-3">
+      <p className="text-sm font-medium text-gray-700">{label}</p>
+      <p className="mb-2 text-xs text-zinc-500">{hint}</p>
+      {products.length > 8 && <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar produto…" className="mb-2" />}
+      <div className="flex max-h-56 flex-wrap gap-2 overflow-y-auto">
+        {list.map((p) => {
+          const on = value.includes(p.id);
+          return (
+            <label key={p.id} className={cn('flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-sm transition', on ? 'border-blue-600 bg-blue-600 text-white' : 'border-zinc-200 text-zinc-600 hover:border-zinc-300')}>
+              <input type="checkbox" className="h-4 w-4 accent-white" checked={on} onChange={() => onChange(on ? value.filter((x) => x !== p.id) : [...value, p.id])} />
+              {p.name}
+            </label>
+          );
+        })}
+      </div>
+      {!value.length && <p className="mt-1.5 text-xs font-medium text-amber-600">{empty}</p>}
+      {value.length > 0 && <p className="mt-1.5 text-xs text-zinc-500">{value.length} {value.length === 1 ? 'produto marcado' : 'produtos marcados'}</p>}
+    </div>
   );
 }
 

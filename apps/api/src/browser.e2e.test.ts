@@ -424,9 +424,12 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
         await p.getByText('(11) 97777-8888').waitFor();
         await p.getByText('Texto de abertura').or(p.getByText('Áudio', { exact: true })).first().waitFor();
         await p.getByText('Upsell por áudio depois da compra').click();
+        await p.getByText('Nenhum marcado: o upsell não é enviado.').waitFor();
+        await p.getByText('Quem comprou (produtos pagos)').locator('..').locator('label').first().click(); // marca um produto pago
         await p.getByRole('button', { name: 'Salvar configuração' }).click();
         await p.getByText('Configuração salva').waitFor();
         expect(db.settings.find((x) => x.key === 'wa_audio')!.value.upsell).toMatchObject({ enabled: true, delayMinutes: 120 });
+        expect(db.settings.find((x) => x.key === 'wa_audio')!.value.upsell.product_ids).toHaveLength(1);
         await p.waitForTimeout(300);
         if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-audios.png`, fullPage: true });
         ok('[computador] painel: Áudios no WhatsApp (relatório, upsell, SAIR e fila)');

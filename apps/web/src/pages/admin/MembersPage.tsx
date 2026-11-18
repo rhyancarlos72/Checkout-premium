@@ -455,8 +455,8 @@ function OffersEditor({ products }: { products: ProductRow[] }) {
                     {areas.filter((a) => a.id !== o.product_id).map((a) => {
                       const on = (o.areas ?? []).includes(a.id);
                       return (
-                        <label key={a.id} className={cn('flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-sm transition', on ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-zinc-200 text-zinc-600 hover:border-zinc-300')}>
-                          <input type="checkbox" className="h-4 w-4 accent-blue-600" checked={on} onChange={() => setOffer(i, { areas: on ? (o.areas ?? []).filter((x) => x !== a.id) : [...(o.areas ?? []), a.id] })} />
+                        <label key={a.id} className={cn('flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-sm transition', on ? 'border-blue-600 bg-blue-600 text-white' : 'border-zinc-200 text-zinc-600 hover:border-zinc-300')}>
+                          <input type="checkbox" className="h-4 w-4 accent-white" checked={on} onChange={() => setOffer(i, { areas: on ? (o.areas ?? []).filter((x) => x !== a.id) : [...(o.areas ?? []), a.id] })} />
                           {a.name}
                         </label>
                       );
