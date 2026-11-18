@@ -20,7 +20,7 @@ import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
-import { OFFER_SELECT, offerSchema, offerStats } from '../services/offers.js';
+import { OFFER_NEW_FIELDS, OFFER_SELECT, OFFER_SELECT_BASE, missingOfferColumns, offerSchema, offerStats, selectOffers } from '../services/offers.js';
 import { evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
 import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, phoneVariants, saveWhatsAppConfig, sendWhatsAppAudio, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
@@ -339,12 +339,14 @@ const productBumpsSchema = z.object({
 
 // ------------------------------------------------------------------ upsell pós-compra (1 por produto principal)
 const upsellSchema = z.object({
-  offer_product_id: z.string().uuid('Escolha o produto oferecido'),
+  /** página de vendas upsell: depois de pagar, a pessoa vai para ela (no lugar do popup) */
+  page_id: z.string().uuid().nullable().optional(),
+  offer_product_id: z.string().uuid('Escolha o produto oferecido').optional(),
   headline: z.string().trim().max(120).optional().nullable(),
   title: z.string().trim().max(120).optional().nullable(),
   description: z.string().trim().max(600).optional().nullable(),
   image_url: urlOrEmpty,
-  price_cents: z.number().int().min(100, 'Preço mínimo de R$ 1,00').max(100_000_00),
+  price_cents: z.number().int().min(100, 'Preço mínimo de R$ 1,00').max(100_000_00).optional(),
   compare_at_cents: z.number().int().min(0).max(100_000_00).optional().nullable(),
   cta_text: z.string().trim().max(80).optional().nullable(),
   active: z.boolean().default(true),
@@ -357,12 +359,26 @@ adminRouter.get('/upsells', async (_req, res) => {
 adminRouter.put('/products/:id/upsell', async (req, res) => {
   const id = uuid.parse(req.params.id);
   const b = upsellSchema.parse(req.body);
-  if (b.offer_product_id === id) throw new HttpError(400, 'Ofereça um produto diferente do principal');
-  const { data, error } = await supabase
-    .from('upsells')
-    .upsert({ product_id: id, ...b, compare_at_cents: b.compare_at_cents || null, updated_at: new Date().toISOString() }, { onConflict: 'product_id' })
-    .select()
-    .single();
+  if (b.page_id) {
+    // redirecionar: o produto e o preço vêm do checkout da página de vendas
+    const { data: pg } = await supabase.from('upsell_pages').select('id, checkout:checkouts(product_id, price_cents, product:products(price_cents))').eq('id', b.page_id).maybeSingle();
+    const ck = (pg as any)?.checkout;
+    if (!ck?.product_id) throw new HttpError(400, 'Página de vendas não encontrada');
+    b.offer_product_id = ck.product_id;
+    b.price_cents = ck.price_cents ?? ck.product?.price_cents ?? b.price_cents ?? 100;
+  } else {
+    if (!b.offer_product_id) throw new HttpError(400, 'Escolha o produto oferecido');
+    if (!b.price_cents) throw new HttpError(400, 'Informe o preço da oferta');
+  }
+  if (b.offer_product_id === id) throw new HttpError(400, b.page_id ? 'Esta página vende o próprio produto. Escolha outra página.' : 'Ofereça um produto diferente do principal');
+  const row = { product_id: id, ...b, page_id: b.page_id ?? null, compare_at_cents: b.compare_at_cents || null, updated_at: new Date().toISOString() };
+  let r = await supabase.from('upsells').upsert(row, { onConflict: 'product_id' }).select().single();
+  if (r.error && /page_id/i.test(r.error.message)) {
+    if (b.page_id) throw new HttpError(409, 'Rode no Supabase o SQL do redirecionamento (supabase/migrations/20261121000000_upsell_redirect.sql) e recarregue.');
+    const { page_id: _p, ...old } = row;
+    r = await supabase.from('upsells').upsert(old, { onConflict: 'product_id' }).select().single();
+  }
+  const { data, error } = r;
   if (error) throw new HttpError(500, error.message);
   res.json(data);
 });
@@ -1355,10 +1371,10 @@ adminRouter.post('/whatsapp/test', async (req, res) => {
 
 // ------------------------------------------------------------------ páginas de vendas de upsell (/oferta/slug)
 const OFFER_SQL_MSG = 'Rode no Supabase o SQL das páginas upsell (supabase/migrations/20261120000000_upsell_pages.sql) e recarregue.';
-const offerMissing = (e: { message?: string } | null) => !!e && /upsell_pages|schema cache|does not exist/i.test(e.message ?? '');
+const offerMissing = (e: { message?: string } | null) => !!e && /relation "?(public\.)?upsell_pages"? does not exist|could not find the table '?(public\.)?upsell_pages/i.test(e.message ?? ''); // a tabela inteira não existe
 adminRouter.get('/upsell-pages', async (_req, res) => {
   const [pages, checkouts] = await Promise.all([
-    supabase.from('upsell_pages').select(OFFER_SELECT).order('created_at', { ascending: false }),
+    selectOffers((sel) => supabase.from('upsell_pages').select(sel).order('created_at', { ascending: false })),
     supabase.from('checkouts').select('id, slug, name, active, product:products(name, club)').order('created_at', { ascending: false }).limit(200),
   ]);
   const list = (pages.data ?? []) as any[];
@@ -1366,15 +1382,22 @@ adminRouter.get('/upsell-pages', async (_req, res) => {
   res.set('Cache-Control', 'no-store').json({
     ready: !pages.error,
     sql_hint: pages.error ? (offerMissing(pages.error) ? OFFER_SQL_MSG : pages.error.message) : null,
+    // SQL do visual novo ainda não rodou: o editor avisa (os campos novos não são salvos)
+    vsl_ready: !pages.error && (!list.length || 'accent_color' in list[0]),
     pages: list.map((p) => ({ ...p, stats: stats.get(p.slug), url: `${env.PUBLIC_URL}/oferta/${p.slug}` })),
     checkouts: ((checkouts.data ?? []) as any[]).filter((c) => c.active !== false).map((c) => ({ id: c.id, slug: c.slug, name: c.name, product: c.product?.name ?? null, club: Boolean(c.product?.club) })),
   });
 });
 const saveOffer = async (id: string | null, body: unknown) => {
   const v = offerSchema.parse(body);
-  const row = { ...v, updated_at: new Date().toISOString() };
-  const q = id ? supabase.from('upsell_pages').update(row).eq('id', id) : supabase.from('upsell_pages').insert(row);
-  const { data, error } = await q.select(OFFER_SELECT).maybeSingle();
+  const row: Record<string, unknown> = { ...v, updated_at: new Date().toISOString() };
+  const run = (r: Record<string, unknown>, sel: string) => (id ? supabase.from('upsell_pages').update(r).eq('id', id) : supabase.from('upsell_pages').insert(r)).select(sel).maybeSingle();
+  let { data, error } = await run(row, OFFER_SELECT);
+  if (error && missingOfferColumns(error) && !offerMissing(error)) {
+    // SQL do visual novo ainda não rodou: salva o resto
+    for (const k of OFFER_NEW_FIELDS) delete row[k];
+    ({ data, error } = await run(row, OFFER_SELECT_BASE));
+  }
   if (error) {
     if (offerMissing(error)) throw new HttpError(409, OFFER_SQL_MSG);
     if ((error as any).code === '23505' || /duplicate|unique/i.test(error.message)) throw new HttpError(409, 'Já existe uma página com este endereço');

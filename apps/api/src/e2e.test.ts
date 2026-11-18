@@ -1726,6 +1726,40 @@ describe('marketplace multiusuário', () => {
     // e a página já vem preenchida com os dados de quem recebeu o áudio
     expect((await api('GET', `/api/public/offers/clube/prefill?wa=${link.token}`)).body.customer).toMatchObject({ email: 'gina.pagina@x.com', name: 'Gina Pagina' });
 
+    // produto com upsell por PÁGINA: depois de pagar, a página do pedido manda para /oferta/clube (no lugar do popup)
+    const P1 = '00000000-0000-4000-8000-000000000001';
+    const before = db.upsells.find((u) => u.product_id === P1) ? { ...db.upsells.find((u) => u.product_id === P1) } : null;
+    expect((await as('owner', 'PUT', `/api/admin/products/${P1}/upsell`, { page_id: created.body.id, active: true })).status).toBe(200);
+    expect(db.upsells.find((u) => u.product_id === P1)).toMatchObject({ page_id: created.body.id, offer_product_id: '00000000-0000-4000-8000-000000000003', price_cents: 990 });
+    expect((await as('owner', 'PUT', `/api/admin/products/00000000-0000-4000-8000-000000000003/upsell`, { page_id: created.body.id })).status).toBe(400); // página que vende o próprio produto
+    const h = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.77.1.11' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Helena Redireciona', email: 'helena.redir@x.com', phone: '11912348888' }, bump_ids: [], tracking: {} }) }).then((x) => x.json());
+    const ho = db.orders.find((x) => x.public_token === h.token)!;
+    charges.get(ho.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: ho.id } });
+    await settle();
+    await settle();
+    const paidView = await api('GET', `/api/public/orders/${h.token}`);
+    expect(paidView.body.upsell).toMatchObject({ page_slug: 'clube' });
+    // compra a um toque na página (dados do pedido, nada para preencher)
+    expect((await api('GET', `/api/public/offers/clube/prefill?o=${h.token}`)).body.customer).toMatchObject({ name: 'Helena Redireciona', has_document: false });
+    expect((await api('POST', '/api/public/offers/clube/buy', {})).status).toBe(400); // sem pedido/áudio: usa o formulário
+    const one = await api('POST', '/api/public/offers/clube/buy', { o: h.token, tracking: { utm_source: 'pagina' } });
+    expect(one.status).toBe(201);
+    expect(one.body.order.pix_code).toBeTruthy();
+    const no = db.orders.find((x) => x.public_token === one.body.token)!;
+    expect(no).toMatchObject({ customer_id: ho.customer_id });
+    expect(no.tracking).toMatchObject({ offer: 'clube', utm_source: 'pagina' });
+    charges.get(no.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: no.id } });
+    await settle();
+    await settle();
+    expect((await api('GET', `/api/public/orders/${h.token}`)).body.upsell).toBeNull(); // já comprou pela página: não redireciona de novo
+    // volta ao popup quando a página sai do upsell
+    if (before) {
+      await as('owner', 'PUT', `/api/admin/products/${P1}/upsell`, { page_id: null, offer_product_id: before.offer_product_id, price_cents: before.price_cents, active: true });
+      expect(db.upsells.find((u) => u.product_id === P1)!.page_id).toBeNull();
+    }
+
     // página pausada sai do ar
     await as('owner', 'PUT', `/api/admin/upsell-pages/${created.body.id}`, { ...created.body, checkout: undefined, active: false });
     expect((await api('GET', '/api/public/offers/clube')).status).toBe(404);

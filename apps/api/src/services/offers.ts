@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { HttpError, supabase } from '../lib/core.js';
+import { createOrder } from './orders.js';
 import { isLinkToken } from './waAudio.js';
 
 /**
@@ -34,15 +35,30 @@ export const offerSchema = z.object({
   guarantee: z.string().trim().max(200).nullable().optional().transform((v) => v || null),
   button_delay_seconds: z.number().int().min(0).max(3600).default(0),
   active: z.boolean().default(true),
+  // visual VSL
+  banner_text: z.string().trim().max(80).nullable().optional().transform((v) => v || null),
+  pre_headline: z.string().trim().max(120).nullable().optional().transform((v) => v || null),
+  decline_text: z.string().trim().min(2).max(80).default('Não quero, obrigado'),
+  video_ratio: z.enum(['16:9', '9:16', '1:1', '4:5']).default('16:9'),
+  accent_color: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, 'Cor inválida').default('#f97316'),
 });
+/** campos da migração 20261121 (visual VSL): sem o SQL, a página segue com o visual básico */
+export const OFFER_NEW_FIELDS = ['banner_text', 'pre_headline', 'decline_text', 'video_ratio', 'accent_color'] as const;
+export const missingOfferColumns = (e: { message?: string } | null) => !!e && /banner_text|pre_headline|decline_text|video_ratio|accent_color|page_id|schema cache|column/i.test(e.message ?? '');
 export type OfferInput = z.infer<typeof offerSchema>;
 
-export const OFFER_SELECT = 'id, slug, checkout_id, title, headline, subheadline, video_url, video_sd_url, poster_url, cta_text, bullets, guarantee, button_delay_seconds, active, created_at, updated_at, checkout:checkouts(slug, name)';
+export const OFFER_SELECT_BASE = 'id, slug, checkout_id, title, headline, subheadline, video_url, video_sd_url, poster_url, cta_text, bullets, guarantee, button_delay_seconds, active, created_at, updated_at, checkout:checkouts(slug, name)';
+export const OFFER_SELECT = `${OFFER_SELECT_BASE.replace(', checkout:', ', banner_text, pre_headline, decline_text, video_ratio, accent_color, checkout:')}`;
+/** Consulta com os campos novos; se o SQL novo ainda não rodou, consulta sem eles. */
+export async function selectOffers<T>(run: (select: string) => PromiseLike<{ data: T; error: any }>) {
+  const r = await run(OFFER_SELECT);
+  return r.error && missingOfferColumns(r.error) ? run(OFFER_SELECT_BASE) : r;
+}
 
 /** Página ativa pelo endereço (com o checkout que cobra). */
 export async function loadOffer(slug: string) {
   if (!/^[a-z0-9-]{3,60}$/.test(slug)) throw new HttpError(404, 'Página não encontrada');
-  const { data, error } = await supabase.from('upsell_pages').select(OFFER_SELECT).eq('slug', slug).maybeSingle();
+  const { data, error } = await selectOffers((sel) => supabase.from('upsell_pages').select(sel).eq('slug', slug).maybeSingle());
   if (error || !data || !(data as any).active || !(data as any).checkout?.slug) throw new HttpError(404, 'Página não encontrada');
   return data as any;
 }
@@ -60,6 +76,11 @@ export function publicOffer(p: any) {
     guarantee: p.guarantee ?? null,
     button_delay_seconds: p.button_delay_seconds ?? 0,
     checkout_slug: p.checkout.slug,
+    banner_text: p.banner_text ?? null,
+    pre_headline: p.pre_headline ?? null,
+    decline_text: p.decline_text || 'Não quero, obrigado',
+    video_ratio: p.video_ratio || '16:9',
+    accent_color: p.accent_color || '#f97316',
   };
 }
 
@@ -67,7 +88,7 @@ export function publicOffer(p: any) {
  * Dados da pessoa para já vir preenchido: veio do link do áudio (?wa=TOKEN) ou de um pedido pago (?o=token do pedido).
  * Só nome, e-mail e WhatsApp (o CPF a pessoa confirma na hora).
  */
-export async function offerPrefill(q: { wa?: unknown; o?: unknown }) {
+async function offerCustomerId(q: { wa?: unknown; o?: unknown }) {
   let customerId: string | null = null;
   if (isLinkToken(q.wa)) {
     const { data } = await supabase.from('wa_links').select('customer_id').eq('token', q.wa).maybeSingle();
@@ -77,9 +98,42 @@ export async function offerPrefill(q: { wa?: unknown; o?: unknown }) {
     const { data } = await supabase.from('orders').select('customer_id').eq('public_token', q.o).maybeSingle();
     customerId = (data as any)?.customer_id ?? null;
   }
-  if (!customerId) return null;
-  const { data } = await supabase.from('customers').select('name, email, phone').eq('id', customerId).maybeSingle();
-  return data ? { name: (data as any).name ?? '', email: (data as any).email ?? '', phone: (data as any).phone ?? '' } : null;
+  return customerId;
+}
+async function offerCustomer(q: { wa?: unknown; o?: unknown }) {
+  const id = await offerCustomerId(q);
+  if (!id) return null;
+  const { data } = await supabase.from('customers').select('name, email, phone, document').eq('id', id).maybeSingle();
+  return (data as { name: string; email: string; phone: string | null; document: string | null } | null) ?? null;
+}
+export async function offerPrefill(q: { wa?: unknown; o?: unknown }) {
+  const c = await offerCustomer(q);
+  // o CPF nunca sai do servidor: só avisa se já está no cadastro (compra a um toque sem pedir de novo)
+  return c ? { name: c.name ?? '', email: c.email ?? '', phone: c.phone ?? '', has_document: Boolean(c.document && c.document.length >= 11) } : null;
+}
+
+/**
+ * Compra a um toque na página de vendas: quem veio de um pedido pago (?o=) ou do link do áudio (?wa=)
+ * compra com os dados do cadastro (o CPF, se já houver, é usado aqui no servidor). Sem cadastro: 400 (usa o formulário).
+ */
+export async function buyOffer(slug: string, body: { o?: unknown; wa?: unknown; document?: unknown; tracking?: unknown }, meta: { ip: string | null; userAgent: string | null; geo?: Record<string, string> }) {
+  const p = await loadOffer(slug);
+  const c = await offerCustomer(body);
+  if (!c?.email || !c.name) throw new HttpError(400, 'Preencha seus dados para continuar');
+  const doc = typeof body.document === 'string' && body.document.replace(/\D/g, '').length >= 11 ? body.document : c.document;
+  const tracking = body.tracking && typeof body.tracking === 'object' ? (body.tracking as Record<string, unknown>) : {};
+  return createOrder(
+    {
+      checkout_slug: p.checkout.slug,
+      customer: { name: c.name, email: c.email, phone: c.phone, document: doc ?? null },
+      bump_ids: [],
+      coupon_code: null,
+      tracking: { ...tracking, offer: p.slug },
+      payment_method: 'pix',
+      card: null,
+    },
+    meta,
+  );
 }
 
 /** Números de cada página: visitas, cliques no botão, Pix gerados, vendas pagas e faturamento. */

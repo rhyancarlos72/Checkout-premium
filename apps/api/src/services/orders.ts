@@ -736,18 +736,23 @@ export async function renewOrder(token: string): Promise<{ token: string; renewe
 }
 
 /** Oferta de upsell para um pedido pago (null se não houver ou se já foi comprada). */
-export async function upsellOfferFor(order: { id: string; status: string; tracking?: any; items: { kind: string; product_id?: string | null }[] }) {
+export async function upsellOfferFor(order: { id: string; status: string; tracking?: any; customer_id?: string | null; items: { kind: string; product_id?: string | null }[] }) {
   if (order.status !== 'paid' || order.tracking?.upsell_of) return null; // pedido de upsell não oferece outro upsell
   const mainProduct = order.items.find((i) => i.kind === 'main')?.product_id;
   if (!mainProduct) return null;
-  const { data: u } = await supabase
-    .from('upsells')
-    .select('id, headline, title, description, image_url, price_cents, compare_at_cents, cta_text, active, offer:products!upsells_offer_product_id_fkey(name, description, image_url)')
-    .eq('product_id', mainProduct)
-    .eq('active', true)
-    .maybeSingle();
-  const up: any = u;
+  const sel = 'id, headline, title, description, image_url, price_cents, compare_at_cents, cta_text, active, offer:products!upsells_offer_product_id_fkey(name, description, image_url)';
+  const q = (s: string) => supabase.from('upsells').select(s).eq('product_id', mainProduct).eq('active', true).maybeSingle();
+  // com a página de vendas (redirecionamento); sem o SQL novo, só o popup
+  let r = await q(`${sel}, page:upsell_pages(slug, active)`);
+  if (r.error) r = await q(sel);
+  const up: any = r.data;
   if (!up) return null;
+  const page = up.page?.active && up.page?.slug ? (up.page.slug as string) : null;
+  if (page && order.customer_id) {
+    // já comprou pela página de vendas: não oferece de novo
+    const { data: bought } = await supabase.from('orders').select('id').eq('customer_id', order.customer_id).eq('status', 'paid').eq('tracking->>offer', page).limit(1);
+    if (bought?.length) return null;
+  }
   const { data: prev } = await supabase.from('orders').select('public_token, status').eq('tracking->>upsell_of', order.id).in('status', ['pending', 'paid']).order('created_at', { ascending: false }).limit(1).maybeSingle();
   if ((prev as any)?.status === 'paid') return null;
   return {
@@ -760,6 +765,8 @@ export async function upsellOfferFor(order: { id: string; status: string; tracki
     compare_at_cents: up.compare_at_cents ?? null,
     cta_text: up.cta_text || null,
     pending_token: (prev as any)?.public_token ?? null,
+    /** página de vendas upsell: a página do pedido redireciona para /oferta/{page_slug}?o={token} */
+    page_slug: page,
   };
 }
 

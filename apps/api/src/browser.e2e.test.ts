@@ -792,13 +792,13 @@ describe.skipIf(!RUN)('página de vendas de upsell no navegador', () => {
   it('vídeo com capa, botão, dados já preenchidos, Pix na própria página e acesso liberado ao pagar', async () => {
     const now = new Date().toISOString();
     db.upsell_pages = (db.upsell_pages ?? []).filter((x) => x.slug !== 'clube-vip');
-    db.upsell_pages.push({ id: '0e000000-0000-4000-8000-000000000001', slug: 'clube-vip', checkout_id: '00000000-0000-4000-8000-0000000000c1', title: 'Clube VIP', headline: 'Entre no Clube de Atividades', subheadline: 'Atividades novas toda semana, prontas para imprimir.', video_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/hd.mp4', video_sd_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/sd.mp4', poster_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/poster.svg', cta_text: 'Quero entrar no Clube', bullets: ['Atividades novas toda semana', 'Pronto para imprimir', 'Cancele quando quiser'], guarantee: '7 dias de garantia: não gostou, devolvemos seu dinheiro.', button_delay_seconds: 0, active: true, created_at: now, updated_at: now });
+    db.upsell_pages.push({ id: '0e000000-0000-4000-8000-000000000001', slug: 'clube-vip', checkout_id: '00000000-0000-4000-8000-0000000000c1', title: 'Clube VIP', headline: 'Entre no Clube de Atividades', subheadline: 'Atividades novas toda semana, prontas para imprimir.', video_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/hd.mp4', video_sd_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/sd.mp4', poster_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/poster.svg', cta_text: 'Quero entrar no Clube', bullets: ['Atividades novas toda semana', 'Pronto para imprimir', 'Cancele quando quiser'], guarantee: '7 dias de garantia: não gostou, devolvemos seu dinheiro.', button_delay_seconds: 0, active: true, banner_text: '🎁 PRESENTE DESBLOQUEADO!', pre_headline: 'Assista à sua primeira aula até o final', decline_text: 'Não quero, obrigado', video_ratio: '9:16', accent_color: '#f97316', created_at: now, updated_at: now });
     // cliente que já comprou (veio da página do pedido): a página abre com os dados preenchidos
     const first = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.10.30.40' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Vera Video', email: 'vera.video@teste.com', phone: '11955554444' }, bump_ids: [], tracking: {} }) }).then((r) => r.json());
     await pay(db.orders.find((x) => x.public_token === first.token)!.id);
     const vid = makeTestVideo();
     for (const [label, viewport] of [['celular', { width: 390, height: 844 }], ['computador', { width: 1366, height: 860 }]] as const) {
-      const ctx = await browser.newContext({ viewport, locale: 'pt-BR' });
+      const ctx = await browser.newContext({ viewport, locale: 'pt-BR', reducedMotion: 'reduce' }); // botão "respirando" parado para o clique do teste
       const p = await ctx.newPage();
       const posterSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3aed"/><stop offset="1" stop-color="#f59e0b"/></linearGradient></defs><rect width="1280" height="720" fill="url(#g)"/><text x="640" y="380" font-family="sans-serif" font-size="72" font-weight="800" fill="#fff" text-anchor="middle">Clube de Atividades</text></svg>';
       await p.route('https://fake.supabase.co/storage/v1/object/public/media/offers/**', (rt: any) => {
@@ -810,16 +810,20 @@ describe.skipIf(!RUN)('página de vendas de upsell no navegador', () => {
         await p.goto(`${base}/oferta/clube-vip?o=${first.token}`);
         await p.getByRole('heading', { name: 'Entre no Clube de Atividades' }).waitFor();
         expect(await p.locator('#ck-offer').count()).toBe(1); // dados já vieram no HTML
-        await p.getByRole('button', { name: 'Assistir ao vídeo' }).waitFor();
-        expect(await p.locator('video').getAttribute('preload')).not.toBe('auto'); // vídeo não atrasa a abertura da página
+        await p.getByText('🎁 PRESENTE DESBLOQUEADO!').waitFor();
+        await p.getByText('Assista à sua primeira aula até o final').waitFor();
+        await p.getByRole('button', { name: 'Clique para ouvir' }).waitFor();
+        await p.getByRole('link', { name: 'Não quero, obrigado' }).waitFor(); // veio de uma compra: pode recusar
+        await expect.poll(async () => p.locator('video').evaluate((v: HTMLVideoElement) => v.muted)).toBe(true); // prévia começa sem som
         await p.waitForTimeout(400);
         if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/oferta-${label}.png`, fullPage: true });
         await p.getByRole('button', { name: 'Quero entrar no Clube' }).click();
         const sheet = p.getByRole('dialog', { name: 'Pagamento' });
         await sheet.waitFor();
-        await expect.poll(async () => sheet.locator('input[type=email]').inputValue()).toBe('vera.video@teste.com'); // já preenchido
+        await sheet.getByText('Comprando como Vera').waitFor(); // compra a um toque: nada para preencher
+        await sheet.getByText('vera.video@teste.com').waitFor();
         if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/oferta-dados-${label}.png` });
-        await sheet.getByRole('button', { name: 'Pagar com Pix' }).click();
+        await sheet.getByRole('button', { name: /Pagar R\$ 19,99 com Pix/ }).click();
         await sheet.locator('img[alt="QR Code Pix"]').waitFor();
         await sheet.getByText('Copiar código Pix').waitFor();
         const o = db.orders.filter((x) => x.tracking?.offer === 'clube-vip').at(-1)!;
@@ -831,10 +835,45 @@ describe.skipIf(!RUN)('página de vendas de upsell no navegador', () => {
         if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/oferta-paga-${label}.png` });
         const wide = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
         expect(wide).toBe(false);
-        ok(`[${label}] página upsell: vídeo com capa, botão, dados preenchidos, Pix na página e acesso liberado ao pagar`);
+        ok(`[${label}] página upsell (VSL): faixa, "Clique para ouvir", compra a um toque, Pix na página e acesso liberado ao pagar`);
       } finally {
         await ctx.close();
       }
     }
   }, 120_000);
+});
+
+describe.skipIf(!RUN)('upsell redirecionado para a página de vendas', () => {
+  it('pagou o produto → "pagamento aprovado" → página de vendas; "Não quero, obrigado" volta ao acesso do material comprado', async () => {
+    const P1 = '00000000-0000-4000-8000-000000000001';
+    const up = db.upsells.find((u) => u.product_id === P1)!;
+    const prevPage = up.page_id ?? null;
+    up.page_id = '0e000000-0000-4000-8000-000000000001'; // a página "clube-vip" do teste anterior
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: 'pt-BR' });
+    const p = await ctx.newPage();
+    await p.route('https://fake.supabase.co/storage/v1/object/public/media/offers/**', (rt: any) => rt.fulfill({ status: 404, body: '' }));
+    try {
+      const created = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.10.30.41' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Rui Redireciona', email: 'rui.redir@teste.com', phone: '11955553333' }, bump_ids: [], tracking: {} }) }).then((r) => r.json());
+      const o = db.orders.find((x) => x.public_token === created.token)!;
+      await pay(o.id);
+      await p.goto(`${base}/pedido/${created.token}`);
+      await p.getByText('liberamos um presente para você').waitFor();
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/upsell-redirecionando.png` });
+      await p.waitForURL(/\/oferta\/clube-vip\?o=/, { timeout: 8000 });
+      await p.getByRole('heading', { name: 'Entre no Clube de Atividades' }).waitFor();
+      await p.getByRole('link', { name: 'Não quero, obrigado' }).click();
+      await p.waitForURL(new RegExp(`/pedido/${created.token}`));
+      await p.getByText('Pagamento aprovado!').first().waitFor();
+      await p.getByRole('link', { name: /Acessar agora|Entrar na área de membros/ }).first().waitFor(); // o material comprado
+      await p.waitForTimeout(3000);
+      expect(p.url()).toContain(`/pedido/${created.token}`); // não volta para a oferta
+      expect(p.url()).not.toContain('upsell=nao');
+      expect(db.events.some((e) => e.type === 'upsell_declined' && e.order_id === o.id)).toBe(true);
+      if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/upsell-recusado.png` });
+      ok('[celular] upsell por página: aprovado → página de vendas → "Não quero, obrigado" → acesso do material comprado');
+    } finally {
+      up.page_id = prevPage;
+      await ctx.close();
+    }
+  }, 60_000);
 });

@@ -10,7 +10,7 @@ import { cardOptionFor, createOrder, createOrderSchema, createUpsellOrder, renew
 import { getSettings } from '../services/settings.js';
 import { isOwnerOrg, ownerOrgId, runAsOrg } from '../lib/tenant.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
-import { loadOffer, offerPrefill, publicOffer } from '../services/offers.js';
+import { buyOffer, loadOffer, offerPrefill, publicOffer } from '../services/offers.js';
 
 export const publicRouter = Router();
 
@@ -95,6 +95,13 @@ publicRouter.get('/offers/:slug', async (req, res) => {
 publicRouter.get('/offers/:slug/prefill', pollLimiter, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json({ customer: await offerPrefill({ wa: req.query.wa, o: req.query.o }) });
+});
+
+/** Compra a um toque (quem veio de um pedido pago ou do link do áudio): Pix com os dados do cadastro. */
+publicRouter.post('/offers/:slug/buy', orderIpLimiter, orderLimiter, async (req, res) => {
+  const body = z.object({ o: z.string().max(64).optional(), wa: z.string().max(64).optional(), document: z.string().max(20).optional(), tracking: z.record(z.string(), z.unknown()).optional() }).parse(req.body ?? {});
+  const ip = clientIp(req as any);
+  res.status(201).json(await buyOffer(String(req.params.slug), body, { ip, userAgent: req.get('user-agent') ?? null, geo: { ...geoTrackingFromIp(ip), ...geoFromHeaders(req.headers as any) } }));
 });
 
 publicRouter.get('/checkouts/:slug', async (req, res) => {

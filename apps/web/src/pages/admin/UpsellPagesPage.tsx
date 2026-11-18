@@ -26,12 +26,17 @@ interface Page {
   guarantee: string | null;
   button_delay_seconds: number;
   active: boolean;
+  banner_text: string | null;
+  pre_headline: string | null;
+  decline_text: string;
+  video_ratio: '16:9' | '9:16' | '1:1' | '4:5';
+  accent_color: string;
   url: string;
   checkout: { slug: string; name: string } | null;
   stats?: { views: number; clicks: number; orders: number; paid: number; revenue_cents: number };
 }
 interface CheckoutOpt { id: string; slug: string; name: string; product: string | null; club: boolean }
-interface Data { ready: boolean; sql_hint: string | null; pages: Page[]; checkouts: CheckoutOpt[] }
+interface Data { ready: boolean; vsl_ready?: boolean; sql_hint: string | null; pages: Page[]; checkouts: CheckoutOpt[] }
 type Form = Omit<Page, 'id' | 'url' | 'checkout' | 'stats'>;
 
 const empty = (checkoutId = ''): Form => ({
@@ -48,7 +53,13 @@ const empty = (checkoutId = ''): Form => ({
   guarantee: '',
   button_delay_seconds: 0,
   active: true,
+  banner_text: '🎁 PRESENTE DESBLOQUEADO!',
+  pre_headline: 'Assista à sua primeira aula até o final',
+  decline_text: 'Não quero, obrigado',
+  video_ratio: '16:9',
+  accent_color: '#f97316',
 });
+const ACCENTS = ['#f97316', '#ef4444', '#22c55e', '#2563eb', '#a855f7', '#eab308'];
 const slugify = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
 export default function UpsellPagesPage() {
@@ -91,6 +102,11 @@ export default function UpsellPagesPage() {
         subtitle="Página de vendas curta: vídeo da oferta + botão, e o Pix na própria página. Depois de pagar, a pessoa já entra na área de membros."
         action={<Button disabled={!data.ready} onClick={() => setEditing({ id: null, form: empty(club?.id ?? '') })}><Plus className="h-4 w-4" /> Nova página</Button>}
       />
+      {data.ready && data.vsl_ready === false && (
+        <Card className="mb-4 border-amber-300 bg-amber-50">
+          <p className="text-sm font-medium text-amber-800">Rode no Supabase o SQL do visual novo (supabase/migrations/20261121000000_upsell_redirect.sql). Até lá, a faixa do topo, a cor e o formato do vídeo não são salvos.</p>
+        </Card>
+      )}
       {!data.ready && (
         <Card className="mb-4 border-amber-300 bg-amber-50">
           <p className="text-sm font-medium text-amber-800">{data.sql_hint}</p>
@@ -166,6 +182,11 @@ const formOf = (p: Page): Form => ({
   guarantee: p.guarantee ?? '',
   button_delay_seconds: p.button_delay_seconds ?? 0,
   active: p.active,
+  banner_text: p.banner_text ?? '',
+  pre_headline: p.pre_headline ?? '',
+  decline_text: p.decline_text || 'Não quero, obrigado',
+  video_ratio: p.video_ratio || '16:9',
+  accent_color: p.accent_color || '#f97316',
 });
 
 // ------------------------------------------------------------------ editor
@@ -201,10 +222,32 @@ function Editor({ initial, id, checkouts, onClose, onSaved }: { initial: Form; i
               <Input value={f.slug} onChange={(e) => (setSlugTouched(true), set({ slug: slugify(e.target.value) }))} placeholder="clube" />
             </Field>
           </div>
+          <Field label="Faixa do topo (opcional)"><Input value={f.banner_text ?? ''} onChange={(e) => set({ banner_text: e.target.value })} placeholder="🎁 PRESENTE DESBLOQUEADO!" maxLength={80} /></Field>
+          <Field label="Texto pequeno acima do título (opcional)"><Input value={f.pre_headline ?? ''} onChange={(e) => set({ pre_headline: e.target.value })} placeholder="Assista à sua primeira aula até o final" maxLength={120} /></Field>
           <Field label="Título grande"><Input value={f.headline} onChange={(e) => set({ headline: e.target.value })} placeholder="Atividades prontas toda semana para a sua turma" maxLength={200} /></Field>
           <Field label="Subtítulo (opcional)"><Textarea rows={2} value={f.subheadline ?? ''} onChange={(e) => set({ subheadline: e.target.value })} maxLength={400} /></Field>
 
           <VideoUpload value={f} onChange={(v) => set(v)} />
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Formato do vídeo" hint="Detectado sozinho ao enviar o vídeo">
+              <Select value={f.video_ratio} onChange={(e) => set({ video_ratio: e.target.value as Form['video_ratio'] })}>
+                <option value="9:16">Vertical (9:16) — celular, Reels</option>
+                <option value="4:5">Retrato (4:5)</option>
+                <option value="1:1">Quadrado (1:1)</option>
+                <option value="16:9">Deitado (16:9)</option>
+              </Select>
+            </Field>
+            <div>
+              <p className="mb-1.5 text-sm font-medium text-gray-700">Cor de destaque</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {ACCENTS.map((c) => (
+                  <button key={c} type="button" aria-label={`Cor ${c}`} onClick={() => set({ accent_color: c })} className={cn('h-8 w-8 rounded-full ring-offset-2 transition', f.accent_color === c && 'ring-2 ring-zinc-900')} style={{ background: c }} />
+                ))}
+                <input type="color" value={f.accent_color} onChange={(e) => set({ accent_color: e.target.value })} className="h-8 w-10 cursor-pointer rounded border border-zinc-200 bg-white" aria-label="Outra cor" />
+              </div>
+              <p className="mt-1 text-xs text-gray-500">Faixa do topo, play e botão</p>
+            </div>
+          </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Texto do botão"><Input value={f.cta_text} onChange={(e) => set({ cta_text: e.target.value })} maxLength={60} /></Field>
@@ -224,6 +267,7 @@ function Editor({ initial, id, checkouts, onClose, onSaved }: { initial: Form; i
               ))}
             </div>
           </div>
+          <Field label="Texto do “não quero”" hint="Aparece embaixo do botão para quem veio de uma compra; leva ao acesso do material comprado."><Input value={f.decline_text} onChange={(e) => set({ decline_text: e.target.value })} maxLength={80} /></Field>
           <Field label="Garantia (opcional)"><Input value={f.guarantee ?? ''} onChange={(e) => set({ guarantee: e.target.value })} maxLength={200} placeholder="7 dias de garantia: não gostou, devolvemos seu dinheiro." /></Field>
           <Switch checked={f.active} onChange={(v) => set({ active: v })} label={f.active ? 'Página no ar' : 'Página pausada'} />
           {err && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{err}</p>}
@@ -243,19 +287,28 @@ function Preview({ f }: { f: Form }) {
   return (
     <div className="hidden lg:block">
       <p className="mb-2 text-xs font-medium text-zinc-500">Prévia (celular)</p>
-      <div className="sticky top-4 overflow-hidden rounded-[28px] border-[6px] border-zinc-800 bg-[#0b0d12] px-3 pb-6 pt-5 text-center text-white">
-        <p className="text-[15px] font-extrabold leading-tight">{f.headline || 'Título grande'}</p>
-        {f.subheadline && <p className="mt-1.5 text-[11px] text-white/70">{f.subheadline}</p>}
-        <div className="relative mt-3 aspect-video overflow-hidden rounded-xl bg-black">
-          {f.poster_url ? <img src={f.poster_url} alt="" className="h-full w-full object-cover" /> : <Film className="absolute inset-0 m-auto h-6 w-6 text-zinc-600" />}
+      <div className="sticky top-4 overflow-hidden rounded-[28px] border-[6px] border-zinc-800 bg-black pb-6 text-center text-white">
+        {f.banner_text && <div className="py-1.5 text-[9px] font-extrabold uppercase" style={{ background: f.accent_color }}>{f.banner_text}</div>}
+        <div className="px-3 pt-3">
+          {f.pre_headline && <p className="text-[9px] font-semibold text-white/90">{f.pre_headline}</p>}
+          <p className="mt-1 text-[14px] font-black uppercase leading-tight">{f.headline || 'Título grande'}</p>
+          {f.subheadline && <p className="mt-1.5 text-[10px] text-white/70">{f.subheadline}</p>}
+          <div className="relative mx-auto mt-3 overflow-hidden rounded-xl bg-zinc-900" style={{ aspectRatio: f.video_ratio.replace(':', ' / '), width: f.video_ratio === '9:16' ? '62%' : f.video_ratio === '16:9' ? '100%' : '80%' }}>
+            {f.poster_url ? <img src={f.poster_url} alt="" className="h-full w-full object-cover" /> : <Film className="absolute inset-0 m-auto h-6 w-6 text-zinc-600" />}
+            <span className="absolute inset-0 m-auto flex h-fit w-fit flex-col items-center gap-0.5 rounded-lg px-2 py-1.5 text-[7px] font-bold" style={{ background: f.accent_color }}>
+              <span className="flex h-6 w-6 items-center justify-center rounded-full border-2 border-white"><span className="ml-0.5 border-y-[5px] border-l-[8px] border-y-transparent border-l-white" /></span>
+              Clique para ouvir
+            </span>
+          </div>
+          <div className="mt-3 rounded-xl px-3 py-2.5 text-[11px] font-black uppercase" style={{ background: f.accent_color }}>{f.cta_text || 'Botão'}</div>
+          {f.button_delay_seconds > 0 && <p className="mt-1 text-[9px] text-white/50">aparece após {f.button_delay_seconds}s de vídeo</p>}
+          {f.decline_text && <p className="mt-2 text-[9px] text-white/45 underline">{f.decline_text}</p>}
+          {f.bullets.length > 0 && (
+            <ul className="mt-3 space-y-1 text-left">
+              {f.bullets.map((b, i) => <li key={i} className="flex gap-1.5 rounded-lg bg-white/5 px-2 py-1.5 text-[9px]"><Check className="h-3 w-3 shrink-0" style={{ color: f.accent_color }} /> {b}</li>)}
+            </ul>
+          )}
         </div>
-        <div className="mt-3 rounded-xl bg-emerald-500 px-3 py-2.5 text-[12px] font-extrabold">{f.cta_text || 'Botão'}</div>
-        {f.button_delay_seconds > 0 && <p className="mt-1 text-[10px] text-white/50">aparece após {f.button_delay_seconds}s de vídeo</p>}
-        {f.bullets.length > 0 && (
-          <ul className="mt-3 space-y-1 text-left">
-            {f.bullets.map((b, i) => <li key={i} className="flex gap-1.5 rounded-lg bg-white/5 px-2 py-1.5 text-[10px]"><Check className="h-3 w-3 shrink-0 text-emerald-400" /> {b}</li>)}
-          </ul>
-        )}
       </div>
     </div>
   );
@@ -293,7 +346,10 @@ function VideoUpload({ value, onChange }: { value: Form; onChange: (v: Partial<F
         setState({ step: 'Enviando o vídeo', p: 0.6 });
         const sd = r.sd ? await put(r.sd, 'sd.mp4', 'video/mp4') : null;
         const poster = r.poster ? await put(r.poster, 'poster.jpg', 'image/jpeg') : null;
-        onChange({ video_url: hd, video_sd_url: sd, poster_url: poster ?? value.poster_url });
+        // formato detectado pelo tamanho do vídeo (vertical do celular = 9:16)
+        const ar = r.width / Math.max(1, r.height);
+        const video_ratio: Form['video_ratio'] = ar < 0.7 ? '9:16' : ar < 0.9 ? '4:5' : ar < 1.2 ? '1:1' : '16:9';
+        onChange({ video_url: hd, video_sd_url: sd, poster_url: poster ?? value.poster_url, video_ratio });
         const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
         setInfo(`Pronto em ${Math.round((Date.now() - started) / 1000)}s: ${mb(file.size)} → ${mb(r.hd.size)} (720p)${r.sd ? ` + ${mb(r.sd.size)} (480p)` : ''}.`);
       } else {

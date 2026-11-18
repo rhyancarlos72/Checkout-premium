@@ -103,6 +103,8 @@ interface UpsellOffer {
   compare_at_cents: number | null;
   cta_text: string | null;
   pending_token: string | null;
+  /** página de vendas upsell: depois de pagar, vai para /oferta/{page_slug} (no lugar do popup) */
+  page_slug?: string | null;
 }
 
 /** Popup de upsell pós-compra: aparece quando o Pix é aprovado; aceitar gera um Pix só do adicional. */
@@ -218,7 +220,10 @@ export default function PaymentPage() {
       if (r.token !== token) navigate(`/pedido/${r.token}`, { replace: true });
     },
   });
+  // voltou da página de vendas pelo "Não quero, obrigado" (?upsell=nao): mostra o acesso e não redireciona de novo
+  const declinedByLink = useRef(new URLSearchParams(window.location.search).get('upsell') === 'nao');
   const [upsellClosed, setUpsellClosed] = useState(() => {
+    if (declinedByLink.current) return true;
     try {
       return localStorage.getItem(`ck_upsell_${token}`) === '1';
     } catch {
@@ -241,6 +246,23 @@ export default function PaymentPage() {
       navigate(`/pedido/${r.token}`);
     },
   });
+  useEffect(() => {
+    if (!declinedByLink.current) return;
+    try {
+      localStorage.setItem(`ck_upsell_${token}`, '1');
+    } catch {
+      /* ignore */
+    }
+    publicApi.post(`/orders/${token}/upsell/decline`).catch(() => {});
+    window.history.replaceState(null, '', window.location.pathname); // tira o ?upsell=nao do endereço
+  }, [token]);
+  // upsell por página de vendas: "pagamento aprovado" por ~2 s (o Pixel registra a compra) e vai para a oferta
+  const offerSlug = order?.status === 'paid' && !upsellClosed ? (order.upsell?.page_slug ?? null) : null;
+  useEffect(() => {
+    if (!offerSlug) return;
+    const t = window.setTimeout(() => window.location.replace(`/oferta/${offerSlug}?o=${token}`), 2200);
+    return () => window.clearTimeout(t);
+  }, [offerSlug, token]);
   const declineUpsell = () => {
     closeUpsell();
     publicApi.post(`/orders/${token}/upsell/decline`).catch(() => {});
@@ -325,7 +347,17 @@ export default function PaymentPage() {
     return (
       <Shell theme={theme}>
         <Confetti />
-        {order.upsell && !upsellClosed && (
+        {offerSlug && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6 backdrop-blur-sm">
+            <div className="animate-pop w-full max-w-sm rounded-3xl bg-white p-7 text-center text-zinc-900 shadow-2xl">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500 shadow-lg shadow-emerald-500/30"><Check className="h-8 w-8 text-white" strokeWidth={3} /></div>
+              <h2 className="mt-4 text-xl font-bold">Pagamento aprovado!</h2>
+              <p className="mt-1.5 text-sm text-zinc-600">Seu acesso já está garantido. Antes de entrar, liberamos um presente para você…</p>
+              <span className="mx-auto mt-5 block h-6 w-6 animate-spin rounded-full border-[3px] border-zinc-200 border-t-emerald-500" />
+            </div>
+          </div>
+        )}
+        {order.upsell && !upsellClosed && !order.upsell.page_slug && (
           <UpsellPopup offer={order.upsell} busy={upsell.isPending} error={upsell.isError ? (upsell.error as Error).message : null} onAccept={() => upsell.mutate()} onDecline={declineUpsell} />
         )}
         <Steps current={3} />

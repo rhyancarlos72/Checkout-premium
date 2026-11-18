@@ -247,3 +247,12 @@ html.members-dark body {
 }
 .members-float { animation: members-float 7s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .members-float { animation: none; } }
+
+/* Página de vendas upsell (VSL): botão "respirando", anel do play e brilho na faixa do topo */
+@keyframes offer-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+.animate-offer-cta { animation: offer-breathe 1.8s ease-in-out infinite; }
+@keyframes offer-ring { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 22px transparent; } }
+.animate-offer-ring { animation: offer-ring 1.6s ease-out infinite; }
+@keyframes offer-shine { from { transform: translateX(-120%); } to { transform: translateX(220%); } }
+.offer-shine::after { content: ''; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); animation: offer-shine 2.8s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .animate-offer-cta, .animate-offer-ring, .offer-shine::after { animation: none; } }
