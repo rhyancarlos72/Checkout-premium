@@ -20,7 +20,7 @@ const UNIQUE: Record<string, string[]> = {
   ledger_entries: ['order_id+type'], // uma venda/comissão por pedido
   admins: ['user_id'],
   access_requests: ['email'],
-  wa_queue: ['order_id+kind'], // um áudio de cada tipo por pedido
+  wa_queue: ['attempt+order_id+kind'], // um envio por pedido + tipo + lembrete
   wa_optouts: ['phone'],
   wa_links: ['token'],
   upsell_pages: ['slug'],

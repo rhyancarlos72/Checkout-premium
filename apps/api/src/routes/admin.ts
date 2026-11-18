@@ -1422,7 +1422,7 @@ adminRouter.get('/whatsapp/audio', async (_req, res) => {
   const [config, report, queue, optouts, checkouts, products, offerPages] = await Promise.all([
     getWaAudioConfig(),
     waAudioReport(),
-    supabase.from('wa_queue').select('id, kind, step, status, phone, run_at, error, audio_id, created_at, updated_at').order('created_at', { ascending: false }).limit(30),
+    supabase.from('wa_queue').select('*').order('created_at', { ascending: false }).limit(30), // * : inclui o lembrete (attempt) quando o SQL já rodou
     supabase.from('wa_optouts').select('phone, word, created_at').order('created_at', { ascending: false }).limit(50),
     supabase.from('checkouts').select('slug, name, active').order('created_at', { ascending: false }).limit(200),
     supabase.from('products').select('id, name, active').order('name', { ascending: true }).limit(500),
@@ -1440,6 +1440,8 @@ adminRouter.get('/whatsapp/audio', async (_req, res) => {
     products: (products.data ?? []).map((p: any) => ({ id: p.id, name: p.name, active: p.active !== false })),
     pages: ((offerPages.data ?? []) as any[]).map((p) => ({ slug: p.slug, title: p.title, active: p.active !== false })),
     backfill: await backfillStatus().catch(() => null),
+    // recuperação por áudio em mais de um lembrete precisa do SQL 20261122000000_wa_queue_attempt.sql
+    attempt_ready: !(await supabase.from('wa_queue').select('attempt').limit(1)).error,
   });
 });
 adminRouter.put('/whatsapp/audio/config', async (req, res) => {

@@ -33,11 +33,11 @@ interface Config {
   enabled: boolean;
   windowStart: number;
   windowEnd: number;
-  recovery: { enabled: boolean; product_ids: string[]; linkText: string };
+  recovery: { enabled: boolean; product_ids: string[]; linkText: string; attempts: number[]; opener: string; openerLast: string; audioFirst: string; audioLast: string; gapSeconds: number };
   upsell: { enabled: boolean; checkout_slug: string; page_slug: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
   backfill: { enabled: boolean; daysBack: number; intervalMinutes: number };
 }
-interface QueueRow { id: string; kind: Kind; step: number; status: string; phone: string; run_at: string; error: string | null; created_at: string }
+interface QueueRow { id: string; kind: Kind; attempt?: number | null; step: number; status: string; phone: string; run_at: string; error: string | null; created_at: string }
 interface Data {
   ready: boolean;
   sql_hint: string | null;
@@ -50,13 +50,14 @@ interface Data {
   products: { id: string; name: string; active: boolean }[];
   pages: { slug: string; title: string; active: boolean }[];
   backfill: { sent: number; last_at: string | null; remaining: number; next_at: string | null } | null;
+  attempt_ready?: boolean;
 }
 
-const kindLabel: Record<Kind, string> = { recovery: 'Recuperação (3º lembrete)', upsell: 'Upsell' };
+const kindLabel: Record<Kind, string> = { recovery: 'Recuperação', upsell: 'Upsell' };
 const queueText: Record<string, string> = { pending: 'Na fila', sending: 'Enviando', done: 'Enviado', skipped: 'Pulado', failed: 'Falhou', canceled: 'Cancelado' };
 const queueTone: Record<string, string> = { pending: 'pending', sending: 'info', done: 'paid', skipped: 'off', failed: 'failed', canceled: 'canceled' };
 const stepText = (r: QueueRow) =>
-  r.kind === 'upsell' ? (['Texto de abertura', 'Áudio', 'Link'][r.step] ?? '') : (['Áudio', 'Link + Pix'][r.step] ?? '');
+  r.kind === 'upsell' ? (['Texto de abertura', 'Áudio', 'Link'][r.step] ?? '') : (['Texto de abertura', 'Áudio', 'Link + Pix'][r.step] ?? '');
 const phoneFmt = (p: string) => p.replace(/^55(\d{2})(\d{4,5})(\d{4})$/, '($1) $2-$3');
 
 export default function AudiosPage() {
@@ -73,6 +74,11 @@ export default function AudiosPage() {
     <>
       {toast.node}
       <PageHeader title="Áudios no WhatsApp" subtitle="3º lembrete da recuperação por áudio e upsell (texto → áudio → link). Tudo pela Evolution, das 8h às 20h." />
+      {data.ready && data.attempt_ready === false && (
+        <Card className="mb-4 border-amber-300 bg-amber-50">
+          <p className="text-sm font-medium text-amber-800">Rode no Supabase o SQL da recuperação em mais de um lembrete (supabase/migrations/20261122000000_wa_queue_attempt.sql). Até lá, a recuperação segue em texto.</p>
+        </Card>
+      )}
       {!data.ready && (
         <Card className="mb-4 border-amber-300 bg-amber-50">
           <p className="text-sm font-medium text-amber-800">{data.sql_hint}</p>
@@ -166,7 +172,7 @@ function AudioList({ data, onChange, fail }: { data: Data; onChange: () => void;
             <h4 className="mb-2 text-sm font-semibold text-zinc-800">{kindLabel[g]}</h4>
             {!list.length ? (
               <p className="rounded-xl border border-dashed border-zinc-200 px-4 py-5 text-center text-sm text-zinc-500">
-                {g === 'recovery' ? 'Sem áudio: o 3º lembrete continua indo em texto.' : 'Sem áudio: o upsell não é enviado.'}
+                {g === 'recovery' ? 'Sem áudio: os lembretes continuam indo em texto.' : 'Sem áudio: o upsell não é enviado.'}
               </p>
             ) : (
               <div className="space-y-3">
@@ -232,12 +238,41 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
         <p className="-mt-2 text-xs text-zinc-500">Horário de Brasília. Fora dele, o envio espera a próxima abertura.</p>
 
         <div className="border-t border-zinc-100 pt-4">
-          <Switch checked={c.recovery.enabled} onChange={(v) => setC({ ...c, recovery: { ...c.recovery, enabled: v } })} label="Recuperação: 3º lembrete por áudio" />
-          <p className="mt-1 text-xs text-zinc-500">O 1º e o 2º continuam em texto. No 3º vai o áudio e, logo depois, o link e o Pix.</p>
+          <Switch checked={c.recovery.enabled} onChange={(v) => setC({ ...c, recovery: { ...c.recovery, enabled: v } })} label="Recuperação por áudio" />
+          <p className="mt-1 text-xs text-zinc-500">Nos lembretes marcados vai a sequência: texto curto → áudio → link + Pix. Os outros lembretes seguem em texto. Fora do horário de envio, o lembrete vai em texto na hora (não atrasa).</p>
+          <div className="mt-3">
+            <p className="mb-1.5 text-sm font-medium text-gray-700">Lembretes com áudio</p>
+            <div className="flex flex-wrap gap-2">
+              {[1, 2, 3].map((n) => {
+                const on = c.recovery.attempts.includes(n);
+                return (
+                  <label key={n} className={cn('flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-sm transition', on ? 'border-blue-600 bg-blue-600 text-white' : 'border-zinc-200 text-zinc-600 hover:border-zinc-300')}>
+                    <input type="checkbox" className="h-4 w-4 accent-white" checked={on} onChange={() => setC({ ...c, recovery: { ...c.recovery, attempts: on ? c.recovery.attempts.filter((x) => x !== n) : [...c.recovery.attempts, n].sort() } })} />
+                    {n}º lembrete{n === 3 ? ' (último)' : ''}
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+          <div className="mt-3 grid gap-3">
+            <Field label="1ª mensagem (no 1º lembrete)" hint="Use {nome} e {produto}."><Textarea rows={2} value={c.recovery.opener} onChange={(e) => setC({ ...c, recovery: { ...c.recovery, opener: e.target.value } })} /></Field>
+            <Field label="1ª mensagem (no último lembrete com áudio)"><Textarea rows={2} value={c.recovery.openerLast} onChange={(e) => setC({ ...c, recovery: { ...c.recovery, openerLast: e.target.value } })} /></Field>
+            <div className="grid grid-cols-2 gap-3">
+              {([['audioFirst', 'Áudio do 1º lembrete'], ['audioLast', 'Áudio do último']] as const).map(([k, label]) => (
+                <Field key={k} label={label}>
+                  <Select value={c.recovery[k]} onChange={(e) => setC({ ...c, recovery: { ...c.recovery, [k]: e.target.value } })}>
+                    <option value="">Revezar os ativos</option>
+                    {data.audios.filter((a) => a.kind === 'recovery').map((a) => <option key={a.id} value={a.id}>{a.name}{a.active ? '' : ' (pausado)'}</option>)}
+                  </Select>
+                </Field>
+              ))}
+            </div>
+            <Field label="Áudio sai após (s)" hint="Tempo entre a 1ª mensagem e o áudio"><Input type="number" min={10} value={c.recovery.gapSeconds} onChange={(e) => setC({ ...c, recovery: { ...c.recovery, gapSeconds: num(e.target.value) } })} /></Field>
+          </div>
           <ProductPicker
             label="Produtos com recuperação por áudio"
-            hint="Pix pendente de um destes produtos recebe o 3º lembrete em áudio. Os outros seguem em texto."
-            empty="Nenhum marcado: o 3º lembrete segue em texto para todos."
+            hint="Pix pendente de um destes produtos recebe os lembretes marcados com áudio. Os outros seguem em texto."
+            empty="Nenhum marcado: todos os lembretes seguem em texto."
             products={data.products}
             value={c.recovery.product_ids}
             onChange={(ids) => setC({ ...c, recovery: { ...c.recovery, product_ids: ids } })}
@@ -406,7 +441,7 @@ function QueueCard({ rows }: { rows: QueueRow[] }) {
             <tbody className="divide-y divide-zinc-100">
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td className="px-5 py-2">{r.kind === 'upsell' ? 'Upsell' : 'Recuperação'}</td>
+                  <td className="px-5 py-2">{r.kind === 'upsell' ? 'Upsell' : `Recuperação${r.attempt ? ` · ${r.attempt}º` : ''}`}</td>
                   <td className="py-2 tabular-nums">{phoneFmt(r.phone)}</td>
                   <td className="py-2">
                     <Badge tone={queueTone[r.status] ?? 'off'}>{queueText[r.status] ?? r.status}</Badge>

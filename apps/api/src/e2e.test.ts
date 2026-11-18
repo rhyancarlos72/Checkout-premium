@@ -1466,7 +1466,7 @@ describe('marketplace multiusuário', () => {
       clearCheckoutCache();
     }
   });
-  it('áudios no WhatsApp: 3º lembrete por áudio + link rastreável, upsell texto → áudio → link (2 h depois, 1 a cada 7 dias), SAIR descadastra e relatório por áudio', async () => {
+  it('áudios no WhatsApp: 1º e 3º lembretes com texto → áudio → link + Pix, link rastreável, upsell texto → áudio → link (2 h depois, 1 a cada 7 dias), SAIR descadastra e relatório por áudio', async () => {
     const wa = await import('./services/waAudio.js');
     const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
     const now = new Date().toISOString();
@@ -1501,38 +1501,60 @@ describe('marketplace multiusuário', () => {
       await wa.processWaQueue();
     };
 
-    // ---------- recuperação: 1º e 2º em texto (como antes); o 3º vira ÁUDIO e depois o link + Pix
+    // ---------- recuperação: 1º e 3º lembretes = texto curto → áudio → link + Pix; o 2º segue em texto
     const r = await buy('Joana Audio', 'joana.audio@x.com', '11943215555');
     const o = db.orders.find((x) => x.public_token === r.token)!;
     o.created_at = new Date(Date.now() - 13 * 3600_000).toISOString();
     const texts = () => waSent.filter((w) => String(w.body?.number ?? '').includes('43215555'));
     const audios = () => waAudioSent.filter((w) => String(w.body?.number ?? '').includes('43215555'));
     const ago = (min: number) => db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === o.id).forEach((e) => (e.created_at = new Date(Date.now() - min * 60_000).toISOString()));
+    const rq = (n: number) => db.wa_queue.find((q) => q.order_id === o.id && q.kind === 'recovery' && q.attempt === n)!;
+    // 1º lembrete: entra na fila (nada de texto comum)
     await sendWhatsAppRecoveries();
-    ago(200);
-    await sendWhatsAppRecoveries();
-    expect(texts().filter((w) => w.body.text !== o.pix_code)).toHaveLength(2);
+    expect(texts()).toHaveLength(0);
+    expect(rq(1)).toMatchObject({ status: 'pending', step: 0, audio_id: REC });
+    await wa.processWaQueue(); // passo 1: texto curto
+    expect(texts()).toHaveLength(1);
+    expect(texts()[0].body.text).toBe('Oi Joana, tudo bem? Vi que você não finalizou a compra, posso falar com você um segundo?');
     expect(audios()).toHaveLength(0);
+    expect(new Date(rq(1).run_at).getTime() - Date.now()).toBeGreaterThan(35_000); // o áudio sai ~40 s depois
+    await drain(); // passo 2: áudio, do mesmo número
+    expect(audios()).toHaveLength(1);
+    expect(audios()[0].body.audio).toContain('rec.mp3');
+    expect(audios()[0].instance).toBe(texts()[0].instance);
+    await drain(); // passo 3: link + Pix
+    expect(rq(1).status).toBe('done');
+    expect(texts().some((w) => /^Joana, segue aqui o link que a gente acabou de falar 👇\n/.test(w.body.text))).toBe(true);
+    expect(texts().some((w) => w.body.text === o.pix_code)).toBe(true);
+    // 2º lembrete: texto comum (como antes)
+    ago(200);
+    const before2 = texts().length;
+    await sendWhatsAppRecoveries();
+    expect(texts().length).toBeGreaterThan(before2);
+    expect(db.wa_queue.filter((q) => q.order_id === o.id && q.kind === 'recovery')).toHaveLength(1);
+    expect(audios()).toHaveLength(1);
+    // 3º (último): a sequência de novo, com a 1ª mensagem do último lembrete
     ago(600);
     const before3 = texts().length;
     await sendWhatsAppRecoveries();
-    expect(texts()).toHaveLength(before3); // o 3º não vai em texto: entrou na fila de áudio
-    const rq = db.wa_queue.find((q) => q.order_id === o.id && q.kind === 'recovery')!;
-    expect(rq).toMatchObject({ status: 'pending', step: 0 });
+    expect(texts()).toHaveLength(before3);
+    expect(rq(3)).toMatchObject({ status: 'pending', step: 0 });
     await wa.processWaQueue();
-    expect(audios()).toHaveLength(1);
-    expect(audios()[0].body.audio).toContain('rec.mp3');
-    expect(rq).toMatchObject({ status: 'pending', step: 1, audio_id: REC });
+    expect(texts().at(-1)!.body.text).toBe('Oi Joana, tudo bem? Seu pedido do Pack Etiquetas ainda está reservado. Posso falar com você um segundo?');
     await drain();
-    expect(rq.status).toBe('done');
-    const linkMsg = texts().slice(before3).find((w) => w.body.text !== o.pix_code)!;
-    expect(linkMsg.instance).toBe(audios()[0].instance); // mesma conversa, mesmo número
-    expect(linkMsg.body.text).toMatch(/^Joana, segue aqui o link que a gente acabou de falar 👇\n/);
+    await drain();
+    expect(rq(3).status).toBe('done');
+    expect(audios()).toHaveLength(2);
+    const linkMsg = texts().slice(before3).find((w) => /segue aqui o link/.test(w.body.text))!;
+    expect(linkMsg.instance).toBe(audios()[1].instance); // mesma conversa, mesmo número
     expect(linkMsg.body.text).toMatch(/toque e segure/); // aviso do Pix copia e cola que vem logo abaixo
     const tok = linkMsg.body.text.match(/https:\/\/checkout\.loja\.com\/r\/([0-9A-Za-z]{20,})/)![1];
     expect(texts().slice(before3).some((w) => w.body.text === o.pix_code)).toBe(true); // + o Pix copia e cola
     await sendWhatsAppRecoveries();
-    expect(audios()).toHaveLength(1); // nunca um 4º
+    expect(audios()).toHaveLength(2); // nunca um 4º
+    // fora do horário: o lembrete vai em texto na hora (não espera)
+    const { inWindow } = wa;
+    expect(inWindow(wa.waAudioSchema.parse({}), Date.parse('2026-11-20T02:00:00Z'))).toBe(false);
     // clique: conta, leva ao Pix com as UTMs whatsapp/audio/recuperacao/{audio_id} e marca o pedido
     const go = await fetch(`${base}/r/${tok}`, { redirect: 'manual' });
     expect(go.status).toBe(302);
@@ -1644,7 +1666,7 @@ describe('marketplace multiusuário', () => {
     expect(rep.body.webhook_url).not.toMatch(/[0-9a-f]{32}/); // a assinatura não aparece no painel
     const ru = rep.body.audios.find((x: any) => x.id === UPS);
     expect(ru).toMatchObject({ sent: 2, clicks: 1, orders: 1, paid: 1, revenue_cents: 990, conversion: 50 }); // Joana e Bruno receberam; o Bruno comprou
-    expect(rep.body.audios.find((x: any) => x.id === REC)).toMatchObject({ sent: 1, clicks: 1, paid: 1 });
+    expect(rep.body.audios.find((x: any) => x.id === REC)).toMatchObject({ sent: 2, clicks: 1, paid: 1 }); // 1º e 3º lembretes
     expect(rep.body.optouts.length).toBeGreaterThan(0);
   }, 30_000);
   it('página de vendas de upsell: painel cria, /oferta/slug abre com os dados no HTML, já preenchido pelo link do áudio/pedido, Pix na própria página e números por página', async () => {
@@ -1819,4 +1841,23 @@ describe('marketplace multiusuário', () => {
     db.settings = db.settings.filter((x) => x.key !== 'wa_audio_backfill');
     expect(await wa.runUpsellBackfill(Date.parse('2026-11-21T13:00:00Z'))).toBeNull();
   }, 30_000);
+  it('recuperação por áudio fora do horário: o lembrete vai em texto na hora (não fica esperando)', async () => {
+    const wa = await import('./services/waAudio.js');
+    const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
+    const h = new Date(Date.now() - 3 * 3600_000).getUTCHours(); // hora agora em Brasília
+    const cfg = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    // janela que NÃO inclui a hora atual
+    const win = h >= 22 ? { windowStart: 0, windowEnd: 1 } : { windowStart: h + 1, windowEnd: h + 2 };
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...cfg, ...win, recovery: { ...cfg.recovery, enabled: true, attempts: [1, 3], product_ids: ['00000000-0000-4000-8000-000000000001'] } });
+    expect(wa.inWindow(wa.waAudioSchema.parse(win))).toBe(false);
+    const r = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.77.2.1' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Nina Noite', email: 'nina.noite@x.com', phone: '11934561111' }, bump_ids: [], tracking: {} }) }).then((x) => x.json());
+    const o = db.orders.find((x) => x.public_token === r.token)!;
+    o.created_at = new Date(Date.now() - 25 * 60_000).toISOString();
+    await sendWhatsAppRecoveries();
+    const mine = waSent.filter((w) => String(w.body?.number ?? '').includes('34561111'));
+    expect(mine.length).toBeGreaterThan(0); // 1º lembrete em texto, na hora
+    expect(mine[0].body.text).toMatch(/Pack Etiquetas/);
+    expect((db.wa_queue ?? []).some((q) => q.order_id === o.id)).toBe(false);
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
+  });
 });

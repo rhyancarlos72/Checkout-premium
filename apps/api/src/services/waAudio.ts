@@ -47,8 +47,18 @@ export const waAudioSchema = z.object({
   recovery: z
     .object({
       enabled: z.boolean().default(true),
-      /** produtos cuja recuperação usa áudio no 3º lembrete (nenhum marcado = o 3º segue em texto) */
+      /** produtos cuja recuperação usa áudio (nenhum marcado = todos os lembretes seguem em texto) */
       product_ids: z.array(z.string().uuid()).max(200).default([]),
+      /** em quais lembretes vai a sequência texto → áudio → link+Pix (os outros seguem em texto) */
+      attempts: z.array(z.number().int().min(1).max(3)).max(3).default([1, 3]),
+      /** 1ª mensagem da sequência no 1º lembrete e no último */
+      opener: z.string().trim().min(2).max(500).default('Oi {nome}, tudo bem? Vi que você não finalizou a compra, posso falar com você um segundo?'),
+      openerLast: z.string().trim().min(2).max(500).default('Oi {nome}, tudo bem? Seu pedido do {produto} ainda está reservado. Posso falar com você um segundo?'),
+      /** áudio de cada lembrete (vazio = reveza entre os áudios de recuperação ativos) */
+      audioFirst: z.string().uuid().or(z.literal('')).default(''),
+      audioLast: z.string().uuid().or(z.literal('')).default(''),
+      /** segundos entre a 1ª mensagem e o áudio */
+      gapSeconds: z.number().int().min(10).max(600).default(40),
       /** mensagem que vai logo depois do áudio ({pix} = aviso do copia e cola, só quando o Pix ainda vale) */
       linkText: z.string().trim().min(2).max(1000).default(RECOVERY_LINK_TEXT),
     })
@@ -290,19 +300,28 @@ export async function scheduleUpsell(orderId: string) {
 }
 
 /** 3º lembrete automático: entra na fila como áudio (true) — sem áudio ativo ou sem a tabela, segue o texto (false). */
-export async function queueRecoveryAudio(o: any): Promise<boolean> {
+/**
+ * Lembrete automático `attempt` (1º, 2º ou 3º) marcado no painel: entra na fila como a sequência
+ * texto curto → áudio → link + Pix (true). Fora do horário, sem áudio, produto não marcado ou sem o SQL: segue o texto (false).
+ */
+export async function queueRecoveryAudio(o: any, attempt = 3): Promise<boolean> {
   const cfg = await getWaAudioConfig();
-  if (!cfg.enabled || !cfg.recovery.enabled) return false;
+  if (!cfg.enabled || !cfg.recovery.enabled || !cfg.recovery.attempts.includes(attempt)) return false;
   // só a recuperação dos produtos escolhidos no painel vai por áudio; os outros seguem em texto
   if (!(o.items ?? []).some((i: any) => i.kind === 'main' && cfg.recovery.product_ids.includes(i.product_id))) return false;
+  if (!inWindow(cfg)) return false; // fora do horário: o lembrete vai em texto na hora (não atrasa a recuperação)
   const phone = normalizePhoneBR(o.customer?.phone);
-  if (!phone || !(await pickAudio('recovery'))) return false;
-  const { error } = await supabase.from('wa_queue').insert({ kind: 'recovery', status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone, run_at: new Date().toISOString() });
+  if (!phone) return false;
+  const last = attempt === Math.max(...cfg.recovery.attempts) && attempt > 1;
+  const audio = await pickAudio('recovery', (last ? cfg.recovery.audioLast : cfg.recovery.audioFirst) || null);
+  if (!audio) return false;
+  const { error } = await supabase.from('wa_queue').insert({ kind: 'recovery', attempt, status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone, audio_id: audio.id, run_at: new Date().toISOString() });
+  if (error && /attempt/i.test(error.message)) logger.warn('Rode no Supabase o SQL 20261122000000_wa_queue_attempt.sql (recuperação por áudio em mais de um lembrete)');
   return !error;
 }
 
 // ------------------------------------------------------------------ fila (com trava)
-type Row = { id: string; kind: 'recovery' | 'upsell'; step: number; customer_id: string | null; order_id: string | null; phone: string; audio_id: string | null; instance: string | null; link_token: string | null; attempts: number };
+type Row = { id: string; kind: 'recovery' | 'upsell'; attempt?: number | null; step: number; customer_id: string | null; order_id: string | null; phone: string; audio_id: string | null; instance: string | null; link_token: string | null; attempts: number };
 type Next = { status: 'pending' | 'done' | 'skipped' | 'failed'; step?: number; run_at?: number; error?: string | null; audio_id?: string | null; instance?: string | null; link_token?: string | null };
 
 async function customerName(id: string | null) {
@@ -346,32 +365,48 @@ async function upsellStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Pro
 }
 
 /** Recuperação (3º lembrete): 0 = áudio, 1 = link rastreável + Pix. Áudio falhou? vai o 3º lembrete em texto. */
+/**
+ * Recuperação (lembretes marcados no painel, ex.: 1º e 3º):
+ *  0 = texto curto ("Vi que você não finalizou a compra, posso falar com você um segundo?"), 1 = áudio, 2 = link + Pix.
+ * Se o texto curto falhar, vai o lembrete em texto como antes (e o e-mail, se o WhatsApp estiver fora).
+ */
 async function recoveryStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Promise<Next> {
+  const attempt = row.attempt ?? 3;
   const { data } = await supabase.from('orders').select(WA_RECOVERY_SELECT).eq('id', row.order_id ?? '').maybeSingle();
   const o = data as any;
   if (!o) return { status: 'skipped', error: 'pedido não encontrado' };
   if (!['pending', 'expired'].includes(o.status)) return { status: 'skipped', error: 'pedido já pago ou cancelado' };
   const { count } = await supabase.from('orders').select('id', { count: 'exact', head: true }).eq('customer_id', o.customer_id).eq('status', 'paid').gte('created_at', o.created_at);
   if ((count ?? 0) > 0) return { status: 'skipped', error: 'já comprou' };
+  const nome = firstName(o.customer?.name);
+  const produto = (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? 'seu pedido';
   if (row.step === 0) {
-    const audio = await pickAudio('recovery', row.audio_id);
-    const r = audio ? await sendWhatsAppAudio(row.phone, audio.file_url, wa) : { ok: false, error: 'nenhum áudio de recuperação ativo' };
-    await logWa(o.id, 'recovery_3_audio', r);
+    const last = attempt > 1 && attempt === Math.max(...cfg.recovery.attempts, attempt);
+    const r = await sendWhatsAppText(row.phone, fillText(last ? cfg.recovery.openerLast : cfg.recovery.opener, { nome, produto }), wa);
+    await logWa(o.id, `recovery_${attempt}_texto`, r);
     if (!r.ok) {
-      // plano B: o 3º lembrete em texto, como era antes (e o e-mail, se o WhatsApp estiver fora)
-      const t = await sendRecoveryText(o, 3, wa);
-      await logWa(o.id, 'recovery_3', t);
-      if (!t.ok) await recoveryEmailFallback(o.id, o.customer_id, 3);
-      return { status: t.ok ? 'done' : 'failed', error: `áudio: ${r.error}${t.ok ? ' (foi o texto)' : ''}`, audio_id: null }; // não conta como áudio enviado
+      // plano B: o lembrete em texto, como era antes (e o e-mail, se o WhatsApp estiver fora)
+      const t = await sendRecoveryText(o, attempt, wa);
+      await logWa(o.id, `recovery_${attempt}`, t);
+      if (!t.ok) await recoveryEmailFallback(o.id, o.customer_id, attempt);
+      return { status: t.ok ? 'done' : 'failed', error: `texto: ${r.error}${t.ok ? ' (foi o lembrete em texto)' : ''}`, audio_id: null };
     }
-    return { status: 'pending', step: 1, run_at: Date.now() + 10_000, audio_id: audio!.id, instance: r.instance ?? null };
+    return { status: 'pending', step: 1, run_at: Date.now() + cfg.recovery.gapSeconds * 1000, instance: r.instance ?? null };
+  }
+  if (row.step === 1) {
+    const audio = (await audioById(row.audio_id)) ?? (await pickAudio('recovery'));
+    let r = audio ? await sendWhatsAppAudio(row.phone, audio.file_url, wa, { instance: row.instance ?? undefined }) : { ok: false, error: 'nenhum áudio de recuperação ativo' };
+    if (!r.ok && audio && row.instance) r = await sendWhatsAppAudio(row.phone, audio.file_url, wa); // o número da conversa caiu
+    await logWa(o.id, `recovery_${attempt}_audio`, r);
+    // mesmo se o áudio falhar, manda o link e o Pix (a pessoa já recebeu o "posso falar com você?")
+    return { status: 'pending', step: 2, run_at: Date.now() + 12_000, instance: r.ok ? (r.instance ?? row.instance) : row.instance, audio_id: r.ok ? (audio?.id ?? null) : null, error: r.ok ? null : `áudio: ${r.error}` };
   }
   const link = await createLink({ kind: 'recovery', audioId: row.audio_id, customerId: o.customer_id, orderId: o.id, target: `/pedido/${o.public_token}` });
   // logo depois do áudio: "segue aqui o link que a gente acabou de falar" + o Pix copia e cola numa mensagem separada
   const pixValid = wa.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
   const text = fillText(cfg.recovery.linkText, {
-    nome: firstName(o.customer?.name),
-    produto: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? 'seu pedido',
+    nome,
+    produto,
     link: link.url,
     valor: (o.total_cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
     pix: pixValid ? '\n\n📋 O Pix copia e cola vai na próxima mensagem: toque e segure para copiar.' : '',
@@ -379,7 +414,7 @@ async function recoveryStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): P
   let r = await sendWhatsAppText(row.phone, text, wa, { instance: row.instance ?? undefined });
   if (!r.ok && row.instance) r = await sendWhatsAppText(row.phone, text, wa); // o número da conversa caiu: vai por outro
   if (r.ok && pixValid) await sendWhatsAppText(row.phone, o.pix_code, wa, { instance: r.instance }).catch(() => null);
-  await logWa(o.id, 'recovery_3_link', r);
+  await logWa(o.id, `recovery_${attempt}_link`, r);
   return r.ok ? { status: 'done', link_token: link.token } : { status: 'failed', error: r.error ?? 'falhou', link_token: link.token };
 }
 

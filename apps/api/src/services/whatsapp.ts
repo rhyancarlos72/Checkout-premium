@@ -905,11 +905,11 @@ export async function sendRecoveryText(o: any, attempt: number, cfg: WhatsAppCon
 async function sendOneWaRecovery(o: any, attempt: number, cfg: WhatsAppConfig, opts: { manual?: boolean; waDown?: string | null } = {}) {
   const { error } = await supabase.from('events').insert({ order_id: o.id, checkout_id: o.checkout_id, type: 'wa_recovery', data: { attempt, ...(opts.manual ? { manual: true } : {}) } });
   if (error) return { ok: false, error: 'tentativa já registrada', viaEmail: false } as SendResult & { viaEmail: boolean };
-  // 3º (último) lembrete automático: vai por ÁUDIO pela fila (8h–20h), se houver áudio de recuperação ativo
-  if (attempt === 3 && !opts.manual && !opts.waDown) {
+  // lembretes automáticos marcados no painel (ex.: 1º e 3º): texto curto → áudio → link + Pix, pela fila (no horário)
+  if (!opts.manual && !opts.waDown) {
     const { queueRecoveryAudio } = await import('./waAudio.js');
-    if (await queueRecoveryAudio(o).catch(() => false)) {
-      await logWa(o.id, 'recovery_3', { ok: true, instance: 'áudio na fila' });
+    if (await queueRecoveryAudio(o, attempt).catch(() => false)) {
+      await logWa(o.id, `recovery_${attempt}`, { ok: true, instance: 'áudio na fila' });
       return { ok: true, viaEmail: false } as SendResult & { viaEmail: boolean };
     }
   }
