@@ -622,15 +622,17 @@ describe('área de membros', () => {
       const main = home.body.courses.find((c: any) => c.id === P1);
       expect(main.sections[0].modules.map((m: any) => m.title)).toEqual(['Comece aqui', 'Facebook Ads']);
       expect(main.progress).toEqual({ total: 2, completed: 0 });
-      expect(home.body.extras).toHaveLength(1);
-      expect(home.body.extras[0]).toMatchObject({ name: 'Kit Convites', checkout_url: '/checkout?produto_id=7777777', cover_url: 'https://img/3.webp' });
+      expect(home.body.extras).toHaveLength(0); // sem escolha no painel: vitrine vazia (nada automático)
 
-      // vitrine escolhida no painel: ordem, título, selo e preço próprios; quem já tem o produto não vê
-      db.settings.push({ key: 'members', value: { offersTitle: 'Leve também', offersSubtitle: 'Só para alunos', offers: [{ product_id: P3, title: 'Kit Convites VIP', badge: 'Novo', description: '+100 modelos' }, { product_id: P1, title: 'Já comprado' }] } });
+      // vitrine escolhida no painel: só nas áreas marcadas; ordem, título, selo e preço próprios; quem já tem o produto não vê
+      db.settings.push({ key: 'members', value: { offersTitle: 'Leve também', offersSubtitle: 'Só para alunos', offers: [{ product_id: P3, title: 'Kit Convites VIP', badge: 'Novo', description: '+100 modelos', areas: [P1] }, { product_id: P1, title: 'Já comprado', areas: [P1] }] } });
       const vit = await mem('GET', '/me', s);
       expect(vit.body.offers).toEqual({ title: 'Leve também', subtitle: 'Só para alunos' });
       expect(vit.body.extras).toHaveLength(1);
       expect(vit.body.extras[0]).toMatchObject({ name: 'Kit Convites VIP', badge: 'Novo', description: '+100 modelos', price_cents: 2990, checkout_url: '/checkout?produto_id=7777777' });
+      // oferta marcada para outra área de membros (que o aluno não tem) ou sem área: não aparece
+      db.settings.find((x) => x.key === 'members')!.value.offers = [{ product_id: P3, title: 'Só no Clube', areas: ['0c000000-0000-4000-8000-0000000000ff'] }, { product_id: P3, title: 'Sem área' }];
+      expect((await mem('GET', '/me', s)).body.extras).toHaveLength(0);
       db.settings = db.settings.filter((x) => x.key !== 'members');
 
       const mod = await mem('GET', '/modules/00000000-0000-4000-8000-00000000f001', s);

@@ -239,6 +239,8 @@ describe.skipIf(!RUN)('área de membros no navegador', () => {
       { id: '00000000-0000-4000-8000-00000000a002', product_id: P1, module_id: '00000000-0000-4000-8000-00000000f010', title: 'Configurando sua conta', description: null, video_url: 'https://vimeo.com/123456789', duration: '12 min', attachments: [], sort: 1, created_at: now },
       { id: '00000000-0000-4000-8000-00000000a003', product_id: P1, module_id: '00000000-0000-4000-8000-00000000f010', title: 'Primeira campanha', description: null, video_url: null, duration: '9 min', attachments: [], sort: 2, created_at: now },
     ];
+    // vitrine: o Kit Convites aparece para quem tem a área do Pack Etiquetas (escolhido no painel)
+    db.settings.push({ key: 'members', value: { offersTitle: 'Cursos adicionais', offersSubtitle: 'Libere mais conteúdos', offers: [{ product_id: P3, title: null, description: null, cover_url: null, badge: null, areas: [P1] }] } });
     // compra com order bump já paga
     const r = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '10.1.1.1' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Rhyan Carlos', email: 'aluno@x.com', phone: '11977776655' }, bump_ids: ['00000000-0000-4000-8000-0000000000b1'], tracking: {} }) }).then((x) => x.json());
     orderToken = r.token;
@@ -385,7 +387,8 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
         t.clearOwnerCache();
         (await import('./middleware/auth.js')).clearAuthCache();
 
-        // vitrine de produtos adicionais: escolhe o Kit Convites, muda o título e salva
+        // vitrine de produtos adicionais: escolhe o Kit Convites, muda o título, marca a área e salva
+        db.settings = db.settings.filter((x) => x.key !== 'members');
         await p.goto(`${base}/admin/area-de-membros`);
         await p.getByRole('button', { name: 'Produtos adicionais' }).click();
         await p.getByText('Vitrine de produtos adicionais').waitFor();
@@ -394,6 +397,8 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
         await p.getByRole('button', { name: /Adicionar à vitrine/ }).click();
         await p.getByPlaceholder('Kit Convites').fill('Kit Convites VIP');
         await p.getByPlaceholder('Exclusivo').fill('Novo');
+        await p.getByText('Marque pelo menos uma área').waitFor();
+        await p.getByText('Mostrar em (áreas de membros)').locator('..').locator('input[type=checkbox]').first().check();
         await p.waitForTimeout(300);
         if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-vitrine.png` });
         await p.getByRole('button', { name: 'Salvar vitrine' }).click();
@@ -401,6 +406,7 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
         const cfg = db.settings.find((x) => x.key === 'members')!.value;
         expect(cfg.offers).toHaveLength(1);
         expect(cfg.offers[0]).toMatchObject({ title: 'Kit Convites VIP', badge: 'Novo' });
+        expect(cfg.offers[0].areas).toHaveLength(1);
         ok('[computador] painel: vitrine de produtos adicionais escolhida e salva');
         db.settings = db.settings.filter((x) => x.key !== 'members');
 
@@ -679,7 +685,7 @@ describe.skipIf(!RUN)('Clube (área de membros recorrente) no navegador', () => 
       sub.canceled_at = null;
       sub.paid_until = new Date(Date.now() - 5 * 86_400_000).toISOString();
       await p.goto(`${base}/membros`);
-      await p.getByText(/está pausado/).waitFor();
+      await p.getByText(/está pausado/).first().waitFor();
       expect(await p.getByText('Kit Alfabeto').count()).toBe(0); // conteúdo do Clube fechado
       if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/clube-pausado.png` });
       expect(errors).toEqual([]);

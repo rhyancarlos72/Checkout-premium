@@ -124,8 +124,8 @@ export async function memberHome(customerId: string) {
   for (const org of myOrgs) {
     const cfg = await runAsOrg(org, () => getMembersConfig());
     if (!extras.length) offers = { title: cfg.offersTitle, subtitle: cfg.offersSubtitle };
+    // só o que foi escolhido no painel, para as áreas de membros marcadas (sem modo automático)
     if (cfg.offers.length) extras.push(...(await manualExtras(owned, cfg)));
-    else extras.push(...autoExtras.filter((x) => x.org_id === org).map(({ org_id: _o, ...x }) => x));
   }
   // assinatura vencida (depois da tolerância): o curso aparece bloqueado com o botão de renovar pelo Pix
   const { paused } = await subscriptionAccess(customerId);
@@ -146,6 +146,8 @@ const offerSchema = z.object({
   description: z.string().trim().max(300).nullable().optional().transform((v) => v || null),
   cover_url: z.string().trim().url().max(1000).or(z.literal('')).nullable().optional().transform((v) => v || null),
   badge: z.string().trim().max(20).nullable().optional().transform((v) => v || null),
+  // áreas de membros (produtos) onde a oferta aparece: só para quem tem acesso a uma delas
+  areas: z.array(z.string().uuid()).max(50).optional().default([]),
 });
 export const membersConfigSchema = z.object({
   offersTitle: z.string().trim().min(1).max(60).default('Cursos adicionais'),
@@ -167,7 +169,9 @@ export async function saveMembersConfig(input: unknown) {
 
 /** Produtos escolhidos no painel, na ordem definida, menos os que a pessoa já tem. */
 async function manualExtras(owned: Set<string>, cfg: MembersConfig) {
-  const ids = cfg.offers.map((o) => o.product_id).filter((id) => !owned.has(id));
+  // só as ofertas marcadas para uma área de membros que a pessoa tem (sem área escolhida: não aparece)
+  const offers = cfg.offers.filter((o) => (o.areas ?? []).some((a) => owned.has(a)));
+  const ids = offers.map((o) => o.product_id).filter((id) => !owned.has(id));
   if (!ids.length) return [];
   const [{ data: products }, { data: checkouts }, { data: modules }] = await Promise.all([
     supabase.from('products').select('*').in('id', ids),
@@ -179,7 +183,7 @@ async function manualExtras(owned: Set<string>, cfg: MembersConfig) {
   for (const c of (checkouts ?? []) as any[]) if (!ck.has(c.product_id)) ck.set(c.product_id, c);
   const firstCover = new Map<string, string>();
   for (const m of (modules ?? []) as any[]) if (m.cover_url && !firstCover.has(m.product_id)) firstCover.set(m.product_id, m.cover_url);
-  return cfg.offers
+  return offers
     .filter((o) => !owned.has(o.product_id) && prod.get(o.product_id)?.active && ck.has(o.product_id))
     .map((o) => {
       const p = prod.get(o.product_id);

@@ -372,7 +372,7 @@ function LessonModal({ moduleId, lesson, onClose, onSaved }: { moduleId: string;
 }
 
 // ------------------------------------------------------------------ vitrine de produtos adicionais
-interface Offer { product_id: string; title: string | null; description: string | null; cover_url: string | null; badge: string | null }
+interface Offer { product_id: string; title: string | null; description: string | null; cover_url: string | null; badge: string | null; /** áreas de membros onde a oferta aparece */ areas?: string[] }
 interface OffersConfig { offersTitle: string; offersSubtitle: string; offers: Offer[] }
 
 function OffersEditor({ products }: { products: ProductRow[] }) {
@@ -401,6 +401,7 @@ function OffersEditor({ products }: { products: ProductRow[] }) {
     set({ offers: next });
   };
   const available = products.filter((p) => p.active && !cfg.offers.some((o) => o.product_id === p.id));
+  const areas = products.filter((p) => p.members_enabled); // áreas de membros (onde as ofertas podem aparecer)
 
   return (
     <div className="space-y-6">
@@ -410,7 +411,7 @@ function OffersEditor({ products }: { products: ProductRow[] }) {
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600"><Sparkles className="h-5 w-5" /></span>
           <div>
             <p className="font-semibold">Vitrine de produtos adicionais</p>
-            <p className="mt-1 text-sm text-zinc-500">Escolha o que oferecer embaixo dos cursos do aluno. Cada produto aparece bloqueado, com o botão “Desbloquear” que leva ao checkout dele. Quem já comprou não vê a oferta. Sem nenhum produto escolhido, a vitrine mostra automaticamente os cursos com área de membros que a pessoa ainda não tem.</p>
+            <p className="mt-1 text-sm text-zinc-500">Escolha o que oferecer embaixo dos cursos do aluno. Cada produto aparece bloqueado, com o botão “Desbloquear” que leva ao checkout dele. Quem já comprou não vê a oferta. Cada oferta só aparece nas áreas de membros que você marcar em “Mostrar em” (ex.: só para quem tem o Clube). Nada é mostrado automaticamente.</p>
           </div>
         </div>
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -448,6 +449,21 @@ function OffersEditor({ products }: { products: ProductRow[] }) {
                   <Field label="Título (vazio = nome do produto)"><Input value={o.title ?? ''} onChange={(e) => setOffer(i, { title: e.target.value })} placeholder={p?.name} /></Field>
                   <Field label="Selo"><Input value={o.badge ?? ''} onChange={(e) => setOffer(i, { badge: e.target.value })} placeholder="Exclusivo" maxLength={20} /></Field>
                 </div>
+                <div>
+                  <p className="mb-1.5 text-sm font-medium text-gray-700">Mostrar em (áreas de membros)</p>
+                  <div className="flex flex-wrap gap-2">
+                    {areas.filter((a) => a.id !== o.product_id).map((a) => {
+                      const on = (o.areas ?? []).includes(a.id);
+                      return (
+                        <label key={a.id} className={cn('flex cursor-pointer items-center gap-2 rounded-lg border px-2.5 py-1.5 text-sm transition', on ? 'border-blue-500 bg-blue-50 text-blue-800' : 'border-zinc-200 text-zinc-600 hover:border-zinc-300')}>
+                          <input type="checkbox" className="h-4 w-4 accent-blue-600" checked={on} onChange={() => setOffer(i, { areas: on ? (o.areas ?? []).filter((x) => x !== a.id) : [...(o.areas ?? []), a.id] })} />
+                          {a.name}
+                        </label>
+                      );
+                    })}
+                  </div>
+                  {!(o.areas ?? []).length && <p className="mt-1.5 text-xs font-medium text-amber-600">Marque pelo menos uma área: sem isso, esta oferta não aparece para ninguém.</p>}
+                </div>
                 <Field label="Frase curta (opcional)"><Input value={o.description ?? ''} onChange={(e) => setOffer(i, { description: e.target.value })} placeholder="Ex.: +300 modelos prontos para vender mais" maxLength={300} /></Field>
                 <ImageUpload kind="poster" label="Capa vertical (vazio = capa do curso ou imagem do produto)" value={o.cover_url} onChange={(url) => setOffer(i, { cover_url: url })} />
               </div>
@@ -468,7 +484,7 @@ function OffersEditor({ products }: { products: ProductRow[] }) {
             <Plus className="h-4 w-4" /> Adicionar à vitrine
           </Button>
         </div>
-        {!cfg.offers.length && <p className="mt-3 text-sm text-zinc-500">Nenhum produto escolhido: a vitrine está no modo automático.</p>}
+        {!cfg.offers.length && <p className="mt-3 text-sm text-zinc-500">Nenhum produto escolhido: a vitrine não aparece na área de membros.</p>}
       </Card>
 
       <div className="sticky bottom-4 z-10 flex justify-end">
