@@ -58,6 +58,8 @@ export const waAudioSchema = z.object({
       enabled: z.boolean().default(false),
       /** checkout oferecido (ex.: o do Clube) */
       checkout_slug: z.string().trim().max(60).default(''),
+      /** página de vendas de upsell (/oferta/slug): quando escolhida, o link do áudio leva para ela */
+      page_slug: z.string().trim().max(60).default(''),
       /** produtos que, PAGOS, disparam o upsell (nenhum marcado = upsell não sai) */
       product_ids: z.array(z.string().uuid()).max(200).default([]),
       delayMinutes: z.number().int().min(10).max(2880).default(120),
@@ -224,6 +226,16 @@ async function targetCheckout(slug: string) {
   const { data } = await supabase.from('checkouts').select('id, slug, name, product_id, product:products(name)').eq('slug', slug).maybeSingle();
   return (data as any) ?? null;
 }
+/** Para onde o link do upsell leva: a página de vendas (se escolhida e ativa) ou o checkout. Devolve também o checkout que cobra. */
+async function upsellTarget(cfg: WaAudioConfig): Promise<{ ck: any; path: string } | null> {
+  if (cfg.upsell.page_slug) {
+    const { data } = await supabase.from('upsell_pages').select('slug, active, checkout:checkouts(id, slug, name, product_id, product:products(name))').eq('slug', cfg.upsell.page_slug).maybeSingle();
+    const p = data as any;
+    if (p?.active && p.checkout?.product_id) return { ck: p.checkout, path: `/oferta/${p.slug}` };
+  }
+  const ck = await targetCheckout(cfg.upsell.checkout_slug);
+  return ck?.product_id ? { ck, path: `/checkout?produto_id=${encodeURIComponent(ck.slug)}` } : null;
+}
 
 /** Motivo para NÃO enviar o upsell (ou null = pode enviar). */
 export async function upsellBlocked(p: { customerId: string; phone: string; productId: string; ignoreQueueId?: string }): Promise<string | null> {
@@ -248,7 +260,7 @@ export async function upsellBlocked(p: { customerId: string; phone: string; prod
 /** Venda aprovada → agenda o upsell por áudio (só vendas da plataforma, não renovação nem upsell). */
 export async function scheduleUpsell(orderId: string) {
   const [cfg, wa] = await Promise.all([getWaAudioConfig(), getWhatsAppConfig()]);
-  if (!cfg.enabled || !cfg.upsell.enabled || !cfg.upsell.checkout_slug || !cfg.upsell.product_ids.length || !wa.enabled) return null;
+  if (!cfg.enabled || !cfg.upsell.enabled || (!cfg.upsell.checkout_slug && !cfg.upsell.page_slug) || !cfg.upsell.product_ids.length || !wa.enabled) return null;
   const { data: o } = await supabase.from('orders').select('id, kind, status, checkout_id, customer_id, tracking, paid_at, customer:customers(phone), items:order_items(product_id)').eq('id', orderId).maybeSingle();
   const order = o as any;
   if (!order || order.status !== 'paid' || order.kind === 'renewal' || order.tracking?.upsell_of || order.tracking?.renewed_from) return null;
@@ -258,7 +270,7 @@ export async function scheduleUpsell(orderId: string) {
   if (!phone) return null;
   const owner = await ownerOrgId();
   if (owner && (await orgOfOrder(orderId)) !== owner) return null; // o WhatsApp da plataforma não é usado para produtores
-  const ck = await targetCheckout(cfg.upsell.checkout_slug);
+  const ck = (await upsellTarget(cfg))?.ck;
   if (!ck?.product_id || ck.id === order.checkout_id) return null;
   if (!(await pickAudio('upsell'))) return null; // sem áudio de upsell ativo: nada a fazer
   const why = await upsellBlocked({ customerId: order.customer_id, phone, productId: ck.product_id });
@@ -293,8 +305,9 @@ async function customerName(id: string | null) {
 
 /** Upsell: 0 = texto de abertura, 1 = áudio, 2 = link com a validade. */
 async function upsellStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Promise<Next> {
-  const ck = await targetCheckout(cfg.upsell.checkout_slug);
-  if (!cfg.upsell.enabled || !ck?.product_id) return { status: 'skipped', error: 'upsell desligado ou sem checkout' };
+  const target = await upsellTarget(cfg);
+  const ck = target?.ck;
+  if (!cfg.upsell.enabled || !target || !ck?.product_id) return { status: 'skipped', error: 'upsell desligado ou sem checkout/página' };
   const produto = ck.product?.name ?? ck.name ?? 'Clube';
   const nome = await customerName(row.customer_id);
   if (row.step === 0) {
@@ -316,7 +329,7 @@ async function upsellStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Pro
     return { status: 'pending', step: 2, run_at: Date.now() + 15_000, instance: r.ok ? (r.instance ?? row.instance) : row.instance, error: r.ok ? null : `áudio: ${r.error}`, ...(r.ok ? {} : { audio_id: null }) };
   }
   const expires = Date.now() + cfg.upsell.validityHours * 3600_000;
-  const link = await createLink({ kind: 'upsell', audioId: row.audio_id, customerId: row.customer_id, orderId: null, target: `/checkout?produto_id=${encodeURIComponent(ck.slug)}`, expiresAt: expires });
+  const link = await createLink({ kind: 'upsell', audioId: row.audio_id, customerId: row.customer_id, orderId: null, target: target.path, expiresAt: expires });
   const text = fillText(cfg.upsell.linkText, { nome, produto, link: link.url, validade: spDateTime(expires) });
   let r = await sendWhatsAppText(row.phone, text, wa, { instance: row.instance ?? undefined });
   if (!r.ok && row.instance) r = await sendWhatsAppText(row.phone, text, wa);

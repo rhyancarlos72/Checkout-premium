@@ -34,7 +34,7 @@ interface Config {
   windowStart: number;
   windowEnd: number;
   recovery: { enabled: boolean; product_ids: string[]; linkText: string };
-  upsell: { enabled: boolean; checkout_slug: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
+  upsell: { enabled: boolean; checkout_slug: string; page_slug: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
 }
 interface QueueRow { id: string; kind: Kind; step: number; status: string; phone: string; run_at: string; error: string | null; created_at: string }
 interface Data {
@@ -47,6 +47,7 @@ interface Data {
   optouts: { phone: string; word: string | null; created_at: string }[];
   checkouts: { slug: string; name: string }[];
   products: { id: string; name: string; active: boolean }[];
+  pages: { slug: string; title: string; active: boolean }[];
 }
 
 const kindLabel: Record<Kind, string> = { recovery: 'Recuperação (3º lembrete)', upsell: 'Upsell' };
@@ -254,7 +255,15 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
             value={c.upsell.product_ids}
             onChange={(ids) => up({ product_ids: ids })}
           />
-          <Field label="Checkout oferecido" hint="Ex.: o checkout do Clube. Quem já comprou ou assina não recebe.">
+          <Field label="Página de vendas (link do áudio)" hint="Escolhida: o link do áudio leva para a página upsell (vídeo + Pix na página). Sem página: leva ao checkout abaixo.">
+            <Select value={c.upsell.page_slug} onChange={(e) => up({ page_slug: e.target.value })}>
+              <option value="">Nenhuma (usar o checkout)</option>
+              {data.pages.map((p) => (
+                <option key={p.slug} value={p.slug}>{p.title} (/oferta/{p.slug}){p.active ? '' : ' · pausada'}</option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Checkout oferecido" hint="Usado quando não há página escolhida. Quem já comprou ou assina não recebe.">
             <Select value={c.upsell.checkout_slug} onChange={(e) => up({ checkout_slug: e.target.value })}>
               <option value="">Escolha…</option>
               {data.checkouts.map((k) => (

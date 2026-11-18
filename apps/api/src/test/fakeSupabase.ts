@@ -23,6 +23,7 @@ const UNIQUE: Record<string, string[]> = {
   wa_queue: ['order_id+kind'], // um áudio de cada tipo por pedido
   wa_optouts: ['phone'],
   wa_links: ['token'],
+  upsell_pages: ['slug'],
 };
 const NO_ID = new Set(['settings', 'admins', 'checkout_bumps']);
 
@@ -52,6 +53,7 @@ function withDefaults(t: string, r: Row): Row {
   if (t === 'wa_queue') (row.status ??= 'pending'), (row.step ??= 0), (row.attempts ??= 0), (row.run_at ??= now);
   if (t === 'wa_links') row.clicks ??= 0;
   if (t === 'wa_audios') row.active ??= true;
+  if (t === 'upsell_pages') (row.active ??= true), (row.bullets ??= []), (row.cta_text ??= 'Quero entrar agora'), (row.button_delay_seconds ??= 0);
   // marketplace: imita o trigger do banco que preenche org_id pelo "pai" (produto, checkout, pedido)
   if (TENANT.has(t) && row.org_id == null && (db.organizations ?? []).length) {
     const find = (tb: string, id: unknown) => (db[tb] ?? []).find((x) => x.id === id)?.org_id;

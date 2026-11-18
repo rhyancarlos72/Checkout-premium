@@ -3,7 +3,11 @@
  * os dados, marca o order bump, aplica cupom, gera o Pix, paga (Woovi simulada) e vê o acesso.
  * Banco em memória + Woovi/PayTracking falsos. Rode com: BROWSER_E2E=1 npx vitest run src/browser.e2e.test.ts
  */
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createRequire } from 'node:module';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -99,6 +103,20 @@ afterAll(async () => {
   fake.close();
   if (report.length) console.log(`\n===== CHECKUP DO CHECKOUT =====\n${report.join('\n')}\n`);
 });
+
+/** Vídeo de teste (1080p, 6 s, com som) gerado na hora pelo ffmpeg; sem ffmpeg, os passos de vídeo são pulados. */
+let testVideo: string | null | undefined;
+function makeTestVideo() {
+  if (testVideo !== undefined) return testVideo;
+  try {
+    const file = path.join(os.tmpdir(), `vsl-test-${process.pid}.mp4`);
+    execFileSync('ffmpeg', ['-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=1920x1080:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '6', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '8M', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', '-shortest', file]);
+    testVideo = file;
+  } catch {
+    testVideo = null;
+  }
+  return testVideo;
+}
 
 const pay = async (orderId: string) => {
   charges.get(orderId)!.status = 'COMPLETED';
@@ -444,6 +462,46 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
         for (const t of ['wa_audios', 'wa_queue', 'wa_links', 'wa_optouts']) delete db[t];
         db.settings = db.settings.filter((x) => x.key !== 'wa_audio');
 
+        // Páginas upsell: cria a página, sobe o vídeo (comprimido NO NAVEGADOR) e salva
+        const uploads: { url: string; size: number }[] = [];
+        await p.route(/fake\.supabase\.co\/storage\/v1\/object\/media\//, async (rt: any) => {
+          uploads.push({ url: rt.request().url(), size: rt.request().postDataBuffer()?.length ?? 0 });
+          await rt.fulfill({ json: { Key: 'media/x', Id: 'x' } });
+        });
+        await p.goto(`${base}/admin/paginas-upsell`);
+        await p.getByRole('heading', { name: 'Páginas upsell' }).waitFor();
+        await p.getByRole('button', { name: /Criar página|Nova página/ }).first().click();
+        const dlg = p.getByRole('dialog');
+        await dlg.locator('select').first().selectOption('00000000-0000-4000-8000-0000000000c1'); // checkout do Pack Etiquetas
+        await dlg.getByPlaceholder('Clube — upsell WhatsApp').fill('Clube WhatsApp');
+        expect(await dlg.getByPlaceholder('clube', { exact: true }).inputValue()).toBe('clube-whatsapp'); // endereço sugerido pelo nome
+        await dlg.getByPlaceholder('clube', { exact: true }).fill('clube');
+        await dlg.getByPlaceholder('Atividades prontas toda semana para a sua turma').fill('Atividades prontas toda semana');
+        await dlg.getByPlaceholder('Atividades novas toda semana').fill('Atividades novas toda semana');
+        const vid = makeTestVideo();
+        if (vid) {
+          await dlg.locator('input[type=file]').setInputFiles(vid);
+          await dlg.getByText(/^Pronto em/).waitFor({ timeout: 120_000 });
+          const hd = uploads.find((u) => u.url.includes('hd.mp4'))!;
+          const sd = uploads.find((u) => u.url.includes('sd.mp4'))!;
+          expect(hd.size).toBeGreaterThan(50_000);
+          expect(hd.size).toBeLessThan(fs.statSync(vid).size * 0.5); // bem menor que o original
+          expect(sd.size).toBeLessThan(hd.size);
+          expect(uploads.some((u) => u.url.includes('poster.jpg'))).toBe(true);
+          ok(`[computador] vídeo comprimido no navegador: ${(fs.statSync(vid).size / 1e6).toFixed(1)} MB → ${(hd.size / 1e6).toFixed(2)} MB (720p) + ${(sd.size / 1e6).toFixed(2)} MB (480p) + capa`);
+        }
+        await p.waitForTimeout(300);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-pagina-upsell.png` });
+        await dlg.getByRole('button', { name: 'Salvar página' }).click();
+        await p.getByText('Página salva').waitFor();
+        const saved = db.upsell_pages.find((x) => x.slug === 'clube')!;
+        expect(saved).toMatchObject({ headline: 'Atividades prontas toda semana', checkout_id: '00000000-0000-4000-8000-0000000000c1', bullets: ['Atividades novas toda semana'] });
+        if (vid) expect(saved.video_url).toMatch(/hd\.mp4$/);
+        await p.getByText('/oferta/clube').first().waitFor();
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-paginas-upsell.png` });
+        ok('[computador] painel: página upsell criada (vídeo, textos, endereço) e salva');
+        await p.unroute(/fake\.supabase\.co\/storage\/v1\/object\/media\//);
+
         // Produtos: entrega padrão = link; escolher "Área de membros" cria o curso sozinho
         await p.goto(`${base}/admin/produtos`);
         await p.getByRole('button', { name: /Novo produto/ }).first().click();
@@ -728,4 +786,55 @@ describe.skipIf(!RUN)('Clube (área de membros recorrente) no navegador', () => 
       await ctx.close();
     }
   });
+});
+
+describe.skipIf(!RUN)('página de vendas de upsell no navegador', () => {
+  it('vídeo com capa, botão, dados já preenchidos, Pix na própria página e acesso liberado ao pagar', async () => {
+    const now = new Date().toISOString();
+    db.upsell_pages = (db.upsell_pages ?? []).filter((x) => x.slug !== 'clube-vip');
+    db.upsell_pages.push({ id: '0e000000-0000-4000-8000-000000000001', slug: 'clube-vip', checkout_id: '00000000-0000-4000-8000-0000000000c1', title: 'Clube VIP', headline: 'Entre no Clube de Atividades', subheadline: 'Atividades novas toda semana, prontas para imprimir.', video_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/hd.mp4', video_sd_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/sd.mp4', poster_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/poster.svg', cta_text: 'Quero entrar no Clube', bullets: ['Atividades novas toda semana', 'Pronto para imprimir', 'Cancele quando quiser'], guarantee: '7 dias de garantia: não gostou, devolvemos seu dinheiro.', button_delay_seconds: 0, active: true, created_at: now, updated_at: now });
+    // cliente que já comprou (veio da página do pedido): a página abre com os dados preenchidos
+    const first = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.10.30.40' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Vera Video', email: 'vera.video@teste.com', phone: '11955554444' }, bump_ids: [], tracking: {} }) }).then((r) => r.json());
+    await pay(db.orders.find((x) => x.public_token === first.token)!.id);
+    const vid = makeTestVideo();
+    for (const [label, viewport] of [['celular', { width: 390, height: 844 }], ['computador', { width: 1366, height: 860 }]] as const) {
+      const ctx = await browser.newContext({ viewport, locale: 'pt-BR' });
+      const p = await ctx.newPage();
+      const posterSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7c3aed"/><stop offset="1" stop-color="#f59e0b"/></linearGradient></defs><rect width="1280" height="720" fill="url(#g)"/><text x="640" y="380" font-family="sans-serif" font-size="72" font-weight="800" fill="#fff" text-anchor="middle">Clube de Atividades</text></svg>';
+      await p.route('https://fake.supabase.co/storage/v1/object/public/media/offers/**', (rt: any) => {
+        const u = rt.request().url();
+        if (u.endsWith('.svg')) return rt.fulfill({ contentType: 'image/svg+xml', body: posterSvg });
+        return vid ? rt.fulfill({ contentType: 'video/mp4', body: fs.readFileSync(vid) }) : rt.fulfill({ status: 404, body: '' });
+      });
+      try {
+        await p.goto(`${base}/oferta/clube-vip?o=${first.token}`);
+        await p.getByRole('heading', { name: 'Entre no Clube de Atividades' }).waitFor();
+        expect(await p.locator('#ck-offer').count()).toBe(1); // dados já vieram no HTML
+        await p.getByRole('button', { name: 'Assistir ao vídeo' }).waitFor();
+        expect(await p.locator('video').getAttribute('preload')).not.toBe('auto'); // vídeo não atrasa a abertura da página
+        await p.waitForTimeout(400);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/oferta-${label}.png`, fullPage: true });
+        await p.getByRole('button', { name: 'Quero entrar no Clube' }).click();
+        const sheet = p.getByRole('dialog', { name: 'Pagamento' });
+        await sheet.waitFor();
+        await expect.poll(async () => sheet.locator('input[type=email]').inputValue()).toBe('vera.video@teste.com'); // já preenchido
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/oferta-dados-${label}.png` });
+        await sheet.getByRole('button', { name: 'Pagar com Pix' }).click();
+        await sheet.locator('img[alt="QR Code Pix"]').waitFor();
+        await sheet.getByText('Copiar código Pix').waitFor();
+        const o = db.orders.filter((x) => x.tracking?.offer === 'clube-vip').at(-1)!;
+        expect(o.tracking.offer).toBe('clube-vip');
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/oferta-pix-${label}.png` });
+        await pay(o.id);
+        await sheet.getByText('Pagamento aprovado!').waitFor({ timeout: 15_000 });
+        await sheet.getByRole('link', { name: /Acessar|Entrar na área de membros/ }).first().waitFor();
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/oferta-paga-${label}.png` });
+        const wide = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+        expect(wide).toBe(false);
+        ok(`[${label}] página upsell: vídeo com capa, botão, dados preenchidos, Pix na página e acesso liberado ao pagar`);
+      } finally {
+        await ctx.close();
+      }
+    }
+  }, 120_000);
 });

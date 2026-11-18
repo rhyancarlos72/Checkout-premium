@@ -27,6 +27,8 @@ const AdminApp = lazy(() => import('./pages/admin/AdminApp'));
 const PaymentPage = lazy(() => import('./pages/checkout/PaymentPage'));
 // Área de membros do aluno (estilo Netflix), também sob demanda
 const MembersApp = lazy(() => import('./pages/members/MembersApp'));
+// Página de vendas de upsell (VSL + pagamento na própria página)
+const OfferPage = lazy(() => import('./pages/offer/OfferPage'));
 
 // Links de e-mail do Supabase (recuperação/convite) podem cair na raiz: leva para a tela de nova senha mantendo o token.
 function RootRedirect() {
@@ -58,6 +60,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/checkout" element={<CheckoutPage />} />
             <Route path="/c/:slug" element={<CheckoutPage />} />
             <Route path="/pedido/:token" element={<PaymentPage />} />
+            <Route path="/oferta/:slug" element={<OfferPage />} />
             <Route path="/admin/*" element={<AdminApp />} />
             <Route path="/membros/*" element={<MembersApp />} />
             <Route path="*" element={<RootRedirect />} />

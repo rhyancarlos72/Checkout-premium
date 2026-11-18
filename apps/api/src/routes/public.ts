@@ -10,6 +10,7 @@ import { cardOptionFor, createOrder, createOrderSchema, createUpsellOrder, renew
 import { getSettings } from '../services/settings.js';
 import { isOwnerOrg, ownerOrgId, runAsOrg } from '../lib/tenant.js';
 import { unsubscribe, unsubscribeSig } from '../services/email.js';
+import { loadOffer, offerPrefill, publicOffer } from '../services/offers.js';
 
 export const publicRouter = Router();
 
@@ -80,6 +81,21 @@ export async function publicCheckoutData(slug: string) {
     club: c.product.club ? { monthly_cents: c.price_cents, plan: c.club_plan?.name ?? null, auto: subscriptionsAvailable(await isOwnerOrg(c.org_id ?? null)) } : null,
   };
 }
+
+/** Página de vendas de upsell (/oferta/:slug): textos, vídeo e o checkout que cobra (preço, Clube, Pixel). */
+export async function publicOfferData(slug: string) {
+  const p = await loadOffer(slug);
+  return { ...publicOffer(p), checkout: await publicCheckoutData(p.checkout.slug) };
+}
+publicRouter.get('/offers/:slug', async (req, res) => {
+  res.set('Cache-Control', 'no-store, max-age=0');
+  res.json(await publicOfferData(String(req.params.slug)));
+});
+/** Já preenchido: veio do link do áudio (?wa=) ou de um pedido pago (?o=). */
+publicRouter.get('/offers/:slug/prefill', pollLimiter, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.json({ customer: await offerPrefill({ wa: req.query.wa, o: req.query.o }) });
+});
 
 publicRouter.get('/checkouts/:slug', async (req, res) => {
   const data = await publicCheckoutData(String(req.params.slug));
@@ -212,7 +228,7 @@ publicRouter.post('/orders/:token/refresh', pollLimiter, async (req, res) => {
 
 const eventSchema = z.object({
   checkout_slug: z.string().regex(/^[a-z0-9-]{3,60}$/),
-  type: z.enum(['page_view', 'initiate_checkout', 'add_bump', 'remove_bump', 'coupon_applied', 'pix_copied', 'payment_page_view']),
+  type: z.enum(['page_view', 'initiate_checkout', 'add_bump', 'remove_bump', 'coupon_applied', 'pix_copied', 'payment_page_view', 'offer_view', 'offer_click']),
   session_id: z.string().max(64).optional(),
   data: z.record(z.string(), z.unknown()).optional().default({}),
 });

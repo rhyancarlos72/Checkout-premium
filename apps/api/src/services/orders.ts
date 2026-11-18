@@ -24,6 +24,7 @@ const trackingKeys = [
   'fbclid', 'fbp', 'fbc', 'gclid', 'ttclid', 'external_id', 'page_url', 'referrer',
   'event_id', 'initiate_checkout_event_id', 'purchase_event_id', 'session_id',
   'pt_xid', 'xcod', 'visitor_id', 'fbclid_at', 'add_payment_info_event_id',
+  'offer', // página de vendas de upsell (/oferta/slug) onde a compra aconteceu
   'wa', // link do áudio no WhatsApp (/r/TOKEN): de qual áudio veio a venda
 ] as const;
 

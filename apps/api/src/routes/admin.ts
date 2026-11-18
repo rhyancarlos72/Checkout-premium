@@ -20,6 +20,7 @@ import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
+import { OFFER_SELECT, offerSchema, offerStats } from '../services/offers.js';
 import { evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
 import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, phoneVariants, saveWhatsAppConfig, sendWhatsAppAudio, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
@@ -31,7 +32,7 @@ adminRouter.use(requireAdmin);
 // a partir daqui, toda consulta usa a organização de quem está logado
 adminRouter.use((req, _res, next) => tenantCtx.run({ orgId: req.orgId ?? null }, () => next()));
 // gateways, credenciais, WhatsApp da plataforma, equipe da Prime, jobs e gestão da plataforma: só o Super Admin
-export const SUPER_ADMIN_PATH = /^\/(gateways|whatsapp|team|jobs|platform|subscriptions|club)(\/|$)|^\/integrations\/?$|^\/integrations\/(email|efi)(\/|$)/i;
+export const SUPER_ADMIN_PATH = /^\/(gateways|whatsapp|team|jobs|platform|subscriptions|club|upsell-pages)(\/|$)|^\/integrations\/?$|^\/integrations\/(email|efi)(\/|$)/i;
 // webhooks/PayTracking e nota fiscal da própria organização: só o dono da organização (não a equipe)
 export const OWNER_ONLY_PATH = /^\/webhooks(\/|$)|^\/integrations\/(invoices|paytracking)(\/|$)/i;
 adminRouter.use((req, res, next) => (SUPER_ADMIN_PATH.test(req.path) ? requireSuperAdmin(req, res, next) : OWNER_ONLY_PATH.test(req.path) ? requireOwner(req, res, next) : next()));
@@ -1352,18 +1353,57 @@ adminRouter.post('/whatsapp/test', async (req, res) => {
   res.json({ ok: r.ok, message: r.ok ? `Mensagem de teste enviada pela instância ${r.instance}` : r.error, hint: r.hint });
 });
 
+// ------------------------------------------------------------------ páginas de vendas de upsell (/oferta/slug)
+const OFFER_SQL_MSG = 'Rode no Supabase o SQL das páginas upsell (supabase/migrations/20261120000000_upsell_pages.sql) e recarregue.';
+const offerMissing = (e: { message?: string } | null) => !!e && /upsell_pages|schema cache|does not exist/i.test(e.message ?? '');
+adminRouter.get('/upsell-pages', async (_req, res) => {
+  const [pages, checkouts] = await Promise.all([
+    supabase.from('upsell_pages').select(OFFER_SELECT).order('created_at', { ascending: false }),
+    supabase.from('checkouts').select('id, slug, name, active, product:products(name, club)').order('created_at', { ascending: false }).limit(200),
+  ]);
+  const list = (pages.data ?? []) as any[];
+  const stats = await offerStats(list.map((p) => ({ slug: p.slug, checkout_id: p.checkout_id })));
+  res.set('Cache-Control', 'no-store').json({
+    ready: !pages.error,
+    sql_hint: pages.error ? (offerMissing(pages.error) ? OFFER_SQL_MSG : pages.error.message) : null,
+    pages: list.map((p) => ({ ...p, stats: stats.get(p.slug), url: `${env.PUBLIC_URL}/oferta/${p.slug}` })),
+    checkouts: ((checkouts.data ?? []) as any[]).filter((c) => c.active !== false).map((c) => ({ id: c.id, slug: c.slug, name: c.name, product: c.product?.name ?? null, club: Boolean(c.product?.club) })),
+  });
+});
+const saveOffer = async (id: string | null, body: unknown) => {
+  const v = offerSchema.parse(body);
+  const row = { ...v, updated_at: new Date().toISOString() };
+  const q = id ? supabase.from('upsell_pages').update(row).eq('id', id) : supabase.from('upsell_pages').insert(row);
+  const { data, error } = await q.select(OFFER_SELECT).maybeSingle();
+  if (error) {
+    if (offerMissing(error)) throw new HttpError(409, OFFER_SQL_MSG);
+    if ((error as any).code === '23505' || /duplicate|unique/i.test(error.message)) throw new HttpError(409, 'Já existe uma página com este endereço');
+    throw new HttpError(500, error.message);
+  }
+  if (!data) throw new HttpError(404, 'Página não encontrada');
+  return data;
+};
+adminRouter.post('/upsell-pages', async (req, res) => res.status(201).json(await saveOffer(null, req.body)));
+adminRouter.put('/upsell-pages/:id', async (req, res) => res.json(await saveOffer(z.string().uuid().parse(req.params.id), req.body)));
+adminRouter.delete('/upsell-pages/:id', async (req, res) => {
+  const { error } = await supabase.from('upsell_pages').delete().eq('id', z.string().uuid().parse(req.params.id));
+  if (error) throw new HttpError(500, error.message);
+  res.json({ ok: true });
+});
+
 // ------------------------------------------------------------------ áudios no WhatsApp (3º lembrete + upsell)
 const audioMissing = (e: { message?: string } | null) => !!e && /wa_audios|wa_queue|wa_optouts|wa_links|schema cache|does not exist/i.test(e.message ?? '');
 const AUDIO_SQL_MSG = 'Rode no Supabase o SQL dos áudios (supabase/migrations/20261119000000_wa_audio.sql) e recarregue.';
 
 adminRouter.get('/whatsapp/audio', async (_req, res) => {
-  const [config, report, queue, optouts, checkouts, products] = await Promise.all([
+  const [config, report, queue, optouts, checkouts, products, offerPages] = await Promise.all([
     getWaAudioConfig(),
     waAudioReport(),
     supabase.from('wa_queue').select('id, kind, step, status, phone, run_at, error, audio_id, created_at, updated_at').order('created_at', { ascending: false }).limit(30),
     supabase.from('wa_optouts').select('phone, word, created_at').order('created_at', { ascending: false }).limit(50),
     supabase.from('checkouts').select('slug, name, active').order('created_at', { ascending: false }).limit(200),
     supabase.from('products').select('id, name, active').order('name', { ascending: true }).limit(500),
+    supabase.from('upsell_pages').select('slug, title, active').order('created_at', { ascending: false }).limit(100),
   ]);
   res.set('Cache-Control', 'no-store').json({
     ready: report.ready && !queue.error,
@@ -1375,6 +1415,7 @@ adminRouter.get('/whatsapp/audio', async (_req, res) => {
     optouts: optouts.data ?? [],
     checkouts: (checkouts.data ?? []).filter((c: any) => c.active !== false).map((c: any) => ({ slug: c.slug, name: c.name })),
     products: (products.data ?? []).map((p: any) => ({ id: p.id, name: p.name, active: p.active !== false })),
+    pages: ((offerPages.data ?? []) as any[]).map((p) => ({ slug: p.slug, title: p.title, active: p.active !== false })),
   });
 });
 adminRouter.put('/whatsapp/audio/config', async (req, res) => {

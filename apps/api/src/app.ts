@@ -13,7 +13,7 @@ import { env } from './config/env.js';
 import { clientIp, escapeHtml, geoFromHeaders, HttpError, logger, parseShortOrderCode, supabase } from './lib/core.js';
 import { geoTrackingFromIp } from './services/geoip.js';
 import { renewalOrderFor, validRenewSig } from './services/subscriptions.js';
-import { publicCheckoutData, publicOrder } from './routes/public.js';
+import { publicCheckoutData, publicOfferData, publicOrder } from './routes/public.js';
 import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
 import { publicRouter } from './routes/public.js';
@@ -279,6 +279,22 @@ export function createApp() {
         const json = JSON.stringify({ slug: seo.data.slug, data: seo.data }).replace(/</g, '\\u003c');
         body = body.replace('<div id="root"></div>', `<div id="root"></div>\n    <script type="application/json" id="ck-data">${json}</script>`);
       }
+      // página de vendas de upsell: dados no HTML (abre sem esperar a API) + capa do vídeo baixando junto
+      const om = req.path.match(/^\/oferta\/([a-z0-9-]{3,60})\/?$/);
+      if (om) {
+        try {
+          const o = (await Promise.race([publicOfferData(om[1]), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 1500))])) as any;
+          body = body.replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(o.headline)}</title>`);
+          body = body.replace('</head>', '    <meta name="robots" content="noindex, nofollow" />\n  </head>');
+          const pre = [`<link rel="preconnect" href="${supabaseHost}" />`];
+          if (o.poster) pre.push(`<link rel="preload" as="image" href="${escapeHtml(o.poster)}" fetchpriority="high" />`);
+          body = body.replace('<head>', `<head>\n    ${pre.join('\n    ')}`);
+          const json = JSON.stringify({ slug: om[1], data: o }).replace(/</g, '\\u003c');
+          body = body.replace('<div id="root"></div>', `<div id="root"></div>\n    <script type="application/json" id="ck-offer">${json}</script>`);
+        } catch {
+          /* página inexistente/pausada ou banco lento: a página busca pela API */
+        }
+      }
       // página do Pix aberta pelo link (recuperação, e-mail): pedido já no HTML + código da página baixando junto
       const pm = req.path.match(/^\/pedido\/([a-f0-9]{48})$/);
       if (pm) {
@@ -293,7 +309,7 @@ export function createApp() {
         }
       }
       // cidade/estado do visitante para a correspondência avançada do Pixel (PageView, InitiateCheckout, Purchase)
-      if (/^\/(checkout|c\/|pedido\/)/.test(req.path)) {
+      if (/^\/(checkout|c\/|pedido\/|oferta\/)/.test(req.path)) {
         const g = { ...geoTrackingFromIp(clientIp(req as any)), ...geoFromHeaders(req.headers as any) };
         if (g.geo_city || g.geo_state) {
           const geo = JSON.stringify({ ct: g.geo_city ?? null, st: g.geo_state ?? null, country: g.geo_country ?? null }).replace(/</g, '\\u003c');

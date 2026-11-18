@@ -1646,4 +1646,88 @@ describe('marketplace multiusuário', () => {
     expect(rep.body.audios.find((x: any) => x.id === REC)).toMatchObject({ sent: 1, clicks: 1, paid: 1 });
     expect(rep.body.optouts.length).toBeGreaterThan(0);
   }, 30_000);
+  it('página de vendas de upsell: painel cria, /oferta/slug abre com os dados no HTML, já preenchido pelo link do áudio/pedido, Pix na própria página e números por página', async () => {
+    const now = new Date().toISOString();
+    const CK = '0c000000-0000-4000-8000-0000000000c9'; // checkout 8931499 (Kit Convites) criado no teste dos áudios
+    if (!db.checkouts.some((c) => c.id === CK)) db.checkouts.push({ id: CK, product_id: '00000000-0000-4000-8000-000000000003', org_id: OWNER_ORG, slug: '8931499', name: 'Clube', price_cents: 990, active: true, provider: 'woovi', pix_expires_minutes: 30, theme: {}, fields: { phone: true, document: false }, tracking: {}, created_at: now });
+    // só o dono da plataforma
+    expect((await as('b', 'GET', '/api/admin/upsell-pages')).status).toBe(403);
+    const bad = await as('owner', 'POST', '/api/admin/upsell-pages', { slug: 'Clube VIP!', checkout_id: CK, title: 'x', headline: 'y' });
+    expect(bad.status).toBe(400);
+    const created = await as('owner', 'POST', '/api/admin/upsell-pages', {
+      slug: 'clube', checkout_id: CK, title: 'Clube — upsell', headline: 'Entre no Clube de Atividades', subheadline: 'Atividades novas toda semana',
+      video_url: 'https://fake.supabase.co/storage/v1/object/public/media/offer/hd.mp4', video_sd_url: 'https://fake.supabase.co/storage/v1/object/public/media/offer/sd.mp4', poster_url: 'https://fake.supabase.co/storage/v1/object/public/media/offer/poster.jpg',
+      cta_text: 'Quero entrar no Clube', bullets: ['Atividades prontas', 'Cancele quando quiser'], button_delay_seconds: 0,
+    });
+    expect(created.status).toBe(201);
+    expect((await as('owner', 'POST', '/api/admin/upsell-pages', { slug: 'clube', checkout_id: CK, title: 'Outra', headline: 'Outra' })).status).toBe(409); // endereço repetido
+
+    // página pública: dados + checkout que cobra; HTML já traz tudo (abre sem esperar a API)
+    const pub = await api('GET', '/api/public/offers/clube');
+    expect(pub.body).toMatchObject({ headline: 'Entre no Clube de Atividades', cta_text: 'Quero entrar no Clube', checkout_slug: '8931499', video: { hd: expect.stringContaining('hd.mp4'), sd: expect.stringContaining('sd.mp4') } });
+    expect(pub.body.checkout).toMatchObject({ slug: '8931499', price_cents: 990 });
+    expect(pub.body).not.toHaveProperty('checkout_id');
+    expect((await api('GET', '/api/public/offers/nao-existe')).status).toBe(404);
+    // já preenchido: pelo pedido pago (?o=) — e nada com token inventado
+    const paidOrder = db.orders.find((o) => o.status === 'paid' && o.customer_id)!;
+    const pre = await api('GET', `/api/public/offers/clube/prefill?o=${paidOrder.public_token}`);
+    expect(pre.body.customer.email).toBe(db.customers.find((c) => c.id === paidOrder.customer_id)!.email);
+    expect((await api('GET', '/api/public/offers/clube/prefill?o=abc&wa=AAAAAAAAAAAAAAAAAAAAAA')).body.customer).toBeNull();
+
+    // visita + clique (estatística) e compra pela página: o pedido guarda de qual página veio
+    for (const type of ['offer_view', 'offer_view', 'offer_click']) await api('POST', '/api/public/events', { checkout_slug: '8931499', type, session_id: 's-offer-1', data: { offer: 'clube' } });
+    await settle();
+    const r = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.77.1.9' }, body: JSON.stringify({ checkout_slug: '8931499', customer: { name: 'Olga Oferta', email: 'olga.oferta@x.com', phone: '11912340000' }, bump_ids: [], tracking: { offer: 'clube' } }) }).then((x) => x.json());
+    expect(r.order.pix_code).toBeTruthy(); // o Pix aparece na própria página
+    const oo = db.orders.find((x) => x.public_token === r.token)!;
+    expect(oo.tracking.offer).toBe('clube');
+    charges.get(oo.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: oo.id } });
+    await settle();
+    await settle();
+    const list = await as('owner', 'GET', '/api/admin/upsell-pages');
+    expect(list.body.ready).toBe(true);
+    expect(list.body.pages[0]).toMatchObject({ slug: 'clube', url: 'https://checkout.loja.com/oferta/clube', stats: { views: 1, clicks: 1, orders: 1, paid: 1, revenue_cents: 990 } });
+
+    // HTML da página: título, dados embutidos, capa pré-carregada e fora do Google
+    const html = await fetch(`${base}/oferta/clube`).then((x) => x.text());
+    if (html.includes('<div id="root">')) {
+      expect(html).toContain('id="ck-offer"');
+      expect(html).toContain('<title>Entre no Clube de Atividades</title>');
+      expect(html).toContain('poster.jpg');
+      expect(html).toContain('noindex');
+    }
+
+    // link do áudio de upsell leva para a página de vendas (com as UTMs e o token)
+    const wa = await import('./services/waAudio.js');
+    const cfg = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body;
+    expect(cfg.pages.map((p: any) => p.slug)).toContain('clube');
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...cfg.config, upsell: { ...cfg.config.upsell, enabled: true, page_slug: 'clube', product_ids: ['00000000-0000-4000-8000-000000000001'] } });
+    const g = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.77.1.10' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Gina Pagina', email: 'gina.pagina@x.com', phone: '11912349999' }, bump_ids: [], tracking: {} }) }).then((x) => x.json());
+    const go = db.orders.find((x) => x.public_token === g.token)!;
+    charges.get(go.id)!.status = 'COMPLETED';
+    await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: go.id } });
+    await settle();
+    await settle();
+    const q = db.wa_queue.find((x) => x.order_id === go.id && x.kind === 'upsell')!;
+    expect(q).toBeTruthy();
+    for (let i = 0; i < 3; i++) {
+      q.run_at = new Date(Date.now() - 1000).toISOString();
+      await wa.processWaQueue();
+    }
+    expect(q.status).toBe('done');
+    const link = db.wa_links.find((l) => l.token === q.link_token)!;
+    expect(link.target_url).toBe('/oferta/clube');
+    const red = await fetch(`${base}/r/${link.token}`, { redirect: 'manual' });
+    const loc = new URL(red.headers.get('location')!, 'https://x');
+    expect(loc.pathname).toBe('/oferta/clube');
+    expect(loc.searchParams.get('wa')).toBe(link.token);
+    expect(loc.searchParams.get('utm_medium')).toBe('audio');
+    // e a página já vem preenchida com os dados de quem recebeu o áudio
+    expect((await api('GET', `/api/public/offers/clube/prefill?wa=${link.token}`)).body.customer).toMatchObject({ email: 'gina.pagina@x.com', name: 'Gina Pagina' });
+
+    // página pausada sai do ar
+    await as('owner', 'PUT', `/api/admin/upsell-pages/${created.body.id}`, { ...created.body, checkout: undefined, active: false });
+    expect((await api('GET', '/api/public/offers/clube')).status).toBe(404);
+  }, 30_000);
 });
