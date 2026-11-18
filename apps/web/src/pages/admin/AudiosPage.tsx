@@ -33,7 +33,7 @@ interface Config {
   enabled: boolean;
   windowStart: number;
   windowEnd: number;
-  recovery: { enabled: boolean; product_ids: string[] };
+  recovery: { enabled: boolean; product_ids: string[]; linkText: string };
   upsell: { enabled: boolean; checkout_slug: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
 }
 interface QueueRow { id: string; kind: Kind; step: number; status: string; phone: string; run_at: string; error: string | null; created_at: string }
@@ -239,6 +239,9 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
             value={c.recovery.product_ids}
             onChange={(ids) => setC({ ...c, recovery: { ...c.recovery, product_ids: ids } })}
           />
+          <Field label="Mensagem depois do áudio" hint="Use {nome}, {produto}, {valor}, {link} e {pix} (aviso do Pix copia e cola, só quando o Pix ainda vale).">
+            <Textarea rows={4} value={c.recovery.linkText} onChange={(e) => setC({ ...c, recovery: { ...c.recovery, linkText: e.target.value } })} />
+          </Field>
         </div>
 
         <div className="space-y-3 border-t border-zinc-100 pt-4">
@@ -265,7 +268,7 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
             <Field label="Áudio após (s)"><Input type="number" min={10} value={c.upsell.gapSeconds} onChange={(e) => up({ gapSeconds: num(e.target.value) })} /></Field>
           </div>
           <Field label="1ª mensagem (texto)"><Textarea rows={2} value={c.upsell.opener} onChange={(e) => up({ opener: e.target.value })} /></Field>
-          <Field label="Mensagem do link" hint="Use {nome}, {produto}, {link} e {validade}.">
+          <Field label="Mensagem depois do áudio (com o link)" hint="Use {nome}, {produto}, {link} e {validade}.">
             <Textarea rows={5} value={c.upsell.linkText} onChange={(e) => up({ linkText: e.target.value })} />
           </Field>
           <p className="text-xs text-zinc-500">No máximo 1 upsell a cada 7 dias por pessoa. Link rastreável com UTMs whatsapp / audio / upsell / id do áudio.</p>

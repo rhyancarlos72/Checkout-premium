@@ -33,6 +33,11 @@ import {
  */
 
 // ------------------------------------------------------------------ configuração
+/** Mensagens que vão logo DEPOIS do áudio: fazem referência ao que foi falado nele. */
+export const UPSELL_LINK_TEXT = '{nome}, segue aqui o link que a gente acabou de falar 👇\n{link}\n\nEssa condição vale até {validade}.\n\nSe não quiser mais mensagens, responda SAIR.';
+export const RECOVERY_LINK_TEXT = '{nome}, segue aqui o link que a gente acabou de falar 👇\n{link}{pix}\n\nSe não quiser mais mensagens, responda SAIR.';
+/** texto padrão da 1ª versão (antes de citar o áudio): quem nunca mudou passa a receber o novo */
+const OLD_UPSELL_LINK_TEXT = '{nome}, aqui está o link para entrar no {produto}:\n{link}\n\nEssa condição vale até {validade}.\n\nSe não quiser mais mensagens, responda SAIR.';
 export const waAudioSchema = z.object({
   /** liga/desliga tudo (recuperação por áudio e upsell) */
   enabled: z.boolean().default(true),
@@ -44,6 +49,8 @@ export const waAudioSchema = z.object({
       enabled: z.boolean().default(true),
       /** produtos cuja recuperação usa áudio no 3º lembrete (nenhum marcado = o 3º segue em texto) */
       product_ids: z.array(z.string().uuid()).max(200).default([]),
+      /** mensagem que vai logo depois do áudio ({pix} = aviso do copia e cola, só quando o Pix ainda vale) */
+      linkText: z.string().trim().min(2).max(1000).default(RECOVERY_LINK_TEXT),
     })
     .prefault({}),
   upsell: z
@@ -63,7 +70,7 @@ export const waAudioSchema = z.object({
         .trim()
         .min(2)
         .max(1000)
-        .default('{nome}, aqui está o link para entrar no {produto}:\n{link}\n\nEssa condição vale até {validade}.\n\nSe não quiser mais mensagens, responda SAIR.'),
+        .default(UPSELL_LINK_TEXT),
     })
     .prefault({}),
 });
@@ -75,6 +82,7 @@ export async function getWaAudioConfig(): Promise<WaAudioConfig> {
   if (cache && Date.now() - cache.at < 15_000) return cache.value;
   const { data } = await supabase.from('settings').select('value').eq('key', KEY).maybeSingle();
   const value = waAudioSchema.parse((data as any)?.value ?? {});
+  if (value.upsell.linkText === OLD_UPSELL_LINK_TEXT) value.upsell.linkText = UPSELL_LINK_TEXT;
   cache = { value, at: Date.now() };
   return value;
 }
@@ -110,7 +118,7 @@ const firstName = (name: string | null | undefined) => {
   return f ? f.charAt(0).toUpperCase() + f.slice(1) : '';
 };
 /** Troca {nome}, {produto}, {link}, {validade} no texto. Sem nome: tira a vírgula/espaço que sobraria. */
-export function fillText(tpl: string, v: { nome?: string; produto?: string; link?: string; validade?: string }) {
+export function fillText(tpl: string, v: { nome?: string; produto?: string; link?: string; validade?: string; pix?: string; valor?: string }) {
   let t = tpl;
   if (!v.nome) t = t.replace(/\s*\{nome\}\s*,?/g, (m) => (m.startsWith(' ') ? ' ' : '')).replace(/^\s*,\s*/, '');
   return t
@@ -118,6 +126,8 @@ export function fillText(tpl: string, v: { nome?: string; produto?: string; link
     .replace(/\{produto\}/g, v.produto ?? 'produto')
     .replace(/\{link\}/g, v.link ?? '')
     .replace(/\{validade\}/g, v.validade ?? '')
+    .replace(/\{pix\}/g, v.pix ?? '')
+    .replace(/\{valor\}/g, v.valor ?? '')
     .replace(/ +([,.!?])/g, '$1')
     .replace(/[ \t]{2,}/g, ' ')
     .trim()
@@ -315,7 +325,7 @@ async function upsellStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Pro
 }
 
 /** Recuperação (3º lembrete): 0 = áudio, 1 = link rastreável + Pix. Áudio falhou? vai o 3º lembrete em texto. */
-async function recoveryStep(row: Row, wa: WhatsAppConfig): Promise<Next> {
+async function recoveryStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Promise<Next> {
   const { data } = await supabase.from('orders').select(WA_RECOVERY_SELECT).eq('id', row.order_id ?? '').maybeSingle();
   const o = data as any;
   if (!o) return { status: 'skipped', error: 'pedido não encontrado' };
@@ -336,7 +346,18 @@ async function recoveryStep(row: Row, wa: WhatsAppConfig): Promise<Next> {
     return { status: 'pending', step: 1, run_at: Date.now() + 10_000, audio_id: audio!.id, instance: r.instance ?? null };
   }
   const link = await createLink({ kind: 'recovery', audioId: row.audio_id, customerId: o.customer_id, orderId: o.id, target: `/pedido/${o.public_token}` });
-  const r = await sendRecoveryText(o, 3, wa, { link: link.url, instance: row.instance ?? undefined });
+  // logo depois do áudio: "segue aqui o link que a gente acabou de falar" + o Pix copia e cola numa mensagem separada
+  const pixValid = wa.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
+  const text = fillText(cfg.recovery.linkText, {
+    nome: firstName(o.customer?.name),
+    produto: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? 'seu pedido',
+    link: link.url,
+    valor: (o.total_cents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+    pix: pixValid ? '\n\n📋 O Pix copia e cola vai na próxima mensagem: toque e segure para copiar.' : '',
+  });
+  let r = await sendWhatsAppText(row.phone, text, wa, { instance: row.instance ?? undefined });
+  if (!r.ok && row.instance) r = await sendWhatsAppText(row.phone, text, wa); // o número da conversa caiu: vai por outro
+  if (r.ok && pixValid) await sendWhatsAppText(row.phone, o.pix_code, wa, { instance: r.instance }).catch(() => null);
   await logWa(o.id, 'recovery_3_link', r);
   return r.ok ? { status: 'done', link_token: link.token } : { status: 'failed', error: r.error ?? 'falhou', link_token: link.token };
 }
@@ -366,7 +387,7 @@ export async function processWaQueue(max = 10) {
         if (!cfg.enabled || !wa.enabled) next = { status: 'skipped', error: 'áudios ou WhatsApp desligados' };
         else if ((await optedOut([row.phone])).size) next = { status: 'skipped', error: 'pediu para sair' };
         else if (row.step === 0 && !inWindow(cfg)) next = { status: 'pending', step: 0, run_at: nextWindowStart(cfg) }; // fora das 8h–20h: espera
-        else next = row.kind === 'upsell' ? await upsellStep(row, cfg, wa) : await recoveryStep(row, wa);
+        else next = row.kind === 'upsell' ? await upsellStep(row, cfg, wa) : await recoveryStep(row, cfg, wa);
       } catch (e: any) {
         next = { status: 'failed', error: String(e?.message ?? e).slice(0, 300) };
       }

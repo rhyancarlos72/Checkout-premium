@@ -1526,6 +1526,8 @@ describe('marketplace multiusuário', () => {
     expect(rq.status).toBe('done');
     const linkMsg = texts().slice(before3).find((w) => w.body.text !== o.pix_code)!;
     expect(linkMsg.instance).toBe(audios()[0].instance); // mesma conversa, mesmo número
+    expect(linkMsg.body.text).toMatch(/^Joana, segue aqui o link que a gente acabou de falar 👇\n/);
+    expect(linkMsg.body.text).toMatch(/toque e segure/); // aviso do Pix copia e cola que vem logo abaixo
     const tok = linkMsg.body.text.match(/https:\/\/checkout\.loja\.com\/r\/([0-9A-Za-z]{20,})/)![1];
     expect(texts().slice(before3).some((w) => w.body.text === o.pix_code)).toBe(true); // + o Pix copia e cola
     await sendWhatsAppRecoveries();
@@ -1567,7 +1569,7 @@ describe('marketplace multiusuário', () => {
     await drain(); // passo 3: link
     expect(uq.status).toBe('done');
     const up = bt().at(-1)!.body.text as string;
-    expect(up).toMatch(/Bruno, aqui está o link para entrar no Kit Convites/);
+    expect(up).toMatch(/^Bruno, segue aqui o link que a gente acabou de falar 👇\n/); // cita o áudio que acabou de ir
     expect(up).toMatch(/vale até \d\d\/\d\d às \d\d:\d\d/);
     const utok = up.match(/\/r\/([0-9A-Za-z]{20,})/)![1];
     const ugo = await fetch(`${base}/r/${utok}`, { redirect: 'manual' });
