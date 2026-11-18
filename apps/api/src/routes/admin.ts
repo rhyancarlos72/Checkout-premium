@@ -20,7 +20,8 @@ import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
-import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, saveWhatsAppConfig, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
+import { evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
+import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, phoneVariants, saveWhatsAppConfig, sendWhatsAppAudio, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
 import { recordRefund } from '../services/ledger.js';
@@ -1349,6 +1350,85 @@ adminRouter.post('/whatsapp/test', async (req, res) => {
   const r = await sendWhatsAppText(p, msg);
   await supabase.from('integration_logs').insert({ integration: 'whatsapp', event: `test_${kind}`, ok: r.ok, message: (r.ok ? `teste enviado (${r.instance})` : `${r.error ?? ''}${r.hint ? ` → ${r.hint}` : ''}`).slice(0, 500) });
   res.json({ ok: r.ok, message: r.ok ? `Mensagem de teste enviada pela instância ${r.instance}` : r.error, hint: r.hint });
+});
+
+// ------------------------------------------------------------------ áudios no WhatsApp (3º lembrete + upsell)
+const audioMissing = (e: { message?: string } | null) => !!e && /wa_audios|wa_queue|wa_optouts|wa_links|schema cache|does not exist/i.test(e.message ?? '');
+const AUDIO_SQL_MSG = 'Rode no Supabase o SQL dos áudios (supabase/migrations/20261119000000_wa_audio.sql) e recarregue.';
+
+adminRouter.get('/whatsapp/audio', async (_req, res) => {
+  const [config, report, queue, optouts, checkouts] = await Promise.all([
+    getWaAudioConfig(),
+    waAudioReport(),
+    supabase.from('wa_queue').select('id, kind, step, status, phone, run_at, error, audio_id, created_at, updated_at').order('created_at', { ascending: false }).limit(30),
+    supabase.from('wa_optouts').select('phone, word, created_at').order('created_at', { ascending: false }).limit(50),
+    supabase.from('checkouts').select('slug, name, active').order('created_at', { ascending: false }).limit(200),
+  ]);
+  res.set('Cache-Control', 'no-store').json({
+    ready: report.ready && !queue.error,
+    sql_hint: report.ready ? null : AUDIO_SQL_MSG,
+    config,
+    webhook_url: evolutionWebhookUrl().replace(/[0-9a-f]{32}$/, '•••'),
+    audios: report.audios,
+    queue: queue.data ?? [],
+    optouts: optouts.data ?? [],
+    checkouts: (checkouts.data ?? []).filter((c: any) => c.active !== false).map((c: any) => ({ slug: c.slug, name: c.name })),
+  });
+});
+adminRouter.put('/whatsapp/audio/config', async (req, res) => {
+  const value = waAudioSchema.parse(req.body ?? {});
+  if (value.windowEnd <= value.windowStart) throw new HttpError(400, 'O horário final precisa ser depois do inicial');
+  await saveWaAudioConfig(value);
+  res.json(value);
+});
+const audioFileSchema = z.object({
+  kind: z.enum(['recovery', 'upsell']),
+  name: z.string().trim().min(2, 'Dê um nome ao áudio').max(80),
+  file_url: z.string().trim().url().max(600).refine((u) => u.startsWith('https://'), 'O arquivo precisa estar num endereço https'),
+});
+adminRouter.post('/whatsapp/audio/files', async (req, res) => {
+  const body = audioFileSchema.parse(req.body);
+  const { data, error } = await supabase.from('wa_audios').insert({ ...body, active: true }).select('*').single();
+  if (error) throw new HttpError(audioMissing(error) ? 409 : 500, audioMissing(error) ? AUDIO_SQL_MSG : error.message);
+  res.status(201).json(data);
+});
+adminRouter.put('/whatsapp/audio/files/:id', async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const body = z.object({ name: z.string().trim().min(2).max(80).optional(), active: z.boolean().optional() }).parse(req.body ?? {});
+  const { data, error } = await supabase.from('wa_audios').update(body).eq('id', id).select('*').maybeSingle();
+  if (error) throw new HttpError(500, error.message);
+  if (!data) throw new HttpError(404, 'Áudio não encontrado');
+  res.json(data);
+});
+adminRouter.delete('/whatsapp/audio/files/:id', async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  // envios pendentes deste áudio trocam por outro ativo na hora do envio
+  await supabase.from('wa_queue').update({ audio_id: null }).eq('audio_id', id).eq('status', 'pending');
+  const { error } = await supabase.from('wa_audios').delete().eq('id', id);
+  if (error) throw new HttpError(500, error.message);
+  res.json({ ok: true });
+});
+adminRouter.post('/whatsapp/audio/files/:id/test', async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const p = normalizePhoneBR(z.object({ phone: z.string().min(8) }).parse(req.body).phone);
+  if (!p) throw new HttpError(400, 'Telefone inválido (use DDD + número)');
+  const { data } = await supabase.from('wa_audios').select('file_url').eq('id', id).maybeSingle();
+  if (!data) throw new HttpError(404, 'Áudio não encontrado');
+  const r = await sendWhatsAppAudio(p, (data as any).file_url);
+  res.json({ ok: r.ok, message: r.ok ? `Áudio de teste enviado pela instância ${r.instance}` : r.error, hint: r.hint });
+});
+adminRouter.delete('/whatsapp/audio/optouts/:phone', async (req, res) => {
+  const p = normalizePhoneBR(z.string().regex(/^\d{10,13}$/).parse(req.params.phone));
+  if (!p) throw new HttpError(400, 'Telefone inválido');
+  await supabase.from('wa_optouts').delete().in('phone', phoneVariants(p));
+  res.json({ ok: true });
+});
+// liga na instância o aviso de mensagens recebidas (para "SAIR" descadastrar)
+adminRouter.post('/whatsapp/instances/:name/optout-webhook', async (req, res) => {
+  const name = z.string().regex(/^[A-Za-z0-9_-]{2,40}$/).parse(req.params.name);
+  const force = z.object({ force: z.boolean().optional() }).parse(req.body ?? {}).force ?? false;
+  const r = await registerOptOutWebhook(name, force);
+  res.json(r); // ok: false + current = já manda para outro sistema (a tela pergunta antes de trocar)
 });
 
 adminRouter.get('/whatsapp/preview', async (_req, res) => {

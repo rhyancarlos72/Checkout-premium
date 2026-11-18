@@ -149,6 +149,9 @@ export async function publicOrder(token: string) {
     customer: o.customer,
     checkout: o.checkout ? { slug: o.checkout.slug, name: o.checkout.name, theme: o.checkout.theme, metaPixelId: o.checkout.tracking?.metaPixelId ?? null } : null,
     purchase_event_id: o.tracking?.purchase_event_id ?? null,
+    // venda vinda do áudio no WhatsApp (vai junto no Purchase do Pixel)
+    content_category: o.tracking?.content_category ?? null,
+    audio_id: o.tracking?.wa_audio_id ?? null,
     delivery: o.status === 'paid' ? await deliveryItems(o.id) : [],
     // quem recebe o pagamento (dá segurança a quem vai pagar)
     store: await runAsOrg(o.org_id ?? null, () => getSettings()).then((st) => ({ name: st.store.pixReceiver || (st.store.name && st.store.name !== 'Minha Loja' ? st.store.name : null), document: st.store.document || null, supportEmail: st.store.supportEmail || null })).catch(() => null),

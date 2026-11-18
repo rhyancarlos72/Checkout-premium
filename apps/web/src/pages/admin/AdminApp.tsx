@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Boxes, Building2, CreditCard, Repeat, GraduationCap, Wallet, Eye, EyeOff, LayoutDashboard, LogOut, Menu, Moon, PlugZap, RefreshCw, Settings, ShoppingCart, Sun, Ticket, Users, X, Zap } from 'lucide-react';
+import { Boxes, Building2, CreditCard, Repeat, GraduationCap, Wallet, Eye, EyeOff, LayoutDashboard, LogOut, Menu, Mic, Moon, PlugZap, RefreshCw, Settings, ShoppingCart, Sun, Ticket, Users, X, Zap } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { cn, PageLoader } from '@/components/ui';
@@ -25,6 +25,7 @@ import OrdersPage from './OrdersPage';
 import ProductsPage from './ProductsPage';
 import SettingsPage from './SettingsPage';
 import SubscriptionsPage from './SubscriptionsPage';
+import AudiosPage from './AudiosPage';
 
 const nav = [
   { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
@@ -34,6 +35,7 @@ const nav = [
   { to: '/admin/checkouts', label: 'Checkouts', icon: CreditCard },
   { to: '/admin/order-bumps', label: 'Order Bumps', icon: Zap },
   { to: '/admin/assinaturas', label: 'Assinaturas', icon: Repeat, superOnly: true },
+  { to: '/admin/audios', label: 'Áudios WhatsApp', icon: Mic, superOnly: true },
   { to: '/admin/cupons', label: 'Cupons', icon: Ticket },
   { to: '/admin/area-de-membros', label: 'Área de membros', icon: GraduationCap },
   { to: '/admin/financeiro', label: 'Financeiro', icon: Wallet },
@@ -245,6 +247,7 @@ function AuthedShell({ email, name }: { email: string; name: string }) {
             <Route path="clientes" element={<CustomersPage />} />
             <Route path="order-bumps" element={<BumpsPage />} />
             <Route path="assinaturas" element={<SuperOnly><SubscriptionsPage /></SuperOnly>} />
+            <Route path="audios" element={<SuperOnly><AudiosPage /></SuperOnly>} />
             <Route path="cupons" element={<CouponsPage />} />
             <Route path="area-de-membros" element={<MembersPage />} />
             <Route path="financeiro" element={<FinancePage />} />

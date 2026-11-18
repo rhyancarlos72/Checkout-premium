@@ -92,6 +92,9 @@ export function buildPayload(o: OrderForTracking, event: PayTrackingEvent) {
     // padrão de e-commerce da Meta (Purchase/InitiateCheckout)
     content_ids: codes,
     content_type: 'product',
+    // venda vinda do áudio no WhatsApp: categoria (whatsapp_audio_upsell / _recuperacao) e qual áudio
+    content_category: t.content_category ?? null,
+    audio_id: t.wa_audio_id ?? null,
     num_items: o.items.length,
     contents: o.items.map((i) => ({ id: code(i) || i.product_id || i.bump_id || '', quantity: 1, item_price: Number((i.price_cents / 100).toFixed(2)) })),
     event_time: Math.floor(Date.now() / 1000),

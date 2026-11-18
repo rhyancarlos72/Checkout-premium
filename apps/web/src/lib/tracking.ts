@@ -1,5 +1,5 @@
 
-const KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck', 'xcod', 'fbclid', 'gclid', 'ttclid', 'external_id', 'pt_xid'];
+const KEYS = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'utm_id', 'src', 'sck', 'xcod', 'fbclid', 'gclid', 'ttclid', 'external_id', 'pt_xid', 'wa'];
 
 function safeStorage() {
   try {

@@ -18,6 +18,8 @@ const waSent: { instance: string; body: any }[] = [];
 let evoDown = false; // simula a Evolution fora do ar
 const evoState: Record<string, string> = {}; // estado do WhatsApp por instância (padrão: conectado)
 const evoCalls: string[] = [];
+const waAudioSent: { instance: string; body: any }[] = []; // áudios enviados (mensagem de voz)
+const evoHooks: Record<string, any> = {}; // webhook configurado em cada instância
 let ptStatus = 200; // simula a PayTracking recusando (ex.: 403 por alguns minutos)
 // Efí API de Cobranças simulada (cartão)
 const efiCharges = new Map<string, { status: string; body: any; total: number }>();
@@ -54,6 +56,13 @@ const fake = http.createServer((req, res) => {
       if ((evoState[name] ?? 'open') === 'open') return json(200, { instance: { state: 'open' } });
       return json(200, { base64: 'data:image/png;base64,QRNOVO', pairingCode: u.searchParams.get('number') ? 'WZYX1234' : null, count: 1 });
     }
+    if (req.url!.startsWith('/evo/message/sendWhatsAppAudio/')) {
+      if (evoDown) return json(502, { error: 'bad gateway' });
+      waAudioSent.push({ instance: decodeURIComponent(req.url!.split('/').pop()!), body });
+      return json(201, { key: { id: 'a' } });
+    }
+    if (req.url!.startsWith('/evo/webhook/find/')) return json(200, evoHooks[decodeURIComponent(req.url!.split('/').pop()!)] ?? null);
+    if (req.url!.startsWith('/evo/webhook/set/') && req.method === 'POST') return (evoHooks[decodeURIComponent(req.url!.split('/').pop()!)] = body.webhook), json(201, body.webhook);
     if (req.url!.startsWith('/evo/message/sendText/')) {
       if (evoDown) return json(502, { error: 'bad gateway' });
       waSent.push({ instance: decodeURIComponent(req.url!.split('/').pop()!), body });
@@ -1456,4 +1465,166 @@ describe('marketplace multiusuário', () => {
       clearCheckoutCache();
     }
   });
+  it('áudios no WhatsApp: 3º lembrete por áudio + link rastreável, upsell texto → áudio → link (2 h depois, 1 a cada 7 dias), SAIR descadastra e relatório por áudio', async () => {
+    const wa = await import('./services/waAudio.js');
+    const { sendWhatsAppRecoveries } = await import('./services/whatsapp.js');
+    const now = new Date().toISOString();
+    const REC = '0c000000-0000-4000-8000-0000000000a1';
+    const UPS = '0c000000-0000-4000-8000-0000000000a2';
+    const CLUBE = '00000000-0000-4000-8000-000000000003'; // Kit Convites faz o papel do produto oferecido
+    db.wa_audios = [
+      { id: REC, kind: 'recovery', name: 'Lembrete final', file_url: 'https://fake.supabase.co/storage/v1/object/public/media/wa-audio/rec.mp3', active: true, created_at: now },
+      { id: UPS, kind: 'upsell', name: 'Convite Clube', file_url: 'https://fake.supabase.co/storage/v1/object/public/media/wa-audio/ups.mp3', active: true, created_at: now },
+    ];
+    db.checkouts.push({ id: '0c000000-0000-4000-8000-0000000000c9', product_id: CLUBE, org_id: OWNER_ORG, slug: '8931499', name: 'Clube', price_cents: 990, active: true, provider: 'woovi', pix_expires_minutes: 30, theme: {}, fields: { phone: true, document: false }, tracking: {}, created_at: now });
+    // painel: só o dono da plataforma configura; janela 0h–24h para o teste rodar a qualquer hora
+    expect((await as('b', 'PUT', '/api/admin/whatsapp/audio/config', {})).status).toBe(403);
+    const put = await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { windowStart: 0, windowEnd: 24, upsell: { enabled: true, checkout_slug: '8931499' } });
+    expect(put.status).toBe(200);
+    expect(put.body.upsell).toMatchObject({ delayMinutes: 120, validityHours: 48, opener: 'Oi {nome}, tudo bem? Posso falar com você um segundo?' });
+    const buy = (name: string, email: string, phone: string, slug = '8931442', tracking: Record<string, string> = {}) =>
+      fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `187.66.${Math.floor(Math.random() * 200)}.${Math.floor(Math.random() * 200)}` }, body: JSON.stringify({ checkout_slug: slug, customer: { name, email, phone }, bump_ids: [], tracking }) }).then((x) => x.json());
+    const pay = async (orderId: string) => {
+      charges.get(orderId)!.status = 'COMPLETED';
+      await api('POST', '/api/webhooks/woovi', { event: 'OPENPIX:CHARGE_COMPLETED', charge: { correlationID: orderId } });
+      await settle();
+      await settle();
+    };
+    const drain = async () => {
+      for (const q of db.wa_queue ?? []) if (q.status === 'pending') q.run_at = new Date(Date.now() - 1000).toISOString();
+      await wa.processWaQueue();
+    };
+
+    // ---------- recuperação: 1º e 2º em texto (como antes); o 3º vira ÁUDIO e depois o link + Pix
+    const r = await buy('Joana Audio', 'joana.audio@x.com', '11943215555');
+    const o = db.orders.find((x) => x.public_token === r.token)!;
+    o.created_at = new Date(Date.now() - 13 * 3600_000).toISOString();
+    const texts = () => waSent.filter((w) => String(w.body?.number ?? '').includes('43215555'));
+    const audios = () => waAudioSent.filter((w) => String(w.body?.number ?? '').includes('43215555'));
+    const ago = (min: number) => db.events.filter((e) => e.type === 'wa_recovery' && e.order_id === o.id).forEach((e) => (e.created_at = new Date(Date.now() - min * 60_000).toISOString()));
+    await sendWhatsAppRecoveries();
+    ago(200);
+    await sendWhatsAppRecoveries();
+    expect(texts().filter((w) => w.body.text !== o.pix_code)).toHaveLength(2);
+    expect(audios()).toHaveLength(0);
+    ago(600);
+    const before3 = texts().length;
+    await sendWhatsAppRecoveries();
+    expect(texts()).toHaveLength(before3); // o 3º não vai em texto: entrou na fila de áudio
+    const rq = db.wa_queue.find((q) => q.order_id === o.id && q.kind === 'recovery')!;
+    expect(rq).toMatchObject({ status: 'pending', step: 0 });
+    await wa.processWaQueue();
+    expect(audios()).toHaveLength(1);
+    expect(audios()[0].body.audio).toContain('rec.mp3');
+    expect(rq).toMatchObject({ status: 'pending', step: 1, audio_id: REC });
+    await drain();
+    expect(rq.status).toBe('done');
+    const linkMsg = texts().slice(before3).find((w) => w.body.text !== o.pix_code)!;
+    expect(linkMsg.instance).toBe(audios()[0].instance); // mesma conversa, mesmo número
+    const tok = linkMsg.body.text.match(/https:\/\/checkout\.loja\.com\/r\/([0-9A-Za-z]{20,})/)![1];
+    expect(texts().slice(before3).some((w) => w.body.text === o.pix_code)).toBe(true); // + o Pix copia e cola
+    await sendWhatsAppRecoveries();
+    expect(audios()).toHaveLength(1); // nunca um 4º
+    // clique: conta, leva ao Pix com as UTMs whatsapp/audio/recuperacao/{audio_id} e marca o pedido
+    const go = await fetch(`${base}/r/${tok}`, { redirect: 'manual' });
+    expect(go.status).toBe(302);
+    expect(go.headers.get('location')).toBe(`/pedido/${r.token}?utm_source=whatsapp&utm_medium=audio&utm_campaign=recuperacao&utm_content=${REC}`);
+    expect(db.wa_links.find((l) => l.token === tok)!.clicks).toBe(1);
+    expect(o).toMatchObject({ audio_id: REC, wa_link_token: tok });
+    expect((await fetch(`${base}/r/AAAAAAAAAAAAAAAAAAAAAA`, { redirect: 'manual' })).headers.get('location')).toBe('/'); // inventado
+    await pay(o.id);
+    const ap = ptCalls.filter((c) => c.event === 'sale.approved' && c.body.transaction_id === o.id);
+    expect(ap[0].body).toMatchObject({ content_category: 'whatsapp_audio_recuperacao', audio_id: REC });
+    const pub = await api('GET', `/api/public/orders/${r.token}`);
+    expect(pub.body).toMatchObject({ content_category: 'whatsapp_audio_recuperacao', audio_id: REC }); // Purchase do Pixel também
+
+    // ---------- upsell: comprou → 2 h depois, texto curto → áudio → link com a validade
+    const b = await buy('Bruno Clube', 'bruno.clube@x.com', '11955556666');
+    const bo = db.orders.find((x) => x.public_token === b.token)!;
+    await pay(bo.id);
+    const uq = db.wa_queue.find((q) => q.order_id === bo.id && q.kind === 'upsell')!;
+    expect(uq.status).toBe('pending');
+    const wait = new Date(uq.run_at).getTime() - Date.now();
+    expect(wait).toBeGreaterThan(119 * 60_000); // ~2 h depois da compra
+    await wa.processWaQueue();
+    const bt = () => waSent.filter((w) => String(w.body?.number ?? '').includes('55556666'));
+    const ba = () => waAudioSent.filter((w) => String(w.body?.number ?? '').includes('55556666'));
+    const deliveryMsgs = bt().length; // a entrega da compra (já existia)
+    await drain(); // passo 1: texto
+    expect(bt()).toHaveLength(deliveryMsgs + 1);
+    expect(bt().at(-1)!.body.text).toBe('Oi Bruno, tudo bem? Posso falar com você um segundo?');
+    expect(ba()).toHaveLength(0);
+    expect(new Date(uq.run_at).getTime() - Date.now()).toBeGreaterThan(40_000); // o áudio sai ~45 s depois
+    await drain(); // passo 2: áudio, do mesmo número
+    expect(ba()).toHaveLength(1);
+    expect(ba()[0].body.audio).toContain('ups.mp3');
+    expect(ba()[0].instance).toBe(bt().at(-1)!.instance);
+    await drain(); // passo 3: link
+    expect(uq.status).toBe('done');
+    const up = bt().at(-1)!.body.text as string;
+    expect(up).toMatch(/Bruno, aqui está o link para entrar no Kit Convites/);
+    expect(up).toMatch(/vale até \d\d\/\d\d às \d\d:\d\d/);
+    const utok = up.match(/\/r\/([0-9A-Za-z]{20,})/)![1];
+    const ugo = await fetch(`${base}/r/${utok}`, { redirect: 'manual' });
+    const loc = new URL(ugo.headers.get('location')!, 'https://x');
+    expect(loc.pathname).toBe('/checkout');
+    expect(Object.fromEntries(loc.searchParams)).toMatchObject({ produto_id: '8931499', utm_source: 'whatsapp', utm_medium: 'audio', utm_campaign: 'upsell', utm_content: UPS, wa: utok });
+    // compra pelo link: o pedido guarda de qual áudio veio
+    const c = await buy('Bruno Clube', 'bruno.clube@x.com', '11955556666', '8931499', Object.fromEntries(loc.searchParams));
+    const co = db.orders.find((x) => x.public_token === c.token)!;
+    expect(co).toMatchObject({ audio_id: UPS, wa_link_token: utok });
+    expect(co.tracking).toMatchObject({ content_category: 'whatsapp_audio_upsell', wa_audio_id: UPS });
+    await pay(co.id);
+    // "wa" sem utm de áudio (link antigo guardado no navegador) não marca a venda
+    const d = await buy('Dani Outro', 'dani.outro@x.com', '11966667777', '8931499', { utm_source: 'facebook', wa: utok });
+    expect(db.orders.find((x) => x.public_token === d.token)!.tracking.wa_audio_id).toBeUndefined();
+
+    // no máximo 1 upsell a cada 7 dias; quem já comprou o produto oferecido não recebe
+    const b2 = await buy('Bruno Clube', 'bruno.clube@x.com', '11955556666');
+    await pay(db.orders.find((x) => x.public_token === b2.token)!.id);
+    expect(db.wa_queue.filter((q) => q.kind === 'upsell' && q.phone === '5511955556666')).toHaveLength(1);
+    expect(await wa.upsellBlocked({ customerId: bo.customer_id, phone: '5511955556666', productId: CLUBE })).toBe('já comprou o produto');
+    expect(db.wa_queue.some((q) => q.kind === 'upsell' && q.order_id === o.id)).toBe(true); // a Joana pagou pela recuperação: também recebe o convite
+    const dani = db.orders.find((x) => x.public_token === d.token)!;
+    expect(await wa.upsellBlocked({ customerId: dani.customer_id, phone: '5511966667777', productId: CLUBE })).toBeNull(); // nunca recebeu e não comprou
+
+    // ---------- SAIR pelo WhatsApp: descadastra (só com o endereço assinado) e cancela o que estava na fila
+    const e = await buy('Elisa Sair', 'elisa.sair@x.com', '11977778888');
+    await pay(db.orders.find((x) => x.public_token === e.token)!.id);
+    const eq = db.wa_queue.find((q) => q.phone === '5511977778888')!;
+    expect(eq.status).toBe('pending');
+    const msg = { event: 'messages.upsert', instance: 'checkout1', data: { key: { remoteJid: '5511977778888@s.whatsapp.net', fromMe: false }, message: { conversation: 'Sair.' } } };
+    expect((await api('POST', '/api/webhooks/evolution/0123456789abcdef0123456789abcdef', msg)).status).toBe(401);
+    expect(await wa.handleEvolutionEvent({ ...msg, data: { ...msg.data, message: { conversation: 'quero saber mais' } } })).toBe(0);
+    const hook = await as('owner', 'POST', '/api/admin/whatsapp/instances/checkout1/optout-webhook', {});
+    expect(hook.body).toMatchObject({ ok: true });
+    expect(evoHooks.checkout1).toMatchObject({ enabled: true, events: ['MESSAGES_UPSERT'] });
+    const sig = String(evoHooks.checkout1.url).split('/').pop();
+    expect((await api('POST', `/api/webhooks/evolution/${sig}`, msg)).status).toBe(200);
+    await settle();
+    expect(db.wa_optouts.map((x) => x.phone)).toEqual(expect.arrayContaining(['5511977778888', '551177778888']));
+    expect(eq).toMatchObject({ status: 'canceled' });
+    // instância que já manda as mensagens para outro sistema (ex.: um robô): não troca sem confirmar
+    evoHooks.checkout2 = { enabled: true, url: 'https://meu-robo.com/hook' };
+    const keep = await as('owner', 'POST', '/api/admin/whatsapp/instances/checkout2/optout-webhook', {});
+    expect(keep.body).toMatchObject({ ok: false, current: 'https://meu-robo.com/hook' });
+    expect(evoHooks.checkout2.url).toBe('https://meu-robo.com/hook');
+
+    // ---------- fora do horário (8h–20h de Brasília): espera a próxima abertura
+    const cfg = wa.waAudioSchema.parse({});
+    expect(wa.inWindow(cfg, Date.parse('2026-11-20T23:30:00Z'))).toBe(false); // 20h30 em Brasília
+    expect(wa.inWindow(cfg, Date.parse('2026-11-20T11:05:00Z'))).toBe(true); // 8h05
+    const next = wa.nextWindowStart(cfg, Date.parse('2026-11-20T23:30:00Z'));
+    expect(next).toBeGreaterThanOrEqual(Date.parse('2026-11-21T11:00:00Z'));
+    expect(next).toBeLessThan(Date.parse('2026-11-21T11:15:00Z'));
+
+    // ---------- relatório por áudio (painel)
+    const rep = await as('owner', 'GET', '/api/admin/whatsapp/audio');
+    expect(rep.status).toBe(200);
+    expect(rep.body.webhook_url).not.toMatch(/[0-9a-f]{32}/); // a assinatura não aparece no painel
+    const ru = rep.body.audios.find((x: any) => x.id === UPS);
+    expect(ru).toMatchObject({ sent: 2, clicks: 1, orders: 1, paid: 1, revenue_cents: 990, conversion: 50 }); // Joana e Bruno receberam; o Bruno comprou
+    expect(rep.body.audios.find((x: any) => x.id === REC)).toMatchObject({ sent: 1, clicks: 1, paid: 1 });
+    expect(rep.body.optouts.length).toBeGreaterThan(0);
+  }, 30_000);
 });

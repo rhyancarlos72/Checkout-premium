@@ -33,6 +33,8 @@ interface PublicOrder {
   external_id?: string | null;
   checkout: { slug: string; name: string; theme: Theme; metaPixelId: string | null } | null;
   purchase_event_id: string | null;
+  content_category?: string | null;
+  audio_id?: string | null;
   delivery: { name: string; url: string | null; note: string | null }[];
   store?: { name: string | null; document: string | null; supportEmail: string | null } | null;
 }
@@ -263,7 +265,7 @@ export default function PaymentPage() {
     } catch {
       /* ignore */
     }
-    pixel('Purchase', { value: order.total_cents / 100, currency: 'BRL', content_type: 'product', content_ids: order.content_ids ?? [], num_items: order.items.length, contents: order.items.map((i, idx) => ({ id: order.content_ids?.[idx] ?? i.name, quantity: 1, item_price: i.price_cents / 100 })) }, order.purchase_event_id ?? undefined);
+    pixel('Purchase', { value: order.total_cents / 100, currency: 'BRL', content_type: 'product', content_ids: order.content_ids ?? [], num_items: order.items.length, contents: order.items.map((i, idx) => ({ id: order.content_ids?.[idx] ?? i.name, quantity: 1, item_price: i.price_cents / 100 })), ...(order.content_category ? { content_category: order.content_category, audio_id: order.audio_id ?? undefined } : {}) }, order.purchase_event_id ?? undefined);
   }, [order?.status, order?.total_cents, order?.purchase_event_id, token]);
 
   async function copy() {

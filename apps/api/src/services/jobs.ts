@@ -4,6 +4,7 @@ import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
 import { fulfill, notifyPixExpired, retryFailedTracking, syncOrderWithProvider } from './orders.js';
 import { runSubscriptionJobs } from './subscriptions.js';
+import { processWaQueue } from './waAudio.js';
 import { getSettings } from './settings.js';
 import { orgOfOrder, runAsOrg } from '../lib/tenant.js';
 import { refreshPendingInvoices } from './invoices.js';
@@ -174,6 +175,8 @@ export function startJobs() {
   setTimeout(() => void restoreExpiredToPending().catch(() => {}), 5_000).unref();
   if (!env.JOBS_ENABLED || env.NODE_ENV === 'test') return;
   setInterval(runJobs, 2 * 60 * 1000).unref();
+  // fila dos áudios do WhatsApp: a cada 20 s (o áudio sai ~45 s depois do "posso falar com você?")
+  setInterval(() => void processWaQueue(), 20_000).unref();
   setTimeout(runJobs, 15_000).unref();
   logger.info('Jobs de conciliação/recuperação ativos (a cada 2 min)');
 }

@@ -14,6 +14,7 @@ import { pixQrDataUrl } from '../lib/qr.js';
 import { emitInvoice } from './invoices.js';
 import { sendDeliveryEmail, type DeliveryItem } from './email.js';
 import { sendWhatsAppApproved } from './whatsapp.js';
+import { resolveWaTracking, scheduleUpsell } from './waAudio.js';
 import { checkCoupon, computeTotals, type CouponRow, type PriceLine } from './pricing.js';
 import { sendPayTracking, type OrderForTracking, type PayTrackingEvent } from './paytracking.js';
 import { addMonths, bumpIsRecurring, bumpMonthlyCents, createSubscriptionForOrder, issueAutoCharge, monthlyCentsOf, onOrderPaid, onRenewalPaid, recurringLines, subscriptionsAvailable } from './subscriptions.js';
@@ -23,6 +24,7 @@ const trackingKeys = [
   'fbclid', 'fbp', 'fbc', 'gclid', 'ttclid', 'external_id', 'page_url', 'referrer',
   'event_id', 'initiate_checkout_event_id', 'purchase_event_id', 'session_id',
   'pt_xid', 'xcod', 'visitor_id', 'fbclid_at', 'add_payment_info_event_id',
+  'wa', // link do áudio no WhatsApp (/r/TOKEN): de qual áudio veio a venda
 ] as const;
 
 export const createOrderSchema = z.object({
@@ -236,7 +238,8 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
   if (reuse) return reuse;
 
   // geo vem só do servidor (cabeçalhos da CDN), nunca do navegador
-  const tracking = { ...sanitizeTracking(input.tracking), ...(meta.geo ?? {}) };
+  const tracking: Record<string, string> = { ...sanitizeTracking(input.tracking), ...(meta.geo ?? {}) };
+  const waLink = await resolveWaTracking(tracking).catch(() => null); // veio do link do áudio? grava de qual
 
   const order = must(
     await supabase
@@ -259,6 +262,8 @@ async function createOrderImpl(input: CreateOrderInput, meta: { ip: string | nul
       .select('id, number, public_token, created_at')
       .single(),
   ) as { id: string; number: number; public_token: string; created_at: string };
+
+  if (waLink) void supabase.from('orders').update({ audio_id: waLink.audio_id, wa_link_token: waLink.token }).eq('id', order.id).then(() => {}); // sem a coluna (SQL não rodado): fica só no tracking
 
   // itens gravados em paralelo com a geração do Pix (não precisa esperar um pelo outro)
   const itemsSaved = supabase.from('order_items').insert(q.lines.map(({ monthly_cents: _m, recurring, ...l }) => ({ ...l, ...(recurring ? { recurring: true } : {}), order_id: order.id })));
@@ -594,6 +599,7 @@ async function syncOrderImpl(orderId: string): Promise<string> {
         renewal ? null : dispatchTracking(orderId, 'sale.approved'),
         emitInvoice(orderId), // uma nota por venda (produto + order bumps)
         renewal ? null : deliveryItems(orderId).then((items) => sendWhatsAppApproved(orderId, items.map((it, i) => ({ ...it, kind: i === 0 ? 'main' : 'bump' })))),
+        renewal ? null : scheduleUpsell(orderId), // upsell por áudio ~2 h depois (só quem não assina e não comprou)
       ]);
       return 'paid';
     }

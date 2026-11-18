@@ -307,9 +307,9 @@ function explainSendError(http: number, body: any, raw: string): { error: string
   return { error: `HTTP ${http}${msg ? ` - ${typeof msg === 'string' ? msg.slice(0, 200) : JSON.stringify(msg).slice(0, 200)}` : ''}` };
 }
 
-async function post(cfg: WhatsAppConfig, name: string, token: string, payload: Record<string, unknown>) {
+async function post(cfg: WhatsAppConfig, name: string, token: string, payload: Record<string, unknown>, kind: 'sendText' | 'sendWhatsAppAudio' = 'sendText') {
   try {
-    const res = await fetchWithTimeout(`${await base(cfg)}/message/sendText/${encodeURIComponent(name)}`, {
+    const res = await fetchWithTimeout(`${await base(cfg)}/message/${kind}/${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8', Accept: 'application/json', apikey: token, Authorization: `Bearer ${token}` },
       body: JSON.stringify(payload),
@@ -404,6 +404,78 @@ export async function sendWhatsAppText(phoneRaw: string, message: string, cfgIn?
     lastHint = r.hint ?? lastHint;
   }
   return { ok: false, error: reasons.length ? reasons.join(' | ') : 'Nenhuma instância disponível', hint: lastHint };
+}
+
+/**
+ * Envia um áudio como mensagem de voz (aparece "gravando áudio…" antes). A Evolution baixa o arquivo pela URL.
+ * opts.instance: continua a conversa pelo MESMO número da mensagem anterior.
+ */
+export async function sendWhatsAppAudio(phoneRaw: string, audioUrl: string, cfgIn?: WhatsAppConfig, opts: { instance?: string } = {}): Promise<SendResult> {
+  const cfg = cfgIn ?? (await getWhatsAppConfig());
+  if (!cfg.apiUrl) return { ok: false, error: 'URL da Evolution API não configurada' };
+  const instances = cfg.instances.filter((i) => i.active && i.name && tokenFor(cfg, i) && (!opts.instance || i.name === opts.instance)).map((i) => ({ ...i, token: tokenFor(cfg, i) }));
+  if (!instances.length) return { ok: false, error: 'Nenhuma instância ativa com token' };
+  const phone = normalizePhoneBR(phoneRaw);
+  if (!phone) return { ok: false, error: `Telefone inválido: ${phoneRaw || '(vazio)'}` };
+  await seedLastUsed();
+  const reasons: string[] = [];
+  let lastHint: string | undefined;
+  for (const inst of rotationOrder(instances)) {
+    const chk = await checkInstance(cfg, inst);
+    if (!chk.ok) {
+      reasons.push(`${inst.name}: ${chk.message}`);
+      lastHint = chk.hint ?? lastHint;
+      continue;
+    }
+    markUsed(inst.name);
+    let r: { ok: boolean; http: number; error: string; hint?: string } = { ok: false, http: 0, error: 'não enviado' };
+    for (const num of phoneVariants(phone)) {
+      // Evolution v2: { number, audio } — v1: { number, audioMessage: { audio } }
+      r = await post(cfg, inst.name, inst.token, { number: num, audio: audioUrl, delay: 2500, encoding: true }, 'sendWhatsAppAudio');
+      if (!r.ok && r.http !== 401 && r.http !== 403 && r.http !== 0 && !evolutionV2.has(inst.name) && !isExistsFalse(r)) {
+        const v1 = await post(cfg, inst.name, inst.token, { number: num, options: { delay: 2500, presence: 'recording', encoding: true }, audioMessage: { audio: audioUrl } }, 'sendWhatsAppAudio');
+        if (v1.ok) r = v1;
+        else if (/requires property\W+audio/i.test(v1.error)) evolutionV2.add(inst.name);
+      }
+      if (r.ok || !isExistsFalse(r)) break; // outra variante do número só se o WhatsApp disse que este não existe
+    }
+    if (r.ok) return { ok: true, instance: inst.name };
+    reasons.push(`${inst.name}: ${r.error}`);
+    lastHint = r.hint ?? lastHint;
+  }
+  return { ok: false, error: reasons.join(' | ') || 'Nenhuma instância disponível', hint: lastHint };
+}
+
+// ------------------------------------------------------------------ descadastro (SAIR / PARAR / CANCELAR)
+const OPTOUT_WORDS = new Set(['SAIR', 'PARAR', 'CANCELAR', 'PARE', 'STOP']);
+/** A mensagem recebida é um pedido para sair? (aceita "sair", "Sair.", "PARAR!", "cancelar 🙏") */
+export function optOutWord(text: string): string | null {
+  const w = String(text ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z ]/g, ' ').trim().split(/\s+/);
+  return w.length <= 3 && OPTOUT_WORDS.has(w[0]) ? w[0] : null;
+}
+/** Telefones (normalizados) que pediram para sair, dentre os informados. Sem a tabela (SQL não rodado): ninguém. */
+export async function optedOut(phones: string[]): Promise<Set<string>> {
+  const all = [...new Set(phones.map(normalizePhoneBR).filter(Boolean).flatMap(phoneVariants))];
+  if (!all.length) return new Set();
+  const { data, error } = await supabase.from('wa_optouts').select('phone').in('phone', all);
+  if (error) return new Set();
+  const out = new Set<string>();
+  const hit = new Set((data ?? []).map((r: any) => r.phone));
+  for (const p of phones) {
+    const n = normalizePhoneBR(p);
+    if (n && phoneVariants(n).some((v) => hit.has(v))) out.add(n);
+  }
+  return out;
+}
+/** Registra o descadastro (com e sem o 9º dígito) e cancela os envios de áudio pendentes deste número. */
+export async function registerOptOut(phoneRaw: string, word: string) {
+  const n = normalizePhoneBR(phoneRaw);
+  if (!n) return false;
+  const vs = phoneVariants(n);
+  const { error } = await supabase.from('wa_optouts').upsert(vs.map((phone) => ({ phone, word })), { onConflict: 'phone' });
+  if (error) return false;
+  await supabase.from('wa_queue').update({ status: 'canceled', error: `Pediu para sair (${word})`, updated_at: new Date().toISOString() }).in('phone', vs).eq('status', 'pending');
+  return true;
 }
 
 export interface EvolutionInstance {
@@ -743,7 +815,7 @@ export function buildRecoveryMessage(p: { phone: string; name: string; link: str
 const recentRecovery: string[] = [];
 
 // ------------------------------------------------------------------ disparos
-async function logWa(orderId: string | null, event: string, r: SendResult) {
+export async function logWa(orderId: string | null, event: string, r: SendResult) {
   await supabase.from('integration_logs').insert({
     integration: 'whatsapp',
     order_id: orderId,
@@ -799,7 +871,7 @@ export async function recoveryEmailFallback(orderId: string, customerId: string,
   }
 }
 
-const WA_RECOVERY_SELECT = 'id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, total_cents, tracking, customer:customers(name, phone), checkout:checkouts(slug), items:order_items(kind, name)';
+export const WA_RECOVERY_SELECT = 'id, number, checkout_id, status, created_at, public_token, pix_code, expires_at, customer_id, total_cents, tracking, customer:customers(name, phone), checkout:checkouts(slug), items:order_items(kind, name)';
 
 /** Minutos de espera para o lembrete `n`: o 1º conta da hora do Pix; os seguintes, do lembrete anterior (automático ou manual). */
 function recoveryGapMinutes(cfg: WhatsAppConfig, n: number) {
@@ -810,22 +882,39 @@ function recoveryGapMinutes(cfg: WhatsAppConfig, n: number) {
 }
 
 /**
+ * Texto do lembrete `attempt` (link + código Pix numa mensagem separada). Sem reservar tentativa.
+ * link: outro link no lugar do curto do pedido (ex.: o rastreável do áudio); instance: continua no mesmo número.
+ */
+export async function sendRecoveryText(o: any, attempt: number, cfg: WhatsAppConfig, opts: { link?: string; instance?: string } = {}): Promise<SendResult> {
+  const phone = normalizePhoneBR(o.customer.phone);
+  const pixValid = cfg.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
+  // link direto para o Pix pendente (se vencer, a página gera outro com um toque, sem preencher nada)
+  const link = opts.link ?? `${env.PUBLIC_URL}/r/${shortOrderCode(o.number)}`; // link curto e exclusivo da venda
+  const text = buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: Math.min(attempt, 3), pixCode: pixValid ? o.pix_code : null, product: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? null, totalCents: o.total_cents });
+  let r = await sendWhatsAppText(phone, text, cfg, { instance: opts.instance });
+  if (!r.ok && opts.instance) r = await sendWhatsAppText(phone, text, cfg); // o número da conversa caiu: vai por outro
+  // Pix copia e cola numa mensagem SÓ com o código (fácil de copiar inteiro), do mesmo número do lembrete
+  if (r.ok && pixValid && o.pix_code) await sendWhatsAppText(phone, o.pix_code, cfg, { instance: r.instance }).catch(() => null);
+  return r;
+}
+
+/**
  * Envia UM lembrete de recuperação no WhatsApp (link curto + código Pix numa mensagem separada).
  * Reserva a tentativa ANTES de enviar (nunca duplica). Automático: se o WhatsApp falhar, vai por e-mail no lugar.
  */
 async function sendOneWaRecovery(o: any, attempt: number, cfg: WhatsAppConfig, opts: { manual?: boolean; waDown?: string | null } = {}) {
   const { error } = await supabase.from('events').insert({ order_id: o.id, checkout_id: o.checkout_id, type: 'wa_recovery', data: { attempt, ...(opts.manual ? { manual: true } : {}) } });
   if (error) return { ok: false, error: 'tentativa já registrada', viaEmail: false } as SendResult & { viaEmail: boolean };
-  const phone = normalizePhoneBR(o.customer.phone);
-  const pixValid = cfg.recovery.includePix && o.status === 'pending' && o.pix_code && (!o.expires_at || new Date(o.expires_at) > new Date());
-  // link direto para o Pix pendente (se vencer, a página gera outro com um toque, sem preencher nada)
-  const link = `${env.PUBLIC_URL}/r/${shortOrderCode(o.number)}`; // link curto e exclusivo da venda
+  // 3º (último) lembrete automático: vai por ÁUDIO pela fila (8h–20h), se houver áudio de recuperação ativo
+  if (attempt === 3 && !opts.manual && !opts.waDown) {
+    const { queueRecoveryAudio } = await import('./waAudio.js');
+    if (await queueRecoveryAudio(o).catch(() => false)) {
+      await logWa(o.id, 'recovery_3', { ok: true, instance: 'áudio na fila' });
+      return { ok: true, viaEmail: false } as SendResult & { viaEmail: boolean };
+    }
+  }
   // Evolution fora do ar nesta rodada? não espera o tempo esgotar de novo: vai direto para o e-mail
-  const r: SendResult = opts.waDown
-    ? { ok: false, error: opts.waDown }
-    : await sendWhatsAppText(phone, buildRecoveryMessage({ phone, name: o.customer.name, link, attempt: Math.min(attempt, 3), pixCode: pixValid ? o.pix_code : null, product: (o.items ?? []).find((i: any) => i.kind === 'main')?.name ?? null, totalCents: o.total_cents }), cfg);
-  // Pix copia e cola numa mensagem SÓ com o código (fácil de copiar inteiro), do mesmo número do lembrete
-  if (r.ok && pixValid && o.pix_code) await sendWhatsAppText(phone, o.pix_code, cfg, { instance: r.instance }).catch(() => null);
+  const r: SendResult = opts.waDown ? { ok: false, error: opts.waDown } : await sendRecoveryText(o, attempt, cfg);
   let viaEmail = false;
   if (!r.ok && !opts.manual) viaEmail = await recoveryEmailFallback(o.id, o.customer_id, attempt); // manual já manda o e-mail junto
   await logWa(o.id, `recovery_${attempt}${opts.manual ? '_manual' : ''}`, viaEmail ? { ...r, hint: `${r.hint ? `${r.hint} ` : ''}Lembrete enviado por e-mail no lugar.` } : r);
@@ -885,6 +974,7 @@ export async function sendWhatsAppRecoveries(max = 10) {
     if (t > (lastAt.get(e.order_id) ?? 0)) lastAt.set(e.order_id, t);
   }
   const buyers = new Set((paidRes.data ?? []).map((p: any) => p.customer_id));
+  const optouts = await optedOut(orders.map((o) => o.customer.phone)); // respondeu SAIR: não recebe mais lembretes
 
   let sent = 0;
   let waDown: string | null = null;
@@ -897,6 +987,7 @@ export async function sendWhatsAppRecoveries(max = 10) {
     if ((Date.now() - from) / 60000 < recoveryGapMinutes(cfg, next)) continue;
     if (o.tracking?.upsell_of || o.tracking?.renewed_from) continue; // upsell e Pix renovado não entram nos lembretes
     if (buyers.has(o.customer_id)) continue; // já comprou depois? não incomoda
+    if (optouts.has(normalizePhoneBR(o.customer.phone))) continue;
     const r = await sendOneWaRecovery(o, next, cfg, { waDown });
     if (r.error === 'tentativa já registrada') continue;
     if (!r.ok && !waDown && isWaUnavailable(r.error)) waDown = r.error ?? 'WhatsApp indisponível';
@@ -911,7 +1002,7 @@ const qrSrc = (v: unknown) => {
   if (!s) return null;
   return s.startsWith('data:') ? s : `data:image/png;base64,${s}`;
 };
-async function evoCall(cfg: WhatsAppConfig, method: string, path: string, key: string, body?: unknown) {
+export async function evoCall(cfg: WhatsAppConfig, method: string, path: string, key: string, body?: unknown) {
   const res = await fetchWithTimeout(`${await base(cfg)}${path}`, {
     method,
     headers: { apikey: key, 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -927,7 +1018,7 @@ async function evoCall(cfg: WhatsAppConfig, method: string, path: string, key: s
   }
   return { ok: res.ok, status: res.status, json, raw };
 }
-const evoMsg = (j: any, raw: string) => {
+export const evoMsg = (j: any, raw: string) => {
   const m = j?.response?.message ?? j?.message ?? j?.error ?? raw;
   return (Array.isArray(m) ? m.join(' ') : typeof m === 'string' ? m : JSON.stringify(m ?? '')).slice(0, 200);
 };

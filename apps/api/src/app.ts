@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import compression from 'compression';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import cors from 'cors';
+import { waLinkClick } from './services/waAudio.js';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import helmet from 'helmet';
 import { pinoHttp } from 'pino-http';
@@ -118,6 +119,13 @@ export function createApp() {
   // Valida a assinatura e leva para a página do Pix/acesso do pedido; a origem fica nas UTMs.
   // limite por IP: um cliente abre o link poucas vezes; impede tentar adivinhar códigos em massa
   const shortLinkLimiter = rateLimit({ windowMs: 10 * 60_000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false, keyGenerator: (req) => ipKeyGenerator(req.ip ?? '0.0.0.0') });
+  // Link do áudio no WhatsApp: /r/TOKEN (20+ caracteres) → soma o clique e leva com as UTMs whatsapp/audio/{tipo}/{audio_id}
+  app.get(/^\/r\/([0-9A-Za-z]{20,40})$/, shortLinkLimiter, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    const to = await waLinkClick(req.path.slice(3)).catch(() => null);
+    res.redirect(302, to ?? '/');
+  });
   app.get(/^\/(r|p)\/([0-9A-Za-z]{6,16})$/, shortLinkLimiter, async (req, res) => {
     const [, kind, code] = req.path.match(/^\/(r|p)\/([0-9A-Za-z]{6,16})$/)!;
     const n = parseShortOrderCode(code);

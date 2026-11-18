@@ -5,6 +5,7 @@ import { syncCobr, syncRec } from '../services/subscriptions.js';
 import { efiConfig, wooviConfig } from '../services/gateways.js';
 import { logger, supabase } from '../lib/core.js';
 import { findOrderByCharge, syncOrderWithProvider } from '../services/orders.js';
+import { evolutionWebhookSig, handleEvolutionEvent } from '../services/waAudio.js';
 
 export const webhookRouter = Router();
 
@@ -113,6 +114,16 @@ async function efiAutoHandler(req: Request, res: any) {
     }
   }
 }
+// Evolution (WhatsApp): mensagens recebidas → "SAIR / PARAR / CANCELAR" descadastram o número.
+// O endereço leva uma assinatura (HMAC) — sem ela, ninguém de fora consegue descadastrar números.
+webhookRouter.post('/evolution/:sig', async (req: Request, res) => {
+  const given = Buffer.from(String(req.params.sig ?? ''));
+  const expected = Buffer.from(evolutionWebhookSig());
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return res.status(401).json({ error: 'unauthorized' });
+  res.json({ ok: true }); // responde logo: a Evolution não espera
+  await handleEvolutionEvent(req.body).catch((e) => logger.warn({ err: e?.message }, 'Evento da Evolution falhou'));
+});
+
 webhookRouter.post('/efi-auto', efiAutoHandler);
 webhookRouter.post('/efi-auto/rec', efiAutoHandler);
 webhookRouter.post('/efi-auto/cobr', efiAutoHandler);

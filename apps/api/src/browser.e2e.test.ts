@@ -410,6 +410,37 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
         ok('[computador] painel: vitrine de produtos adicionais escolhida e salva');
         db.settings = db.settings.filter((x) => x.key !== 'members');
 
+        // Áudios no WhatsApp: relatório por áudio, configuração do upsell e fila
+        db.wa_audios = [
+          { id: '0c000000-0000-4000-8000-0000000000a1', kind: 'recovery', name: 'Lembrete final', file_url: 'https://fake.supabase.co/a/rec.mp3', active: true, created_at: new Date().toISOString() },
+          { id: '0c000000-0000-4000-8000-0000000000a2', kind: 'upsell', name: 'Convite Clube v1', file_url: 'https://fake.supabase.co/a/ups.mp3', active: true, created_at: new Date().toISOString() },
+        ];
+        db.wa_queue = [{ id: 'q1', kind: 'upsell', step: 1, status: 'pending', phone: '5511955556666', audio_id: '0c000000-0000-4000-8000-0000000000a2', run_at: new Date(Date.now() + 40_000).toISOString(), attempts: 1, error: null, created_at: new Date().toISOString() }];
+        db.wa_links = [{ token: 'abcdefghijklmnopqrstuv', kind: 'upsell', audio_id: '0c000000-0000-4000-8000-0000000000a2', target_url: '/checkout', clicks: 3, created_at: new Date().toISOString() }];
+        db.wa_optouts = [{ phone: '5511977778888', word: 'SAIR', created_at: new Date().toISOString() }];
+        await p.goto(`${base}/admin/audios`);
+        await p.getByRole('heading', { name: 'Áudios no WhatsApp' }).waitFor();
+        await p.getByText('Convite Clube v1').waitFor();
+        await p.getByText('(11) 97777-8888').waitFor();
+        await p.getByText('Texto de abertura').or(p.getByText('Áudio', { exact: true })).first().waitFor();
+        await p.getByText('Upsell por áudio depois da compra').click();
+        await p.getByRole('button', { name: 'Salvar configuração' }).click();
+        await p.getByText('Configuração salva').waitFor();
+        expect(db.settings.find((x) => x.key === 'wa_audio')!.value.upsell).toMatchObject({ enabled: true, delayMinutes: 120 });
+        await p.waitForTimeout(300);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-audios.png`, fullPage: true });
+        ok('[computador] painel: Áudios no WhatsApp (relatório, upsell, SAIR e fila)');
+        if (process.env.SHOT_DIR) {
+          await p.setViewportSize({ width: 390, height: 844 });
+          await p.waitForTimeout(300);
+          await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-audios-celular.png`, fullPage: true });
+          const wide = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+          expect(wide).toBe(false); // sem rolagem lateral no celular
+          await p.setViewportSize({ width: 1440, height: 900 });
+        }
+        for (const t of ['wa_audios', 'wa_queue', 'wa_links', 'wa_optouts']) delete db[t];
+        db.settings = db.settings.filter((x) => x.key !== 'wa_audio');
+
         // Produtos: entrega padrão = link; escolher "Área de membros" cria o curso sozinho
         await p.goto(`${base}/admin/produtos`);
         await p.getByRole('button', { name: /Novo produto/ }).first().click();
