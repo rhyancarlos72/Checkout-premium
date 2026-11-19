@@ -70,6 +70,8 @@ export const waAudioSchema = z.object({
       checkout_slug: z.string().trim().max(60).default(''),
       /** página de vendas de upsell (/oferta/slug): quando escolhida, o link do áudio leva para ela */
       page_slug: z.string().trim().max(60).default(''),
+      /** áudio do upsell (apresentação). Vazio = reveza entre os de upsell não escolhidos para a última chamada */
+      audio: z.string().uuid().or(z.literal('')).default(''),
       /** produtos que, PAGOS, disparam o upsell (nenhum marcado = upsell não sai) */
       product_ids: z.array(z.string().uuid()).max(200).default([]),
       delayMinutes: z.number().int().min(10).max(2880).default(120),
@@ -179,19 +181,25 @@ export function fillText(tpl: string, v: { nome?: string; produto?: string; link
 
 // ------------------------------------------------------------------ áudios
 /**
- * Áudio a enviar: o escolhido (se ativo) ou, no "revezar", um dos ativos ao acaso (para comparar no relatório qual
- * vende mais). `avoid`: áudio reservado a outro lembrete (ex.: o de "última chance") não entra no revezamento.
+ * Áudio de cada etapa (1º upsell, última chamada, 1º lembrete, último lembrete):
+ *  - `explicit` escolhido no painel → SEMPRE esse. Pausado ou apagado → null (nunca troca por outro áudio).
+ *  - sem escolha → reveza entre os ativos que NÃO estão escolhidos para outra etapa (`reserved`);
+ *    se só sobrarem áudios de outras etapas → null (não manda áudio errado).
  */
-async function pickAudio(kind: 'recovery' | 'upsell', preferId?: string | null, avoid?: string | null) {
+async function pickAudio(kind: 'recovery' | 'upsell', o: { explicit?: string | null; reserved?: (string | null | undefined)[] } = {}) {
   const { data, error } = await supabase.from('wa_audios').select('id, file_url, name').eq('kind', kind).eq('active', true);
   if (error || !data?.length) return null;
   const all = data as { id: string; file_url: string; name: string }[];
-  const chosen = all.find((a) => a.id === preferId);
-  if (chosen) return chosen;
-  const list = all.filter((a) => a.id !== avoid);
-  const pool = list.length ? list : all; // só existe o reservado: usa ele mesmo
-  return pool[Math.floor(Math.random() * pool.length)];
+  if (o.explicit) return all.find((a) => a.id === o.explicit) ?? null;
+  const reserved = new Set((o.reserved ?? []).filter(Boolean));
+  const pool = all.filter((a) => !reserved.has(a.id));
+  return pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
 }
+/** Áudios de cada etapa do upsell e da recuperação (para nunca misturar). */
+const upsellAudio = (cfg: WaAudioConfig, second: boolean) =>
+  pickAudio('upsell', second ? { explicit: cfg.upsell2.audio, reserved: [cfg.upsell.audio] } : { explicit: cfg.upsell.audio, reserved: [cfg.upsell2.audio] });
+const recoveryAudio = (cfg: WaAudioConfig, last: boolean) =>
+  pickAudio('recovery', last ? { explicit: cfg.recovery.audioLast, reserved: [cfg.recovery.audioFirst] } : { explicit: cfg.recovery.audioFirst, reserved: [cfg.recovery.audioLast] });
 async function audioById(id: string | null | undefined) {
   if (!id) return null;
   const { data } = await supabase.from('wa_audios').select('id, file_url, name').eq('id', id).maybeSingle();
@@ -322,7 +330,7 @@ export async function scheduleUpsell(orderId: string) {
   if (owner && (await orgOfOrder(orderId)) !== owner) return null; // o WhatsApp da plataforma não é usado para produtores
   const ck = (await upsellTarget(cfg))?.ck;
   if (!ck?.product_id || ck.id === order.checkout_id) return null;
-  if (!(await pickAudio('upsell'))) return null; // sem áudio de upsell ativo: nada a fazer
+  if (!(await upsellAudio(cfg, false))) return null; // sem o áudio do upsell (ou pausado): nada a fazer
   const why = await upsellBlocked({ customerId: order.customer_id, phone, productId: ck.product_id });
   if (why) return why;
   const runAt = new Date(order.paid_at ?? Date.now()).getTime() + cfg.upsell.delayMinutes * 60_000;
@@ -345,7 +353,7 @@ export async function queueRecoveryAudio(o: any, attempt = 3): Promise<boolean> 
   const phone = normalizePhoneBR(o.customer?.phone);
   if (!phone) return false;
   const last = attempt === Math.max(...cfg.recovery.attempts) && attempt > 1;
-  const audio = await pickAudio('recovery', (last ? cfg.recovery.audioLast : cfg.recovery.audioFirst) || null, (last ? cfg.recovery.audioFirst : cfg.recovery.audioLast) || null);
+  const audio = await recoveryAudio(cfg, last); // o áudio desta etapa; pausado/sem áudio → o lembrete vai em texto
   if (!audio) return false;
   const { error } = await supabase.from('wa_queue').insert({ kind: 'recovery', attempt, status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone, audio_id: audio.id, run_at: new Date().toISOString() });
   if (error && /attempt/i.test(error.message)) logger.warn('Rode no Supabase o SQL 20261122000000_wa_queue_attempt.sql (recuperação por áudio em mais de um lembrete)');
@@ -381,8 +389,9 @@ async function upsellStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Pro
     const why = row.customer_id ? await upsellBlocked({ customerId: row.customer_id, phone: row.phone, productId: ck.product_id, ignoreQueueId: row.id, ignoreOrderId: second ? row.order_id : null }) : null;
     if (why) return { status: 'skipped', error: why };
     // o áudio da última chamada não entra no revezamento do 1º upsell (e vice-versa)
-    const audio = second ? await pickAudio('upsell', cfg.upsell2.audio || row.audio_id) : await pickAudio('upsell', row.audio_id, cfg.upsell2.audio || null);
-    if (!audio) return { status: 'skipped', error: 'nenhum áudio de upsell ativo' };
+    // o áudio desta etapa (apresentação ou última chamada): nunca o de outra etapa
+    const audio = await upsellAudio(cfg, second);
+    if (!audio) return { status: 'skipped', error: second ? 'áudio da última chamada pausado ou não escolhido' : 'áudio do upsell pausado ou não escolhido' };
     const r = await sendWhatsAppText(row.phone, fillText(second ? cfg.upsell2.opener : cfg.upsell.opener, { nome, produto }), wa);
     await logWa(row.order_id, `${tag}_texto`, r);
     if (!r.ok) return { status: 'failed', error: r.error ?? 'falhou' };
@@ -439,7 +448,7 @@ async function recoveryStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): P
     return { status: 'pending', step: 1, run_at: Date.now() + cfg.recovery.gapSeconds * 1000, instance: r.instance ?? null };
   }
   if (row.step === 1) {
-    const audio = (await audioById(row.audio_id)) ?? (await pickAudio('recovery'));
+    const audio = await audioById(row.audio_id); // o escolhido quando entrou na fila (sem trocar por outro)
     let r = audio ? await sendWhatsAppAudio(row.phone, audio.file_url, wa, { instance: row.instance ?? undefined }) : { ok: false, error: 'nenhum áudio de recuperação ativo' };
     if (!r.ok && audio && row.instance) r = await sendWhatsAppAudio(row.phone, audio.file_url, wa); // o número da conversa caiu
     await logWa(o.id, `recovery_${attempt}_audio`, r);
@@ -660,7 +669,7 @@ export async function runUpsellBackfill(now = Date.now()) {
   const st = await backfillState();
   if (st.last_at && now - new Date(st.last_at).getTime() < cfg.backfill.intervalMinutes * 60_000) return null;
   const target = await upsellTarget(cfg);
-  if (!target?.ck?.product_id || !(await pickAudio('upsell'))) return null;
+  if (!target?.ck?.product_id || !(await upsellAudio(cfg, false))) return null;
   const { list } = await backfillCandidates(cfg, target.ck, 1);
   const o = list[0];
   if (!o) return null;

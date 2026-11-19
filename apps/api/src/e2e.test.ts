@@ -1967,4 +1967,58 @@ describe('marketplace multiusuário', () => {
     expect(db.wa_queue.find((q) => q.order_id === o3.id)!.audio_id).toBe(UPS);
     await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
   }, 30_000);
+  it('áudio certo em cada etapa: o escolhido é sempre usado; pausado não é trocado por outro', async () => {
+    const wa = await import('./services/waAudio.js');
+    const now = new Date().toISOString();
+    const APRES = '0c000000-0000-4000-8000-0000000000d1', ULT = '0c000000-0000-4000-8000-0000000000d2';
+    const R1 = '0c000000-0000-4000-8000-0000000000d3', RL = '0c000000-0000-4000-8000-0000000000d4';
+    const keep = db.wa_audios;
+    db.wa_audios = [
+      { id: APRES, kind: 'upsell', name: 'Apresentação', file_url: 'https://x/apres.mp3', active: true, created_at: now },
+      { id: ULT, kind: 'upsell', name: 'Última chamada', file_url: 'https://x/ult.mp3', active: true, created_at: now },
+      { id: R1, kind: 'recovery', name: 'Rec 1', file_url: 'https://x/r1.mp3', active: true, created_at: now },
+      { id: RL, kind: 'recovery', name: 'Rec último', file_url: 'https://x/rl.mp3', active: true, created_at: now },
+    ];
+    const cfg = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    const set = (patch: any) => as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...cfg, windowStart: 0, windowEnd: 24, ...patch });
+    await set({ upsell: { ...cfg.upsell, enabled: true, page_slug: 'ultima', audio: APRES, product_ids: ['00000000-0000-4000-8000-000000000001'] }, upsell2: { ...cfg.upsell2, enabled: true, audio: ULT }, recovery: { ...cfg.recovery, enabled: true, attempts: [1, 3], audioFirst: R1, audioLast: RL, product_ids: ['00000000-0000-4000-8000-000000000001'] } });
+    const mkOrder = (paid = false) => {
+      const id = crypto.randomUUID();
+      db.orders.push({ id, status: paid ? 'paid' : 'pending', created_at: now, public_token: crypto.randomBytes(24).toString('hex') });
+      return { id, customer_id: null, customer: { phone: '11966660000' }, items: [{ kind: 'main', product_id: '00000000-0000-4000-8000-000000000001' }] };
+    };
+    // recuperação: 1º lembrete = Rec 1, último = Rec último, sempre
+    for (let i = 0; i < 10; i++) {
+      const o = mkOrder();
+      await wa.queueRecoveryAudio(o, 1);
+      await wa.queueRecoveryAudio(o, 3);
+      expect(db.wa_queue.find((q) => q.order_id === o.id && q.attempt === 1)!.audio_id).toBe(R1);
+      expect(db.wa_queue.find((q) => q.order_id === o.id && q.attempt === 3)!.audio_id).toBe(RL);
+    }
+    // o do último lembrete pausado: o último lembrete vai em TEXTO (não usa o Rec 1 no lugar)
+    db.wa_audios.find((a) => a.id === RL)!.active = false;
+    const o2 = mkOrder();
+    expect(await wa.queueRecoveryAudio(o2, 3)).toBe(false);
+    expect(await wa.queueRecoveryAudio(o2, 1)).toBe(true);
+    // upsell: a apresentação usa sempre o seu áudio; com ele pausado, NÃO manda o da última chamada
+    const runUpsell = async (attempt: number | null) => {
+      const o = mkOrder(true);
+      const row = { id: crypto.randomUUID(), kind: 'upsell', attempt, status: 'pending', step: 0, customer_id: null, order_id: o.id, phone: '5511966660000', audio_id: null, run_at: new Date(Date.now() - 1000).toISOString(), attempts: 0, created_at: now, updated_at: now };
+      db.wa_queue.push(row);
+      await wa.processWaQueue();
+      return row;
+    };
+    for (let i = 0; i < 5; i++) expect((await runUpsell(null)).audio_id).toBe(APRES);
+    for (let i = 0; i < 5; i++) expect((await runUpsell(2)).audio_id).toBe(ULT);
+    db.wa_audios.find((a) => a.id === APRES)!.active = false;
+    const skipped = await runUpsell(null);
+    expect(skipped).toMatchObject({ status: 'skipped', audio_id: null });
+    expect(skipped.error).toMatch(/áudio do upsell pausado/);
+    // revezar (sem escolha) nunca usa o áudio escolhido para a outra etapa
+    db.wa_audios.find((a) => a.id === APRES)!.active = true;
+    await set({ upsell: { ...cfg.upsell, enabled: true, page_slug: 'ultima', audio: '', product_ids: ['00000000-0000-4000-8000-000000000001'] }, upsell2: { ...cfg.upsell2, enabled: true, audio: ULT } });
+    for (let i = 0; i < 8; i++) expect((await runUpsell(null)).audio_id).toBe(APRES);
+    db.wa_audios = keep;
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
+  }, 30_000);
 });

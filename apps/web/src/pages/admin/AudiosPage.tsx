@@ -34,7 +34,7 @@ interface Config {
   windowStart: number;
   windowEnd: number;
   recovery: { enabled: boolean; product_ids: string[]; linkText: string; attempts: number[]; opener: string; openerLast: string; audioFirst: string; audioLast: string; gapSeconds: number };
-  upsell: { enabled: boolean; checkout_slug: string; page_slug: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
+  upsell: { enabled: boolean; checkout_slug: string; page_slug: string; audio: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
   backfill: { enabled: boolean; daysBack: number; intervalMinutes: number };
   upsell2: { enabled: boolean; delayHours: number; firstMonthCents: number; validityHours: number; audio: string; opener: string; linkText: string };
 }
@@ -54,6 +54,18 @@ interface Data {
   attempt_ready?: boolean;
 }
 
+/** Em qual etapa cada áudio está sendo usado (pela configuração salva). */
+function usage(cfg: Config, a: { id: string; kind: Kind }) {
+  const out: string[] = [];
+  if (a.kind === 'upsell') {
+    if (cfg.upsell.audio === a.id) out.push('Upsell (apresentação)');
+    if (cfg.upsell2?.audio === a.id) out.push('Última chamada');
+  } else {
+    if (cfg.recovery.audioFirst === a.id) out.push('1º lembrete');
+    if (cfg.recovery.audioLast === a.id) out.push('Último lembrete');
+  }
+  return out.length ? out : ['Revezamento'];
+}
 const kindLabel: Record<Kind, string> = { recovery: 'Recuperação', upsell: 'Upsell' };
 const queueText: Record<string, string> = { pending: 'Na fila', sending: 'Enviando', done: 'Enviado', skipped: 'Pulado', failed: 'Falhou', canceled: 'Cancelado' };
 const queueTone: Record<string, string> = { pending: 'pending', sending: 'info', done: 'paid', skipped: 'off', failed: 'failed', canceled: 'canceled' };
@@ -182,6 +194,9 @@ function AudioList({ data, onChange, fail }: { data: Data; onChange: () => void;
                     <div className="flex flex-wrap items-center gap-2">
                       <Mic className="h-4 w-4 text-zinc-500" />
                       <span className="min-w-0 flex-1 truncate font-medium">{a.name}</span>
+                      {usage(data.config, a).map((u) => (
+                        <span key={u} className={cn('rounded-full px-2 py-0.5 text-[11px] font-semibold', u === 'Revezamento' ? 'bg-zinc-100 text-zinc-600' : 'bg-blue-50 text-blue-700')}>{u}</span>
+                      ))}
                       <Switch checked={a.active} onChange={() => toggle.mutate(a)} label={a.active ? 'Ativo' : 'Pausado'} />
                     </div>
                     <audio controls preload="none" src={a.file_url} className="mt-2 h-9 w-full" />
@@ -262,13 +277,13 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
               {([['audioFirst', 'Áudio do 1º lembrete'], ['audioLast', 'Áudio do último']] as const).map(([k, label]) => (
                 <Field key={k} label={label}>
                   <Select value={c.recovery[k]} onChange={(e) => setC({ ...c, recovery: { ...c.recovery, [k]: e.target.value } })}>
-                    <option value="">Revezar os ativos</option>
+                    <option value="">Revezar (só os não escolhidos em outra etapa)</option>
                     {data.audios.filter((a) => a.kind === 'recovery').map((a) => <option key={a.id} value={a.id}>{a.name}{a.active ? '' : ' (pausado)'}</option>)}
                   </Select>
                 </Field>
               ))}
             </div>
-            <p className="-mt-1 text-xs text-zinc-500">“Revezar os ativos” sorteia entre os áudios de recuperação ativos (compare no relatório qual vende mais). O áudio escolhido para um lembrete nunca entra no revezamento do outro.</p>
+            <p className="-mt-1 text-xs text-zinc-500">Escolha o áudio de cada lembrete: ele é usado <b>sempre</b> e, se estiver pausado, o lembrete vai em texto (nunca troca por outro áudio). “Revezar” só sorteia entre áudios que não foram escolhidos para outra etapa.</p>
             <Field label="Áudio sai após (s)" hint="Tempo entre a 1ª mensagem e o áudio"><Input type="number" min={10} value={c.recovery.gapSeconds} onChange={(e) => setC({ ...c, recovery: { ...c.recovery, gapSeconds: num(e.target.value) } })} /></Field>
           </div>
           <ProductPicker
@@ -294,6 +309,15 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
             value={c.upsell.product_ids}
             onChange={(ids) => up({ product_ids: ids })}
           />
+          <Field label="Áudio do upsell (apresentação)" hint="Usado sempre no 1º upsell. Pausado: o upsell não é enviado (nunca troca por outro áudio).">
+            <Select value={c.upsell.audio} onChange={(e) => up({ audio: e.target.value })}>
+              <option value="">Revezar (só os não escolhidos para a última chamada)</option>
+              {data.audios.filter((a) => a.kind === 'upsell').map((a) => <option key={a.id} value={a.id}>{a.name}{a.active ? '' : ' (pausado)'}</option>)}
+            </Select>
+          </Field>
+          {c.upsell2.enabled && (!c.upsell.audio || !c.upsell2.audio) && data.audios.filter((a) => a.kind === 'upsell').length > 1 && (
+            <p className="text-xs font-medium text-amber-600">Escolha o áudio da apresentação e o da última chamada: assim nunca vai o áudio de uma etapa na outra.</p>
+          )}
           <Field label="Página de vendas (link do áudio)" hint="Escolhida: o link do áudio leva para a página upsell (vídeo + Pix na página). Sem página: leva ao checkout abaixo.">
             <Select value={c.upsell.page_slug} onChange={(e) => up({ page_slug: e.target.value })}>
               <option value="">Nenhuma (usar o checkout)</option>
@@ -332,7 +356,7 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
           </div>
           <Field label="Áudio da última chamada" hint="Suba um áudio do tipo Upsell só para esta chamada. Ele não entra no revezamento do 1º upsell.">
             <Select value={c.upsell2.audio} onChange={(e) => setC({ ...c, upsell2: { ...c.upsell2, audio: e.target.value } })}>
-              <option value="">Revezar os áudios de upsell ativos</option>
+              <option value="">Revezar (só os não escolhidos para a apresentação)</option>
               {data.audios.filter((a) => a.kind === 'upsell').map((a) => <option key={a.id} value={a.id}>{a.name}{a.active ? '' : ' (pausado)'}</option>)}
             </Select>
           </Field>
