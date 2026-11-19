@@ -2021,4 +2021,81 @@ describe('marketplace multiusuário', () => {
     db.wa_audios = keep;
     await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
   }, 30_000);
+  it('contatos importados (CSV): importa sem repetir, envia 3 a cada 30 min espaçados, 1ª mensagem própria, pula quem já assina e pausa sozinho', async () => {
+    const wa = await import('./services/waAudio.js');
+    const now = new Date().toISOString();
+    db.wa_contacts = [];
+    const row = (n: number, extra: any = {}) => ({ phone: `55119812300${String(n).padStart(2, '0')}`, name: `Contato ${n} Silva`, first_name: `Contato${n}`, email: `contato${n}@x.com`, last_product: 'Kit 2.500 Atividades', products: 'Kit 2.500 Atividades', last_purchase: `2026-10-${String(10 + n).padStart(2, '0')}`, orders_count: 1, total_spent_cents: 2990, ...extra });
+    // só o dono da plataforma importa
+    expect((await as('b', 'POST', '/api/admin/whatsapp/contacts/import', { list_name: 'x', rows: [row(1)] })).status).toBe(403);
+    const imp = await as('owner', 'POST', '/api/admin/whatsapp/contacts/import', {
+      list_name: 'Checkout antigo',
+      rows: [row(1), row(2), row(3), row(4), row(2), { ...row(9), phone: '123' }, row(5, { email: 'bruno.clube@x.com', phone: '5511981230099' })],
+    });
+    expect(imp.status).toBe(200);
+    expect(imp.body).toMatchObject({ inserted: 5, existing: 0, invalid: 1, duplicated: 1 });
+    expect((await as('owner', 'POST', '/api/admin/whatsapp/contacts/import', { list_name: 'Checkout antigo', rows: [row(1), row(6)] })).body).toMatchObject({ inserted: 1, existing: 1 });
+    const sum0 = (await as('owner', 'GET', '/api/admin/whatsapp/contacts')).body;
+    expect(sum0).toMatchObject({ total: 6, pending: 6, lists: [{ name: 'Checkout antigo', total: 6 }] });
+
+    const cfg = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    const UPS = '0c000000-0000-4000-8000-0000000000a2';
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', {
+      ...cfg, windowStart: 0, windowEnd: 24,
+      upsell: { ...cfg.upsell, enabled: true, page_slug: 'ultima', audio: UPS },
+      upsell2: { ...cfg.upsell2, enabled: false },
+      backfill: { ...cfg.backfill, enabled: false, intervalMinutes: 30, perInterval: 3 },
+      contacts: { enabled: true, opener: 'Oi {nome}, tudo bem? Não sei se você lembra, mas você já comprou o {produto_comprado} com a gente pela internet 😊 Hoje eu tenho uma condição especial pra você. Posso te mandar rapidinho?' },
+    });
+    db.settings = db.settings.filter((x) => x.key !== 'wa_audio_backfill');
+    const t0 = Date.now();
+    const first = await wa.runUpsellBackfill(t0);
+    const c6 = db.wa_contacts.find((c) => c.phone === '5511981230006')!; // compra mais recente (16/10)
+    expect(first).toBe(c6.id);
+    expect(c6.status).toBe('queued');
+    expect(await wa.runUpsellBackfill(t0 + 5 * 60_000)).toBeNull(); // 3 a cada 30 min = 1 a cada 10 min
+    expect(await wa.runUpsellBackfill(t0 + 10 * 60_000)).toBeTruthy();
+    expect(await wa.runUpsellBackfill(t0 + 20 * 60_000)).toBeTruthy();
+    // quem já comprou o produto oferecido aqui (mesmo e-mail) é pulado com o motivo
+    for (let i = 3; i < 8; i++) await wa.runUpsellBackfill(t0 + i * 10 * 60_000);
+    const bruno = db.wa_contacts.find((c) => c.email === 'bruno.clube@x.com')!;
+    expect(bruno).toMatchObject({ status: 'skipped', skip_reason: 'já comprou o produto' });
+    expect(db.wa_queue.filter((q) => q.contact_id).length).toBe(5);
+
+    // a sequência do contato: 1ª mensagem própria → áudio → link (a página já sabe quem é)
+    const q = db.wa_queue.find((x) => x.contact_id === c6.id)!;
+    const sent = () => waSent.filter((w) => String(w.body?.number ?? '').includes('81230006'));
+    for (let i = 0; i < 3; i++) {
+      q.run_at = new Date(Date.now() - 1000).toISOString();
+      await wa.processWaQueue();
+    }
+    expect(sent()[0].body.text).toBe('Oi Contato6, tudo bem? Não sei se você lembra, mas você já comprou o Kit 2.500 Atividades com a gente pela internet 😊 Hoje eu tenho uma condição especial pra você. Posso te mandar rapidinho?');
+    expect(waAudioSent.some((w) => String(w.body?.number ?? '').includes('81230006'))).toBe(true);
+    expect(q.status).toBe('done');
+    expect(c6.status).toBe('sent');
+    const tok = sent().at(-1)!.body.text.match(/\/r\/([0-9A-Za-z]{20,})/)![1];
+    expect(db.wa_links.find((l) => l.token === tok)!.contact_id).toBe(c6.id);
+    expect((await api('GET', `/api/public/offers/ultima/prefill?wa=${tok}`)).body.customer).toMatchObject({ name: 'Contato 6 Silva', email: 'contato6@x.com' });
+    const buy = await api('POST', '/api/public/offers/ultima/buy', { wa: tok, tracking: { utm_source: 'whatsapp', utm_medium: 'audio', wa: tok } });
+    expect(buy.status).toBe(201);
+    expect(db.orders.find((x) => x.public_token === buy.body.token)!.tracking.content_category).toBe('whatsapp_audio_importados');
+
+    // proteção: 5 falhas seguidas pausam o envio para importados sozinho
+    for (let i = 0; i < 5; i++) db.wa_queue.push({ id: crypto.randomUUID(), kind: 'upsell', attempt: null, contact_id: crypto.randomUUID(), status: 'failed', step: 0, phone: `55119800000${i}`, run_at: now, attempts: 1, created_at: now, updated_at: new Date(Date.now() + i).toISOString() });
+    expect(await wa.runUpsellBackfill(t0 + 200 * 60_000)).toBeNull();
+    const after = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    expect(after.contacts.enabled).toBe(false);
+    const sum = (await as('owner', 'GET', '/api/admin/whatsapp/contacts')).body;
+    expect(sum.paused.paused_reason).toMatch(/últimos 5 envios/);
+    expect(sum.skip_reasons).toEqual(expect.arrayContaining([{ reason: 'já comprou o produto', count: 1 }]));
+    // religar tira o aviso
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...after, contacts: { ...after.contacts, enabled: true } });
+    expect((await as('owner', 'GET', '/api/admin/whatsapp/contacts')).body.paused).toBeNull();
+    // apagar a lista: só quem ainda não recebeu
+    expect((await as('owner', 'DELETE', `/api/admin/whatsapp/contacts/lists/${encodeURIComponent('Checkout antigo')}`)).status).toBe(200);
+    expect(db.wa_contacts.some((c) => c.id === c6.id)).toBe(true);
+    expect(db.wa_contacts.every((c) => ['sent', 'queued'].includes(c.status))).toBe(true);
+    db.wa_queue = db.wa_queue.filter((x) => !(x.status === 'failed' && x.contact_id && !db.wa_contacts.some((c) => c.id === x.contact_id)));
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
+  }, 30_000);
 });

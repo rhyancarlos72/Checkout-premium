@@ -438,28 +438,62 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
         db.wa_optouts = [{ phone: '5511977778888', word: 'SAIR', created_at: new Date().toISOString() }];
         await p.goto(`${base}/admin/audios`);
         await p.getByRole('heading', { name: 'Áudios no WhatsApp' }).waitFor();
+        await p.getByText('O que está ligado').waitFor(); // visão geral
+        await p.waitForTimeout(300);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-audios-geral.png`, fullPage: true });
+        await p.getByRole('button', { name: 'Áudios', exact: true }).click();
         await p.getByText('Convite Clube v1').first().waitFor();
-        await p.getByText('Última chamada (upsell 2) com desconto no 1º mês').waitFor();
-        await p.getByText('(11) 97777-8888').waitFor();
-        await p.getByText('Texto de abertura').or(p.getByText('Áudio', { exact: true })).first().waitFor();
-        await p.getByText('Upsell por áudio depois da compra').click();
-        await p.getByText('Nenhum marcado: o upsell não é enviado.').waitFor();
-        await p.getByText('Quem comprou (produtos pagos)').locator('..').locator('label').first().click(); // marca um produto pago
-        await p.getByRole('button', { name: 'Salvar configuração' }).click();
+        // Upsell: liga, marca um produto pago e salva pela barra de "alterações não salvas"
+        await p.getByRole('button', { name: 'Upsell', exact: true }).click();
+        const upCard = p.locator('section', { has: p.getByRole('heading', { name: 'Upsell (apresentação)' }) });
+        await upCard.getByRole('switch').first().click();
+        await upCard.getByText('Nenhum marcado: o upsell não é enviado.').waitFor();
+        await upCard.getByText('Quem comprou (produtos pagos)').locator('..').locator('label').first().click();
+        await p.getByText('Última chamada (upsell 2)').waitFor();
+        await p.getByText('Você tem alterações não salvas.').waitFor();
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-audios-upsell.png`, fullPage: true });
+        await p.getByRole('button', { name: 'Salvar alterações' }).click();
         await p.getByText('Configuração salva').waitFor();
         expect(db.settings.find((x) => x.key === 'wa_audio')!.value.upsell).toMatchObject({ enabled: true, delayMinutes: 120 });
         expect(db.settings.find((x) => x.key === 'wa_audio')!.value.upsell.product_ids).toHaveLength(1);
+        await p.getByText('Você tem alterações não salvas.').waitFor({ state: 'detached' });
+        // Contatos importados: escolhe o CSV, vê a prévia e importa
+        await p.getByRole('button', { name: 'Contatos importados' }).click();
+        const csv = ['primeiro_nome,nome,telefone,email,recencia,dias_desde,ultima_data,ultimo_produto,produtos_comprados,produtos_nao_pagos,pedidos_aprovados,total_gasto,oferta',
+          'Ana,Ana Souza,5511988887771,ana@x.com,0-90 dias,20,01/11/2026,Kit 2.500 Atividades,Kit 2.500 Atividades,,1,19.9,upsell',
+          'Bia,"Bia Lima, Jr",5511988887772,bia@x.com,+180 dias,250,10/03/2026,Pack Etiquetas,Pack Etiquetas,,2,39.8,upsell',
+          'Caio,Caio Reis,123,caio@x.com,+180 dias,300,01/01/2026,Pack,Pack,,1,9.9,upsell',
+          'Ana,Ana Souza,5511988887771,ana@x.com,0-90 dias,20,01/11/2026,Kit 2.500 Atividades,Kit 2.500 Atividades,,1,19.9,upsell'].join('\n');
+        await p.locator('input[type=file][accept^=".csv"]').setInputFiles({ name: 'compradores_atividades.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+        await p.getByText('compradores_atividades.csv').waitFor();
+        await p.getByRole('button', { name: 'Importar 2 contatos' }).waitFor(); // 1 inválido e 1 repetido ficam fora
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-audios-contatos.png`, fullPage: true });
+        await p.getByRole('button', { name: 'Importar 2 contatos' }).click();
+        await p.getByText('2 contatos importados').waitFor();
+        expect(db.wa_contacts.map((x) => x.phone).sort()).toEqual(['5511988887771', '5511988887772']);
+        expect(db.wa_contacts.find((x) => x.phone === '5511988887772')).toMatchObject({ name: 'Bia Lima, Jr', last_purchase: '2026-03-10', total_spent_cents: 3980, list_name: 'compradores atividades' });
+        await p.getByText('compradores atividades').first().waitFor(); // a lista aparece
+        // Fila e SAIR
+        await p.getByRole('button', { name: 'Fila e SAIR' }).click();
+        await p.getByText('(11) 97777-8888').waitFor();
+        await p.getByText('Áudio', { exact: true }).first().waitFor();
         await p.waitForTimeout(300);
         if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-audios.png`, fullPage: true });
-        ok('[computador] painel: Áudios no WhatsApp (relatório, upsell, SAIR e fila)');
+        ok('[computador] painel: Áudios no WhatsApp em abas (visão geral, upsell salvo, CSV importado, fila e SAIR)');
         if (process.env.SHOT_DIR) {
           await p.setViewportSize({ width: 390, height: 844 });
-          await p.waitForTimeout(300);
+          for (const tab of ['Visão geral', 'Contatos importados', 'Upsell']) {
+            await p.getByRole('button', { name: tab, exact: true }).click();
+            await p.waitForTimeout(250);
+            const wide = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+            expect(wide, `rolagem lateral na aba ${tab}`).toBe(false); // sem rolagem lateral no celular
+          }
+          await p.getByRole('button', { name: 'Visão geral', exact: true }).click();
+          await p.waitForTimeout(250);
           await p.screenshot({ path: `${process.env.SHOT_DIR}/admin-audios-celular.png`, fullPage: true });
-          const wide = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
-          expect(wide).toBe(false); // sem rolagem lateral no celular
           await p.setViewportSize({ width: 1440, height: 900 });
         }
+        delete db.wa_contacts;
         for (const t of ['wa_audios', 'wa_queue', 'wa_links', 'wa_optouts']) delete db[t];
         db.settings = db.settings.filter((x) => x.key !== 'wa_audio');
 

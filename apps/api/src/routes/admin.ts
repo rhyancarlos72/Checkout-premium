@@ -21,7 +21,8 @@ import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProv
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
 import { OFFER_NEW_FIELDS, OFFER_SELECT, OFFER_SELECT_BASE, missingOfferColumns, offerSchema, offerStats, selectOffers } from '../services/offers.js';
-import { backfillStatus, evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
+import { importContacts, importSchema, contactsSummary, deleteContactList } from '../services/waContacts.js';
+import { backfillStatus, clearContactsPause, contactsPauseInfo, evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
 import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, phoneVariants, saveWhatsAppConfig, sendWhatsAppAudio, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
@@ -1414,6 +1415,19 @@ adminRouter.delete('/upsell-pages/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ------------------------------------------------------------------ contatos importados (CSV do checkout antigo)
+adminRouter.get('/whatsapp/contacts', async (_req, res) => {
+  const [summary, pause] = await Promise.all([contactsSummary(), contactsPauseInfo().catch(() => null)]);
+  res.set('Cache-Control', 'no-store').json({ ...summary, paused: pause });
+});
+adminRouter.post('/whatsapp/contacts/import', async (req, res) => {
+  res.json(await importContacts(importSchema.parse(req.body)));
+});
+adminRouter.delete('/whatsapp/contacts/lists/:name', async (req, res) => {
+  await deleteContactList(z.string().trim().min(1).max(80).parse(decodeURIComponent(String(req.params.name))));
+  res.json({ ok: true });
+});
+
 // ------------------------------------------------------------------ áudios no WhatsApp (3º lembrete + upsell)
 const audioMissing = (e: { message?: string } | null) => !!e && /wa_audios|wa_queue|wa_optouts|wa_links|schema cache|does not exist/i.test(e.message ?? '');
 const AUDIO_SQL_MSG = 'Rode no Supabase o SQL dos áudios (supabase/migrations/20261119000000_wa_audio.sql) e recarregue.';
@@ -1446,6 +1460,7 @@ adminRouter.get('/whatsapp/audio', async (_req, res) => {
 });
 adminRouter.put('/whatsapp/audio/config', async (req, res) => {
   const value = waAudioSchema.parse(req.body ?? {});
+  if (value.contacts.enabled) await clearContactsPause(); // religou: tira o aviso da pausa automática
   if (value.windowEnd <= value.windowStart) throw new HttpError(400, 'O horário final precisa ser depois do inicial');
   await saveWaAudioConfig(value);
   res.json(value);

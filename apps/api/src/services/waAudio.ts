@@ -108,12 +108,28 @@ export const waAudioSchema = z.object({
         .default('{nome}, segue o link com a condição que eu te falei 👇\n{link}\n\nO 1º mês sai por {preco} (depois {preco_normal}/mês). Vale só até {validade}.\n\nSe não quiser mais mensagens, responda SAIR.'),
     })
     .prefault({}),
-  /** compradores antigos dos produtos marcados no upsell: 1 pessoa a cada `intervalMinutes`, dentro do horário */
+  /**
+   * Envios para quem já comprou (compradores antigos daqui + contatos importados), na MESMA vaga:
+   * `perInterval` pessoas a cada `intervalMinutes`, espaçadas, dentro do horário. Primeiro os daqui, depois os importados.
+   */
   backfill: z
     .object({
       enabled: z.boolean().default(false),
       daysBack: z.number().int().min(1).max(730).default(90),
       intervalMinutes: z.number().int().min(10).max(1440).default(30),
+      perInterval: z.number().int().min(1).max(10).default(3),
+    })
+    .prefault({}),
+  /** contatos importados (CSV do checkout antigo): a mesma sequência do upsell, com a 1ª mensagem própria */
+  contacts: z
+    .object({
+      enabled: z.boolean().default(false),
+      opener: z
+        .string()
+        .trim()
+        .min(2)
+        .max(500)
+        .default('Oi {nome}, tudo bem? Não sei se você lembra, mas você já comprou o {produto_comprado} com a gente pela internet 😊 Hoje eu tenho uma condição especial pra você. Posso te mandar rapidinho?'),
     })
     .prefault({}),
 });
@@ -161,7 +177,7 @@ const firstName = (name: string | null | undefined) => {
   return f ? f.charAt(0).toUpperCase() + f.slice(1) : '';
 };
 /** Troca {nome}, {produto}, {link}, {validade} no texto. Sem nome: tira a vírgula/espaço que sobraria. */
-export function fillText(tpl: string, v: { nome?: string; produto?: string; link?: string; validade?: string; pix?: string; valor?: string; preco?: string; preco_normal?: string }) {
+export function fillText(tpl: string, v: { nome?: string; produto?: string; link?: string; validade?: string; pix?: string; valor?: string; preco?: string; preco_normal?: string; produto_comprado?: string }) {
   let t = tpl;
   if (!v.nome) t = t.replace(/\s*\{nome\}\s*,?/g, (m) => (m.startsWith(' ') ? ' ' : '')).replace(/^\s*,\s*/, '');
   return t
@@ -171,6 +187,7 @@ export function fillText(tpl: string, v: { nome?: string; produto?: string; link
     .replace(/\{validade\}/g, v.validade ?? '')
     .replace(/\{pix\}/g, v.pix ?? '')
     .replace(/\{valor\}/g, v.valor ?? '')
+    .replace(/\{produto_comprado\}/g, v.produto_comprado || 'nosso material')
     .replace(/\{preco_normal\}/g, v.preco_normal ?? '')
     .replace(/\{preco\}/g, v.preco ?? '')
     .replace(/ +([,.!?])/g, '$1')
@@ -211,7 +228,7 @@ const B62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 export const newLinkToken = () => Array.from(crypto.randomBytes(22), (b) => B62[b % 62]).join('');
 export const isLinkToken = (t: unknown): t is string => typeof t === 'string' && /^[0-9A-Za-z]{20,40}$/.test(t);
 
-async function createLink(p: { kind: 'recovery' | 'upsell'; audioId: string | null; customerId: string | null; orderId: string | null; target: string; expiresAt?: number | null }) {
+async function createLink(p: { kind: 'recovery' | 'upsell'; audioId: string | null; customerId: string | null; orderId: string | null; target: string; expiresAt?: number | null; contactId?: string | null }) {
   const token = newLinkToken();
   const { error } = await supabase.from('wa_links').insert({
     token,
@@ -221,6 +238,7 @@ async function createLink(p: { kind: 'recovery' | 'upsell'; audioId: string | nu
     order_id: p.orderId,
     target_url: p.target,
     expires_at: p.expiresAt ? new Date(p.expiresAt).toISOString() : null,
+    ...(p.contactId ? { contact_id: p.contactId } : {}),
   });
   if (error) throw new Error(`link: ${error.message}`);
   return { token, url: `${env.PUBLIC_URL}/r/${token}` };
@@ -268,12 +286,13 @@ export async function resolveWaTracking(tracking: Record<string, string>) {
   const token = tracking.wa;
   delete tracking.wa;
   if (!isLinkToken(token) || tracking.utm_source !== 'whatsapp' || tracking.utm_medium !== 'audio') return null;
-  const { data, error } = await supabase.from('wa_links').select('token, kind, audio_id').eq('token', token).maybeSingle();
+  const { data, error } = await supabase.from('wa_links').select('*').eq('token', token).maybeSingle();
   if (error || !data) return null;
-  const link = data as { token: string; kind: string; audio_id: string | null };
+  const link = data as { token: string; kind: string; audio_id: string | null; contact_id?: string | null };
   tracking.wa = link.token;
   if (link.audio_id) tracking.wa_audio_id = link.audio_id;
-  tracking.content_category = link.kind === 'recovery' ? 'whatsapp_audio_recuperacao' : 'whatsapp_audio_upsell';
+  // contato importado (checkout antigo): categoria própria no relatório e no Purchase
+  tracking.content_category = link.kind === 'recovery' ? 'whatsapp_audio_recuperacao' : link.contact_id ? 'whatsapp_audio_importados' : 'whatsapp_audio_upsell';
   return link;
 }
 
@@ -295,14 +314,15 @@ async function upsellTarget(cfg: WaAudioConfig): Promise<{ ck: any; path: string
 }
 
 /** Motivo para NÃO enviar o upsell (ou null = pode enviar). */
-export async function upsellBlocked(p: { customerId: string; phone: string; productId: string; ignoreQueueId?: string; ignoreOrderId?: string | null }): Promise<string | null> {
+export async function upsellBlocked(p: { customerId: string | null; phone: string; productId: string; ignoreQueueId?: string; ignoreOrderId?: string | null; ignoreContactId?: string | null }): Promise<string | null> {
   if ((await optedOut([p.phone])).size) return 'pediu para sair';
+  const none = Promise.resolve({ data: [] as any[] });
   const [paid, subs, recent] = await Promise.all([
-    supabase.from('orders').select('id, items:order_items(product_id)').eq('customer_id', p.customerId).eq('status', 'paid').limit(300),
-    supabase.from('subscriptions').select('status, product_ids').eq('customer_id', p.customerId).in('status', ['active', 'past_due']),
+    p.customerId ? supabase.from('orders').select('id, items:order_items(product_id)').eq('customer_id', p.customerId).eq('status', 'paid').limit(300) : none,
+    p.customerId ? supabase.from('subscriptions').select('status, product_ids').eq('customer_id', p.customerId).in('status', ['active', 'past_due']) : none,
     supabase
       .from('wa_queue')
-      .select('id, order_id')
+      .select('*')
       .eq('kind', 'upsell')
       .in('phone', phoneVariants(p.phone))
       .in('status', ['pending', 'sending', 'done'])
@@ -311,7 +331,8 @@ export async function upsellBlocked(p: { customerId: string; phone: string; prod
   if (((paid.data ?? []) as any[]).some((o) => (o.items ?? []).some((i: any) => i.product_id === p.productId))) return 'já comprou o produto';
   if (((subs.data ?? []) as any[]).some((s) => (s.product_ids ?? []).includes(p.productId))) return 'já é assinante';
   // o upsell 2 é a continuação do 1º (mesmo pedido): não conta como "outro upsell"
-  if (((recent.data ?? []) as any[]).some((r) => r.id !== p.ignoreQueueId && !(p.ignoreOrderId && r.order_id === p.ignoreOrderId))) return 'já recebeu um upsell nos últimos 7 dias';
+  if (((recent.data ?? []) as any[]).some((r) => r.id !== p.ignoreQueueId && !(p.ignoreOrderId && r.order_id === p.ignoreOrderId) && !(p.ignoreContactId && r.contact_id === p.ignoreContactId)))
+    return 'já recebeu um upsell nos últimos 7 dias';
   return null;
 }
 
@@ -361,7 +382,7 @@ export async function queueRecoveryAudio(o: any, attempt = 3): Promise<boolean> 
 }
 
 // ------------------------------------------------------------------ fila (com trava)
-type Row = { id: string; kind: 'recovery' | 'upsell'; attempt?: number | null; step: number; customer_id: string | null; order_id: string | null; phone: string; audio_id: string | null; instance: string | null; link_token: string | null; attempts: number };
+type Row = { id: string; kind: 'recovery' | 'upsell'; attempt?: number | null; contact_id?: string | null; step: number; customer_id: string | null; order_id: string | null; phone: string; audio_id: string | null; instance: string | null; link_token: string | null; attempts: number };
 type Next = { status: 'pending' | 'done' | 'skipped' | 'failed'; step?: number; run_at?: number; error?: string | null; audio_id?: string | null; instance?: string | null; link_token?: string | null };
 
 async function customerName(id: string | null) {
@@ -384,15 +405,24 @@ async function upsellStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Pro
   if (!cfg.upsell.enabled || !target || !ck?.product_id) return { status: 'skipped', error: 'upsell desligado ou sem checkout/página' };
   if (second && (!cfg.upsell2.enabled || !target.path.startsWith('/oferta/'))) return { status: 'skipped', error: 'última chamada desligada ou sem página de vendas' };
   const produto = ck.product?.name ?? ck.name ?? 'Clube';
-  const nome = await customerName(row.customer_id);
+  const contact = row.contact_id ? await contactById(row.contact_id) : null; // contato importado (checkout antigo)
+  const nome = contact ? firstName(contact.first_name || contact.name) : await customerName(row.customer_id);
   if (row.step === 0) {
-    const why = row.customer_id ? await upsellBlocked({ customerId: row.customer_id, phone: row.phone, productId: ck.product_id, ignoreQueueId: row.id, ignoreOrderId: second ? row.order_id : null }) : null;
+    if (row.contact_id && !contact) return { status: 'skipped', error: 'contato apagado' };
+    if (contact && !second && !cfg.contacts.enabled) return { status: 'skipped', error: 'envio para contatos importados pausado' };
+    const why = contact
+      ? await contactBlocked(contact, ck.product_id, row.id)
+      : row.customer_id
+        ? await upsellBlocked({ customerId: row.customer_id, phone: row.phone, productId: ck.product_id, ignoreQueueId: row.id, ignoreOrderId: second ? row.order_id : null })
+        : null;
     if (why) return { status: 'skipped', error: why };
     // o áudio da última chamada não entra no revezamento do 1º upsell (e vice-versa)
     // o áudio desta etapa (apresentação ou última chamada): nunca o de outra etapa
     const audio = await upsellAudio(cfg, second);
     if (!audio) return { status: 'skipped', error: second ? 'áudio da última chamada pausado ou não escolhido' : 'áudio do upsell pausado ou não escolhido' };
-    const r = await sendWhatsAppText(row.phone, fillText(second ? cfg.upsell2.opener : cfg.upsell.opener, { nome, produto }), wa);
+    // 1ª mensagem: a da última chamada, a dos contatos importados ("você já comprou … com a gente") ou a do upsell
+    const opener = second ? cfg.upsell2.opener : contact ? cfg.contacts.opener : cfg.upsell.opener;
+    const r = await sendWhatsAppText(row.phone, fillText(opener, { nome, produto, produto_comprado: contact?.last_product ?? '' }), wa);
     await logWa(row.order_id, `${tag}_texto`, r);
     if (!r.ok) return { status: 'failed', error: r.error ?? 'falhou' };
     return { status: 'pending', step: 1, run_at: Date.now() + cfg.upsell.gapSeconds * 1000, audio_id: audio.id, instance: r.instance ?? null };
@@ -406,7 +436,7 @@ async function upsellStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Pro
     return { status: 'pending', step: 2, run_at: Date.now() + 15_000, instance: r.ok ? (r.instance ?? row.instance) : row.instance, error: r.ok ? null : `áudio: ${r.error}`, ...(r.ok ? {} : { audio_id: null }) };
   }
   const expires = Date.now() + (second ? cfg.upsell2.validityHours : cfg.upsell.validityHours) * 3600_000;
-  const link = await createLink({ kind: 'upsell', audioId: row.audio_id, customerId: row.customer_id, orderId: null, target: second ? `${target.path}?u=2` : target.path, expiresAt: expires });
+  const link = await createLink({ kind: 'upsell', audioId: row.audio_id, customerId: row.customer_id, orderId: null, target: second ? `${target.path}?u=2` : target.path, expiresAt: expires, contactId: row.contact_id ?? null });
   let precoNormal = '';
   if (second) {
     const { loadCheckout } = await import('./orders.js');
@@ -515,6 +545,13 @@ export async function processWaQueue(max = 10) {
           ...(next.link_token !== undefined ? { link_token: next.link_token } : {}),
         })
         .eq('id', row.id);
+      // contato importado: a lista mostra se já recebeu (ou por que foi pulado)
+      if (row.contact_id && row.kind === 'upsell' && !row.attempt && next.status !== 'pending') {
+        await supabase
+          .from('wa_contacts')
+          .update(next.status === 'done' ? { status: 'sent' } : { status: 'skipped', skip_reason: (next.error ?? next.status).slice(0, 200) })
+          .eq('id', row.contact_id);
+      }
     }
   } catch (e) {
     logger.warn({ err: (e as Error)?.message }, 'Fila de áudios falhou');
@@ -661,25 +698,50 @@ async function backfillCandidates(cfg: WaAudioConfig, ck: any, limit: number, ch
   return { list: out, total };
 }
 
-/** Rotina: na hora certa (1 a cada N min, dentro do horário), coloca o próximo comprador antigo na fila do upsell. */
+/** Espaço entre um envio e o próximo: ex.: 3 a cada 30 min = 1 a cada 10 min (nunca os 3 de uma vez). */
+export const backfillSlotMs = (cfg: WaAudioConfig) => (cfg.backfill.intervalMinutes * 60_000) / Math.max(1, cfg.backfill.perInterval);
+
+/**
+ * Rotina: na hora certa (ex.: 3 a cada 30 min, espaçados, dentro do horário), coloca a próxima pessoa na fila do upsell:
+ * primeiro os compradores antigos daqui; quando acabarem, os contatos importados (mais recentes primeiro).
+ */
 export async function runUpsellBackfill(now = Date.now()) {
   const [cfg, wa] = await Promise.all([getWaAudioConfig(), getWhatsAppConfig()]);
-  if (!cfg.enabled || !cfg.upsell.enabled || !cfg.backfill.enabled || !wa.enabled || !cfg.upsell.product_ids.length) return null;
+  if (!cfg.enabled || !cfg.upsell.enabled || (!cfg.backfill.enabled && !cfg.contacts.enabled) || !wa.enabled) return null;
   if (!inWindow(cfg, now)) return null;
   const st = await backfillState();
-  if (st.last_at && now - new Date(st.last_at).getTime() < cfg.backfill.intervalMinutes * 60_000) return null;
+  if (st.last_at && now - new Date(st.last_at).getTime() < backfillSlotMs(cfg)) return null;
   const target = await upsellTarget(cfg);
   if (!target?.ck?.product_id || !(await upsellAudio(cfg, false))) return null;
-  const { list } = await backfillCandidates(cfg, target.ck, 1);
-  const o = list[0];
-  if (!o) return null;
-  const { error } = await supabase.from('wa_queue').insert({ kind: 'upsell', status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone: o.phone, run_at: new Date(now).toISOString() });
+  const mark = (id: string) => supabase.from('settings').upsert({ key: BACKFILL_KEY, value: { last_at: new Date(now).toISOString(), sent: st.sent + 1, last_order: id }, updated_at: new Date().toISOString() });
+  // 1) compradores antigos daqui
+  if (cfg.backfill.enabled && cfg.upsell.product_ids.length) {
+    const { list } = await backfillCandidates(cfg, target.ck, 1);
+    const o = list[0];
+    if (o) {
+      const { error } = await supabase.from('wa_queue').insert({ kind: 'upsell', status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone: o.phone, run_at: new Date(now).toISOString() });
+      if (error) {
+        logger.warn({ err: error.message }, 'Compradores antigos: não entrou na fila');
+        return null;
+      }
+      await mark(o.id);
+      return o.id as string;
+    }
+  }
+  // 2) contatos importados
+  if (!cfg.contacts.enabled) return null;
+  if (await contactsAutoPause(cfg, now)) return null;
+  const c = await nextContact(target.ck);
+  if (!c) return null;
+  const { error } = await supabase.from('wa_queue').insert({ kind: 'upsell', status: 'pending', step: 0, contact_id: c.id, customer_id: null, order_id: null, phone: c.phone, run_at: new Date(now).toISOString() });
   if (error) {
-    logger.warn({ err: error.message }, 'Compradores antigos: não entrou na fila');
+    logger.warn({ err: error.message }, 'Contato importado: não entrou na fila');
+    await supabase.from('wa_contacts').update({ status: 'skipped', skip_reason: `fila: ${error.message}`.slice(0, 200) }).eq('id', c.id);
     return null;
   }
-  await supabase.from('settings').upsert({ key: BACKFILL_KEY, value: { last_at: new Date(now).toISOString(), sent: st.sent + 1, last_order: o.id }, updated_at: new Date().toISOString() });
-  return o.id as string;
+  await supabase.from('wa_contacts').update({ status: 'queued', queued_at: new Date(now).toISOString() }).eq('id', c.id);
+  await mark(c.id);
+  return c.id as string;
 }
 
 /** Painel: quantos já foram, quantos faltam (aproximado: sem conferir assinatura/compra de cada um) e o próximo horário. */
@@ -688,7 +750,7 @@ export async function backfillStatus() {
   const st = await backfillState();
   const target = await upsellTarget(cfg).catch(() => null);
   const remaining = target?.ck?.product_id ? (await backfillCandidates(cfg, target.ck, 0, false)).total : 0;
-  const next = st.last_at ? new Date(st.last_at).getTime() + cfg.backfill.intervalMinutes * 60_000 : Date.now();
+  const next = st.last_at ? new Date(st.last_at).getTime() + backfillSlotMs(cfg) : Date.now();
   const nextAt = inWindow(cfg, Math.max(next, Date.now())) ? Math.max(next, Date.now()) : nextWindowStart(cfg, Math.max(next, Date.now()));
   return { sent: st.sent, last_at: st.last_at, remaining, next_at: cfg.backfill.enabled && remaining ? new Date(nextAt).toISOString() : null };
 }
@@ -701,7 +763,7 @@ export async function scheduleUpsell2(now = Date.now()) {
   if (!cfg.enabled || !cfg.upsell.enabled || !cfg.upsell2.enabled) return 0;
   const { data, error } = await supabase
     .from('wa_queue')
-    .select('id, order_id, customer_id, phone, updated_at')
+    .select('*')
     .eq('kind', 'upsell')
     .is('attempt', null)
     .eq('status', 'done')
@@ -710,12 +772,17 @@ export async function scheduleUpsell2(now = Date.now()) {
     .limit(500);
   if (error || !data?.length) return 0;
   const ids = (data as any[]).map((r) => r.order_id).filter(Boolean);
-  const { data: had } = await supabase.from('wa_queue').select('order_id').eq('kind', 'upsell').eq('attempt', 2).in('order_id', ids);
-  const done = new Set(((had ?? []) as any[]).map((r) => r.order_id));
+  const cids = (data as any[]).map((r) => r.contact_id).filter(Boolean);
+  const [had, hadC] = await Promise.all([
+    ids.length ? supabase.from('wa_queue').select('order_id').eq('kind', 'upsell').eq('attempt', 2).in('order_id', ids) : Promise.resolve({ data: [] as any[] }),
+    cids.length ? supabase.from('wa_queue').select('contact_id').eq('kind', 'upsell').eq('attempt', 2).in('contact_id', cids) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  const done = new Set([...((had.data ?? []) as any[]).map((r) => r.order_id), ...((hadC.data ?? []) as any[]).map((r) => r.contact_id)]);
   let n = 0;
   for (const r of data as any[]) {
-    if (!r.order_id || done.has(r.order_id)) continue;
-    const { error: e } = await supabase.from('wa_queue').insert({ kind: 'upsell', attempt: 2, status: 'pending', step: 0, customer_id: r.customer_id, order_id: r.order_id, phone: r.phone, run_at: new Date(now).toISOString() });
+    const key = r.order_id ?? r.contact_id;
+    if (!key || done.has(key)) continue; // pedido daqui ou contato importado
+    const { error: e } = await supabase.from('wa_queue').insert({ kind: 'upsell', attempt: 2, status: 'pending', step: 0, customer_id: r.customer_id, order_id: r.order_id ?? null, ...(r.contact_id ? { contact_id: r.contact_id } : {}), phone: r.phone, run_at: new Date(now).toISOString() });
     if (!e) n++;
   }
   return n;
@@ -759,4 +826,85 @@ export async function upsell2Coupon(checkoutSlug: string): Promise<string | null
     await supabase.from('coupons').update({ value: off, checkout_id: ck.id, active: true }).eq('id', (cur as any).id);
   }
   return code;
+}
+
+// ------------------------------------------------------------------ contatos importados (checkout antigo)
+type Contact = { id: string; phone: string; name: string | null; first_name: string | null; email: string | null; last_product: string | null; status: string };
+async function contactById(id: string): Promise<Contact | null> {
+  const { data } = await supabase.from('wa_contacts').select('id, phone, name, first_name, email, last_product, status').eq('id', id).maybeSingle();
+  return (data as Contact | null) ?? null;
+}
+
+/** Clientes daqui que são a mesma pessoa do contato (mesmo e-mail ou mesmo WhatsApp, com ou sem o 55). */
+async function customersOfContact(c: { phone: string; email: string | null }) {
+  const phones = [...new Set(phoneVariants(c.phone).flatMap((p) => [p, p.replace(/^55/, '')]))];
+  const [byPhone, byEmail] = await Promise.all([
+    supabase.from('customers').select('id').in('phone', phones).limit(20),
+    c.email ? supabase.from('customers').select('id').eq('email', c.email.trim().toLowerCase()).limit(5) : Promise.resolve({ data: [] as any[] }),
+  ]);
+  return [...new Set([...((byPhone.data ?? []) as any[]), ...((byEmail.data ?? []) as any[])].map((x) => x.id))] as string[];
+}
+
+/** Motivo para NÃO enviar ao contato importado (já assina/comprou o Clube aqui, SAIR, já recebeu upsell…). */
+async function contactBlocked(c: Contact, productId: string, ignoreQueueId?: string) {
+  const ids = await customersOfContact(c);
+  for (const id of ids) {
+    const why = await upsellBlocked({ customerId: id, phone: c.phone, productId, ignoreQueueId, ignoreContactId: c.id });
+    if (why) return why;
+  }
+  return ids.length ? null : upsellBlocked({ customerId: null, phone: c.phone, productId, ignoreQueueId, ignoreContactId: c.id });
+}
+
+/** Próximo contato importado que pode receber (mais recentes primeiro); os que não podem ficam marcados com o motivo. */
+async function nextContact(ck: any): Promise<Contact | null> {
+  for (let round = 0; round < 8; round++) {
+    const { data, error } = await supabase
+      .from('wa_contacts')
+      .select('id, phone, name, first_name, email, last_product, status')
+      .eq('status', 'pending')
+      .order('last_purchase', { ascending: false })
+      .limit(25);
+    if (error || !data?.length) return null;
+    for (const c of data as Contact[]) {
+      // já recebeu algum upsell por áudio (ex.: também é cliente daqui)? não repete
+      const { data: got } = await supabase.from('wa_queue').select('id').eq('kind', 'upsell').in('phone', phoneVariants(c.phone)).limit(1);
+      const why = got?.length ? 'já recebeu o upsell' : await contactBlocked(c, ck.product_id);
+      if (!why) return c;
+      await supabase.from('wa_contacts').update({ status: 'skipped', skip_reason: why }).eq('id', c.id);
+    }
+  }
+  return null;
+}
+
+const CONTACTS_STATE = 'wa_contacts_state';
+/**
+ * Proteção dos números: se muita gente pedir para sair (mais de 8% dos envios a importados nas últimas 24 h, com pelo
+ * menos 20 envios) ou se os últimos 5 envios falharem, o envio para importados PAUSA sozinho e o painel avisa.
+ */
+export async function contactsAutoPause(cfg: WaAudioConfig, now = Date.now()) {
+  const since = new Date(now - 24 * 3600_000).toISOString();
+  const [{ data: rows }, { data: outs }] = await Promise.all([
+    supabase.from('wa_queue').select('*').eq('kind', 'upsell').is('attempt', null).not('contact_id', 'is', null).gte('updated_at', since).order('updated_at', { ascending: false }).limit(500),
+    supabase.from('wa_optouts').select('phone').gte('created_at', since).limit(2000),
+  ]);
+  const list = (rows ?? []) as any[];
+  const done = list.filter((r) => r.status === 'done');
+  const phones = new Set(list.map((r) => r.phone));
+  const optedOutN = ((outs ?? []) as any[]).filter((o) => phones.has(o.phone)).length;
+  const last5 = list.filter((r) => ['done', 'failed'].includes(r.status)).slice(0, 5);
+  let reason: string | null = null;
+  if (done.length >= 20 && optedOutN / done.length > 0.08) reason = `${optedOutN} de ${done.length} contatos importados pediram para sair nas últimas 24 h`;
+  else if (last5.length === 5 && last5.every((r) => r.status === 'failed')) reason = 'os últimos 5 envios para contatos importados falharam (número desconectado ou bloqueado?)';
+  if (!reason) return false;
+  await saveWaAudioConfig({ ...cfg, contacts: { ...cfg.contacts, enabled: false } });
+  await supabase.from('settings').upsert({ key: CONTACTS_STATE, value: { paused_reason: reason, paused_at: new Date(now).toISOString() }, updated_at: new Date().toISOString() });
+  logger.warn({ reason }, 'Envio para contatos importados pausado sozinho');
+  return true;
+}
+export async function contactsPauseInfo() {
+  const { data } = await supabase.from('settings').select('value').eq('key', CONTACTS_STATE).maybeSingle();
+  return ((data as any)?.value ?? null) as { paused_reason?: string; paused_at?: string } | null;
+}
+export async function clearContactsPause() {
+  await supabase.from('settings').delete().eq('key', CONTACTS_STATE);
 }

@@ -20,7 +20,8 @@ const UNIQUE: Record<string, string[]> = {
   ledger_entries: ['order_id+type'], // uma venda/comissão por pedido
   admins: ['user_id'],
   access_requests: ['email'],
-  wa_queue: ['attempt+order_id+kind'], // um envio por pedido + tipo + lembrete
+  wa_queue: ['attempt+order_id+contact_id+kind'], // um envio por pedido (ou contato importado) + tipo + lembrete
+  wa_contacts: ['phone'],
   wa_optouts: ['phone'],
   wa_links: ['token'],
   upsell_pages: ['slug'],
@@ -52,6 +53,7 @@ function withDefaults(t: string, r: Row): Row {
   if (t === 'coupons') row.used_count ??= 0;
   if (t === 'wa_queue') (row.status ??= 'pending'), (row.step ??= 0), (row.attempts ??= 0), (row.run_at ??= now);
   if (t === 'wa_links') row.clicks ??= 0;
+  if (t === 'wa_contacts') (row.status ??= 'pending'), (row.list_name ??= 'Importados');
   if (t === 'wa_audios') row.active ??= true;
   if (t === 'upsell_pages') (row.active ??= true), (row.bullets ??= []), (row.cta_text ??= 'Quero entrar agora'), (row.button_delay_seconds ??= 0);
   // marketplace: imita o trigger do banco que preenche org_id pelo "pai" (produto, checkout, pedido)

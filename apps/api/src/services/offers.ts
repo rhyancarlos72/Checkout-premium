@@ -102,7 +102,16 @@ async function offerCustomerId(q: { wa?: unknown; o?: unknown }) {
 }
 async function offerCustomer(q: { wa?: unknown; o?: unknown }) {
   const id = await offerCustomerId(q);
-  if (!id) return null;
+  if (!id) {
+    // contato importado (checkout antigo) que veio pelo link do áudio: usa os dados da lista importada
+    if (!isLinkToken(q.wa)) return null;
+    const { data: l } = await supabase.from('wa_links').select('*').eq('token', q.wa).maybeSingle();
+    const cid = (l as any)?.contact_id;
+    if (!cid) return null;
+    const { data: c } = await supabase.from('wa_contacts').select('name, email, phone').eq('id', cid).maybeSingle();
+    const ct = c as { name: string | null; email: string | null; phone: string } | null;
+    return ct?.email && ct.name ? { name: ct.name, email: ct.email, phone: ct.phone.replace(/^55/, ''), document: null } : null;
+  }
   const { data } = await supabase.from('customers').select('name, email, phone, document').eq('id', id).maybeSingle();
   return (data as { name: string; email: string; phone: string | null; document: string | null } | null) ?? null;
 }
