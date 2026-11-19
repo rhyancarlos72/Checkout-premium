@@ -438,7 +438,8 @@ describe.skipIf(!RUN)('painel: aba Área de membros', () => {
         db.wa_optouts = [{ phone: '5511977778888', word: 'SAIR', created_at: new Date().toISOString() }];
         await p.goto(`${base}/admin/audios`);
         await p.getByRole('heading', { name: 'Áudios no WhatsApp' }).waitFor();
-        await p.getByText('Convite Clube v1').waitFor();
+        await p.getByText('Convite Clube v1').first().waitFor();
+        await p.getByText('Última chamada (upsell 2) com desconto no 1º mês').waitFor();
         await p.getByText('(11) 97777-8888').waitFor();
         await p.getByText('Texto de abertura').or(p.getByText('Áudio', { exact: true })).first().waitFor();
         await p.getByText('Upsell por áudio depois da compra').click();
