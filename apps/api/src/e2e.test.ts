@@ -1886,4 +1886,85 @@ describe('marketplace multiusuário', () => {
     db.wa_audios = keep;
     await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
   });
+  it('upsell 2 (última chamada): 6 h depois do 1º, áudio próprio, link com o 1º mês por R$ 5,90 só por 24 h', async () => {
+    const wa = await import('./services/waAudio.js');
+    const now = new Date().toISOString();
+    const P1 = '00000000-0000-4000-8000-000000000001';
+    const CK = '0c000000-0000-4000-8000-0000000000c9'; // checkout 8931499 (R$ 9,90)
+    const UPS = '0c000000-0000-4000-8000-0000000000a2';
+    const UPS2 = '0c000000-0000-4000-8000-0000000000a9';
+    db.wa_audios = (db.wa_audios ?? []).filter((a) => a.id !== UPS2);
+    if (!db.wa_audios.some((a) => a.id === UPS)) db.wa_audios.push({ id: UPS, kind: 'upsell', name: 'Convite', file_url: 'https://fake.supabase.co/a/ups.mp3', active: true, created_at: now });
+    db.wa_audios.push({ id: UPS2, kind: 'upsell', name: 'Última chamada', file_url: 'https://fake.supabase.co/a/ultima.mp3', active: true, created_at: now });
+    db.upsell_pages = (db.upsell_pages ?? []).filter((p) => p.slug !== 'ultima');
+    db.upsell_pages.push({ id: '0e000000-0000-4000-8000-0000000000u2'.replace('u2', 'f2'), slug: 'ultima', checkout_id: CK, title: 'Última', headline: 'Última chance', cta_text: 'Quero', bullets: [], button_delay_seconds: 0, active: true, created_at: now, updated_at: now });
+    const cfg = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    const put = await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...cfg, windowStart: 0, windowEnd: 24, upsell: { ...cfg.upsell, enabled: true, page_slug: 'ultima', product_ids: [P1] }, upsell2: { enabled: true, delayHours: 6, firstMonthCents: 590, validityHours: 24, audio: UPS2 }, backfill: { ...cfg.backfill, enabled: false } });
+    expect(put.status).toBe(200);
+    expect(put.body.upsell2).toMatchObject({ opener: expect.stringContaining('condição especial'), linkText: expect.stringContaining('{preco}') });
+
+    // cliente que recebeu o 1º upsell há 7 h e não comprou
+    const r = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.77.3.1' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Ursula Ultima', email: 'ursula.ultima@x.com', phone: '11945670001' }, bump_ids: [], tracking: {} }) }).then((x) => x.json());
+    const o = db.orders.find((x) => x.public_token === r.token)!;
+    o.status = 'paid';
+    o.paid_at = new Date(Date.now() - 9 * 3600_000).toISOString();
+    db.wa_queue = (db.wa_queue ?? []).filter((q) => q.order_id !== o.id);
+    db.wa_queue.push({ id: crypto.randomUUID(), kind: 'upsell', attempt: null, status: 'done', step: 2, customer_id: o.customer_id, order_id: o.id, phone: '5511945670001', audio_id: UPS, run_at: now, attempts: 3, created_at: new Date(Date.now() - 7 * 3600_000).toISOString(), updated_at: new Date(Date.now() - 7 * 3600_000).toISOString() });
+    // um 1º upsell de só 2 h atrás ainda não ganha a última chamada
+    const r2 = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.77.3.2' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Vitor Recente', email: 'vitor.recente@x.com', phone: '11945670002' }, bump_ids: [], tracking: {} }) }).then((x) => x.json());
+    const o2 = db.orders.find((x) => x.public_token === r2.token)!;
+    db.wa_queue.push({ id: crypto.randomUUID(), kind: 'upsell', attempt: null, status: 'done', step: 2, customer_id: o2.customer_id, order_id: o2.id, phone: '5511945670002', audio_id: UPS, run_at: now, attempts: 3, created_at: new Date(Date.now() - 2 * 3600_000).toISOString(), updated_at: new Date(Date.now() - 2 * 3600_000).toISOString() });
+
+    expect(await wa.scheduleUpsell2()).toBe(1);
+    expect(await wa.scheduleUpsell2()).toBe(0); // nunca duplica
+    const q2 = db.wa_queue.find((q) => q.order_id === o.id && q.attempt === 2)!;
+    expect(q2).toMatchObject({ status: 'pending', step: 0 });
+    expect(db.wa_queue.some((q) => q.order_id === o2.id && q.attempt === 2)).toBe(false);
+    const mine = () => waSent.filter((w) => String(w.body?.number ?? '').includes('45670001'));
+    const myAudio = () => waAudioSent.filter((w) => String(w.body?.number ?? '').includes('45670001'));
+    const step = async () => {
+      q2.run_at = new Date(Date.now() - 1000).toISOString();
+      await wa.processWaQueue();
+    };
+    await step();
+    expect(mine().at(-1)!.body.text).toBe('Oi Ursula, tudo bem? Consegui uma condição especial pra você entrar no Kit Convites. Posso te mandar rapidinho?');
+    await step();
+    expect(myAudio().at(-1)!.body.audio).toContain('ultima.mp3'); // o áudio próprio da última chamada
+    await step();
+    expect(q2.status).toBe('done');
+    const msg = mine().at(-1)!.body.text as string;
+    expect(msg).toMatch(/^Ursula, segue o link com a condição que eu te falei 👇\n/);
+    expect(msg).toMatch(/O 1º mês sai por R\$\s5,90 \(depois R\$\s9,90\/mês\)\. Vale só até \d\d\/\d\d às \d\d:\d\d\./);
+    const tok = msg.match(/\/r\/([0-9A-Za-z]{20,})/)![1];
+    const go = new URL((await fetch(`${base}/r/${tok}`, { redirect: 'manual' })).headers.get('location')!, 'https://x');
+    expect(go.pathname).toBe('/oferta/ultima');
+    expect(Object.fromEntries(go.searchParams)).toMatchObject({ u: '2', utm_campaign: 'upsell2', wa: tok });
+
+    // a página mostra o preço do 1º mês (sem revelar cupom) e a compra sai por R$ 5,90
+    const pre = await api('GET', `/api/public/offers/ultima/prefill?wa=${tok}`);
+    expect(pre.body.discount).toMatchObject({ first_cents: 590 });
+    expect(JSON.stringify(pre.body)).not.toMatch(/ULTIMA-/);
+    const buy = await api('POST', '/api/public/offers/ultima/buy', { wa: tok, tracking: { utm_source: 'whatsapp', utm_medium: 'audio', wa: tok } });
+    expect(buy.status).toBe(201);
+    expect(buy.body.order.total_cents).toBe(590);
+    const bo = db.orders.find((x) => x.public_token === buy.body.token)!;
+    expect(bo.coupon_id).toBeTruthy();
+    expect(db.coupons.find((c) => c.id === bo.coupon_id)).toMatchObject({ type: 'fixed', value: 400, checkout_id: CK });
+    // sem o link (ou com link de outra campanha) não há desconto, nem com o código do cupom adivinhado
+    expect((await api('GET', '/api/public/offers/ultima/prefill?wa=AAAAAAAAAAAAAAAAAAAAAA')).body.discount).toBeNull();
+    // link vencido: preço normal
+    db.wa_links.find((l) => l.token === tok)!.expires_at = new Date(Date.now() - 60_000).toISOString();
+    expect((await api('GET', `/api/public/offers/ultima/prefill?wa=${tok}`)).body.discount).toBeNull();
+    const late = await api('POST', '/api/public/offers/ultima/buy', { wa: tok, customer: { name: 'Ursula Ultima', email: 'ursula.ultima@x.com', phone: '11945670001' }, tracking: {} });
+    expect(late.body.order.total_cents).toBe(990);
+
+    // o áudio da última chamada não entra no revezamento do 1º upsell
+    const r3 = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.77.3.3' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Xena Primeiro', email: 'xena.primeiro@x.com', phone: '11945670003' }, bump_ids: [], tracking: {} }) }).then((x) => x.json());
+    const o3 = db.orders.find((x) => x.public_token === r3.token)!;
+    o3.status = 'paid';
+    db.wa_queue.push({ id: crypto.randomUUID(), kind: 'upsell', attempt: null, status: 'pending', step: 0, customer_id: o3.customer_id, order_id: o3.id, phone: '5511945670003', audio_id: null, run_at: new Date(Date.now() - 1000).toISOString(), attempts: 0, created_at: now, updated_at: now });
+    await wa.processWaQueue();
+    expect(db.wa_queue.find((q) => q.order_id === o3.id)!.audio_id).toBe(UPS);
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
+  }, 30_000);
 });

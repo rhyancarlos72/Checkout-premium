@@ -36,6 +36,7 @@ interface Config {
   recovery: { enabled: boolean; product_ids: string[]; linkText: string; attempts: number[]; opener: string; openerLast: string; audioFirst: string; audioLast: string; gapSeconds: number };
   upsell: { enabled: boolean; checkout_slug: string; page_slug: string; product_ids: string[]; delayMinutes: number; validityHours: number; gapSeconds: number; opener: string; linkText: string };
   backfill: { enabled: boolean; daysBack: number; intervalMinutes: number };
+  upsell2: { enabled: boolean; delayHours: number; firstMonthCents: number; validityHours: number; audio: string; opener: string; linkText: string };
 }
 interface QueueRow { id: string; kind: Kind; attempt?: number | null; step: number; status: string; phone: string; run_at: string; error: string | null; created_at: string }
 interface Data {
@@ -319,6 +320,27 @@ function ConfigCard({ data, onSaved, fail }: { data: Data; onSaved: () => void; 
             <Textarea rows={5} value={c.upsell.linkText} onChange={(e) => up({ linkText: e.target.value })} />
           </Field>
           <p className="text-xs text-zinc-500">No máximo 1 upsell a cada 7 dias por pessoa. Link rastreável com UTMs whatsapp / audio / upsell / id do áudio.</p>
+        </div>
+
+        <div className="space-y-3 border-t border-zinc-100 pt-4">
+          <Switch checked={c.upsell2.enabled} onChange={(v) => setC({ ...c, upsell2: { ...c.upsell2, enabled: v } })} label="Última chamada (upsell 2) com desconto no 1º mês" />
+          <p className="text-xs text-zinc-500">Para quem recebeu o upsell e não comprou: texto → áudio próprio → link da página de vendas com o <b>1º mês por um preço menor</b>. Os meses seguintes seguem pelo preço normal. O desconto só vale pelo link e só até a validade (nenhum cupom aparece na página). Precisa da página de vendas escolhida acima.</p>
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Enviar após (h)"><Input type="number" min={1} max={168} value={c.upsell2.delayHours} onChange={(e) => setC({ ...c, upsell2: { ...c.upsell2, delayHours: num(e.target.value) } })} /></Field>
+            <Field label="1º mês por (R$)"><Input type="number" min={1} step={0.01} value={c.upsell2.firstMonthCents / 100} onChange={(e) => setC({ ...c, upsell2: { ...c.upsell2, firstMonthCents: Math.max(100, Math.round(Number(e.target.value) * 100) || 100) } })} /></Field>
+            <Field label="Validade (h)"><Input type="number" min={1} max={168} value={c.upsell2.validityHours} onChange={(e) => setC({ ...c, upsell2: { ...c.upsell2, validityHours: num(e.target.value) } })} /></Field>
+          </div>
+          <Field label="Áudio da última chamada" hint="Suba um áudio do tipo Upsell só para esta chamada. Ele não entra no revezamento do 1º upsell.">
+            <Select value={c.upsell2.audio} onChange={(e) => setC({ ...c, upsell2: { ...c.upsell2, audio: e.target.value } })}>
+              <option value="">Revezar os áudios de upsell ativos</option>
+              {data.audios.filter((a) => a.kind === 'upsell').map((a) => <option key={a.id} value={a.id}>{a.name}{a.active ? '' : ' (pausado)'}</option>)}
+            </Select>
+          </Field>
+          <Field label="1ª mensagem" hint="Use {nome} e {produto}."><Textarea rows={2} value={c.upsell2.opener} onChange={(e) => setC({ ...c, upsell2: { ...c.upsell2, opener: e.target.value } })} /></Field>
+          <Field label="Mensagem depois do áudio (com o link)" hint="Use {nome}, {produto}, {link}, {preco} (1º mês), {preco_normal} e {validade}.">
+            <Textarea rows={5} value={c.upsell2.linkText} onChange={(e) => setC({ ...c, upsell2: { ...c.upsell2, linkText: e.target.value } })} />
+          </Field>
+          {c.upsell2.enabled && !c.upsell.page_slug && <p className="text-xs font-medium text-amber-600">Escolha a página de vendas em “Página de vendas (link do áudio)”: a última chamada só funciona com ela.</p>}
         </div>
 
         <div className="space-y-3 border-t border-zinc-100 pt-4">

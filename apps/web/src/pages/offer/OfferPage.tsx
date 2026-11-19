@@ -52,6 +52,8 @@ interface Order {
   subscription?: { auto: boolean; authorized: boolean; paid_until: string | null; monthly_cents: number } | null;
 }
 type Prefill = { name: string; email: string; phone: string; has_document: boolean };
+/** última chamada (link do áudio ainda válido): 1º mês com desconto */
+type Discount = { first_cents: number; until: string };
 
 function embedded(slug: string | undefined): Offer | undefined {
   try {
@@ -86,7 +88,7 @@ export default function OfferPage() {
   const prefill = useQuery({
     queryKey: ['offer-prefill', slug],
     enabled: Boolean(from.o || from.wa),
-    queryFn: () => publicApi.get<{ customer: Prefill | null }>(`/offers/${slug}/prefill?${new URLSearchParams(from)}`),
+    queryFn: () => publicApi.get<{ customer: Prefill | null; discount?: Discount | null }>(`/offers/${slug}/prefill?${new URLSearchParams(from)}`),
     staleTime: Infinity,
   });
 
@@ -116,7 +118,9 @@ export default function OfferPage() {
   if (error || !offer) return <div className="flex min-h-screen items-center justify-center bg-black p-6 text-center text-white/70">Esta oferta não está mais disponível.</div>;
 
   const club = offer.checkout.club;
-  const price = club ? club.monthly_cents : offer.checkout.price_cents;
+  const normal = club ? club.monthly_cents : offer.checkout.price_cents;
+  const discount = prefill.data?.discount && new Date(prefill.data.discount.until).getTime() > Date.now() && prefill.data.discount.first_cents < normal ? prefill.data.discount : null;
+  const price = discount ? discount.first_cents : normal;
   const showButton = unlocked || !offer.button_delay_seconds || !offer.video;
   const unlock = () => {
     setUnlocked(true);
@@ -154,8 +158,15 @@ export default function OfferPage() {
               {offer.cta_text}
             </button>
             <p className="mt-3 text-[15px] text-white/80">
-              {club ? <><b className="text-white">{brl(price)}/mês</b>{club.plan ? ` · Plano ${club.plan}` : ''} · cancele quando quiser</> : <>Por apenas <b className="text-white">{brl(price)}</b></>}
+              {discount ? (
+                <>
+                  <span className="mr-1.5 text-white/45 line-through">{brl(normal)}</span>
+                  <b className="text-[17px] text-white">1º mês por {brl(discount.first_cents)}</b>
+                  <span className="block text-sm text-white/70">depois {brl(normal)}{club ? '/mês · cancele quando quiser' : ''}</span>
+                </>
+              ) : club ? <><b className="text-white">{brl(price)}/mês</b>{club.plan ? ` · Plano ${club.plan}` : ''} · cancele quando quiser</> : <>Por apenas <b className="text-white">{brl(price)}</b></>}
             </p>
+            {discount && <p className="mt-2 inline-block rounded-full px-3 py-1 text-xs font-bold text-white" style={{ background: offer.accent_color }}>Condição válida até {new Date(discount.until).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às')}</p>}
             <p className="mt-1.5 flex items-center justify-center gap-1.5 text-xs text-white/50"><Lock className="h-3.5 w-3.5" /> Pagamento seguro via Pix · acesso imediato</p>
           </div>
         ) : (
@@ -177,7 +188,7 @@ export default function OfferPage() {
         {offer.guarantee && <p className="mt-6 flex max-w-[540px] items-center gap-2.5 text-left text-sm text-white/65"><ShieldCheck className="h-6 w-6 shrink-0" style={{ color: offer.accent_color }} /> {offer.guarantee}</p>}
         {offer.checkout.store.name && <p className="mt-10 text-xs text-white/30">{offer.checkout.store.name}{offer.checkout.store.document ? ` · ${offer.checkout.store.document}` : ''}</p>}
       </main>
-      {open && <PaySheet offer={offer} price={price} from={from} prefill={prefill.data?.customer ?? null} onClose={() => setOpen(false)} />}
+      {open && <PaySheet offer={offer} price={price} normal={normal} discounted={Boolean(discount)} from={from} prefill={prefill.data?.customer ?? null} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -280,7 +291,7 @@ function Vsl({ offer, onReach }: { offer: Offer; onReach?: () => void }) {
 }
 
 /** Painel de pagamento: compra em um toque (cadastro conhecido) ou formulário → Pix na página → acesso liberado. */
-function PaySheet({ offer, price, from, prefill, onClose }: { offer: Offer; price: number; from: { o: string; wa: string }; prefill: Prefill | null; onClose: () => void }) {
+function PaySheet({ offer, price, normal, discounted, from, prefill, onClose }: { offer: Offer; price: number; normal: number; discounted: boolean; from: { o: string; wa: string }; prefill: Prefill | null; onClose: () => void }) {
   const club = offer.checkout.club;
   const needCpf = Boolean(club?.auto);
   const [editing, setEditing] = useState(!prefill);
@@ -307,14 +318,14 @@ function PaySheet({ offer, price, from, prefill, onClose }: { offer: Offer; pric
   const create = useMutation({
     mutationFn: () => {
       const tracking = { ...collectTracking(), offer: offer.slug };
-      return oneTap
-        ? publicApi.post<{ token: string; order: Order }>(`/offers/${offer.slug}/buy`, { ...(from.o ? { o: from.o } : {}), ...(from.wa ? { wa: from.wa } : {}), ...(askCpf ? { document: digits(v.document) } : {}), tracking })
-        : publicApi.post<{ token: string; order: Order }>('/orders', {
-            checkout_slug: offer.checkout_slug,
-            customer: { name: v.name.trim(), email: v.email.trim(), phone: nationalPhone(v.phone), document: needCpf ? digits(v.document) : null },
-            bump_ids: [],
-            tracking,
-          });
+      // sempre pela página: o servidor confere o link (desconto da última chamada) e usa o cadastro de quem veio do pedido/áudio
+      return publicApi.post<{ token: string; order: Order }>(`/offers/${offer.slug}/buy`, {
+        ...(from.o ? { o: from.o } : {}),
+        ...(from.wa ? { wa: from.wa } : {}),
+        ...(askCpf ? { document: digits(v.document) } : {}),
+        ...(oneTap ? {} : { customer: { name: v.name.trim(), email: v.email.trim(), phone: nationalPhone(v.phone) } }),
+        tracking,
+      });
     },
     onSuccess: (r) => setToken(r.token),
   });
@@ -381,7 +392,7 @@ function PaySheet({ offer, price, from, prefill, onClose }: { offer: Offer; pric
           <div>
             <p className="text-xs font-bold uppercase tracking-wide" style={{ color: accent }}>{o?.status === 'paid' ? 'Tudo certo' : 'Falta pouco'}</p>
             <h2 className="text-lg font-bold leading-snug">{offer.checkout.product.name}</h2>
-            <p className="text-sm text-zinc-500">{club ? `${brl(price)}/mês${club.plan ? ` · Plano ${club.plan}` : ''}` : brl(price)}</p>
+            <p className="text-sm text-zinc-500">{discounted ? <>1º mês <b className="text-zinc-900">{brl(price)}</b> · depois {brl(normal)}{club ? '/mês' : ''}</> : club ? `${brl(price)}/mês${club.plan ? ` · Plano ${club.plan}` : ''}` : brl(price)}</p>
           </div>
           {o?.status !== 'paid' && (
             <button type="button" onClick={onClose} aria-label="Fechar" className="rounded-full p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"><X className="h-5 w-5" /></button>
@@ -411,7 +422,7 @@ function PaySheet({ offer, price, from, prefill, onClose }: { offer: Offer; pric
             )}
             {create.error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{create.error instanceof ApiError ? create.error.message : 'Não foi possível gerar o Pix. Tente de novo.'}</p>}
             <button type="submit" disabled={create.isPending} className={cta} style={{ background: accent }}>
-              {create.isPending ? <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <QrCode className="h-5 w-5" />} {create.isPending ? 'Gerando seu Pix…' : oneTap ? `Pagar ${brl(price)} com Pix` : 'Pagar com Pix'}
+              {create.isPending ? <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <QrCode className="h-5 w-5" />} {create.isPending ? 'Gerando seu Pix…' : `Pagar ${brl(price)} com Pix`}
             </button>
             {club?.auto && <p className="flex items-start gap-1.5 text-xs text-zinc-500"><Repeat className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Ao pagar, o app do banco pede para autorizar o Pix Automático: confirme para renovar sozinho todo mês. Cancele quando quiser.</p>}
           </form>

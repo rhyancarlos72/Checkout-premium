@@ -4,7 +4,7 @@ import { RECOVERY_ORDER_SELECT, sendRecoveryForOrder } from './email.js';
 import { sendWhatsAppRecoveries } from './whatsapp.js';
 import { fulfill, notifyPixExpired, retryFailedTracking, syncOrderWithProvider } from './orders.js';
 import { runSubscriptionJobs } from './subscriptions.js';
-import { processWaQueue, runUpsellBackfill } from './waAudio.js';
+import { processWaQueue, runUpsellBackfill, scheduleUpsell2 } from './waAudio.js';
 import { getSettings } from './settings.js';
 import { orgOfOrder, runAsOrg } from '../lib/tenant.js';
 import { refreshPendingInvoices } from './invoices.js';
@@ -146,6 +146,7 @@ export async function runJobs() {
     await retryDeliveries();
     await retryFailedTracking().catch((e) => logger.warn({ err: (e as Error)?.message }, 'Reenvio de eventos falhou'));
     await runSubscriptionJobs().catch((e) => logger.warn({ err: (e as Error)?.message }, 'Rotina das assinaturas falhou'));
+    await scheduleUpsell2().catch((e) => logger.warn({ err: (e as Error)?.message }, 'Última chamada do upsell falhou'));
     await runUpsellBackfill().catch((e) => logger.warn({ err: (e as Error)?.message }, 'Upsell para compradores antigos falhou'));
     await refreshPendingInvoices();
   } catch (e) {

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { HttpError, supabase } from '../lib/core.js';
 import { createOrder } from './orders.js';
-import { isLinkToken } from './waAudio.js';
+import { isLinkToken, upsell2Coupon, upsell2Discount } from './waAudio.js';
 
 /**
  * Páginas de vendas de upsell: título + vídeo (VSL) + botão; o pagamento acontece na própria página
@@ -106,6 +106,11 @@ async function offerCustomer(q: { wa?: unknown; o?: unknown }) {
   const { data } = await supabase.from('customers').select('name, email, phone, document').eq('id', id).maybeSingle();
   return (data as { name: string; email: string; phone: string | null; document: string | null } | null) ?? null;
 }
+/** Última chamada (?wa= de um link de upsell 2 ainda válido): o 1º mês sai pelo preço da campanha. */
+export async function offerDiscount(q: { wa?: unknown }) {
+  return upsell2Discount(q.wa).catch(() => null);
+}
+
 export async function offerPrefill(q: { wa?: unknown; o?: unknown }) {
   const c = await offerCustomer(q);
   // o CPF nunca sai do servidor: só avisa se já está no cadastro (compra a um toque sem pedir de novo)
@@ -116,18 +121,26 @@ export async function offerPrefill(q: { wa?: unknown; o?: unknown }) {
  * Compra a um toque na página de vendas: quem veio de um pedido pago (?o=) ou do link do áudio (?wa=)
  * compra com os dados do cadastro (o CPF, se já houver, é usado aqui no servidor). Sem cadastro: 400 (usa o formulário).
  */
-export async function buyOffer(slug: string, body: { o?: unknown; wa?: unknown; document?: unknown; tracking?: unknown }, meta: { ip: string | null; userAgent: string | null; geo?: Record<string, string> }) {
+export async function buyOffer(
+  slug: string,
+  body: { o?: unknown; wa?: unknown; document?: unknown; tracking?: unknown; customer?: { name: string; email: string; phone?: string | null } | null },
+  meta: { ip: string | null; userAgent: string | null; geo?: Record<string, string> },
+) {
   const p = await loadOffer(slug);
-  const c = await offerCustomer(body);
+  // dados digitados no formulário (ou "alterar") têm prioridade; senão, o cadastro de quem veio do pedido/áudio
+  const known = await offerCustomer(body);
+  const c = body.customer?.email ? { ...body.customer, phone: body.customer.phone ?? null, document: known && known.email === body.customer.email ? known.document : null } : known;
   if (!c?.email || !c.name) throw new HttpError(400, 'Preencha seus dados para continuar');
   const doc = typeof body.document === 'string' && body.document.replace(/\D/g, '').length >= 11 ? body.document : c.document;
+  // última chamada: o desconto do 1º mês vale só pelo link válido (o cupom nunca aparece na página)
+  const coupon = (await offerDiscount(body)) ? await upsell2Coupon(p.checkout.slug).catch(() => null) : null;
   const tracking = body.tracking && typeof body.tracking === 'object' ? (body.tracking as Record<string, unknown>) : {};
   return createOrder(
     {
       checkout_slug: p.checkout.slug,
       customer: { name: c.name, email: c.email, phone: c.phone, document: doc ?? null },
       bump_ids: [],
-      coupon_code: null,
+      coupon_code: coupon,
       tracking: { ...tracking, offer: p.slug },
       payment_method: 'pix',
       card: null,
