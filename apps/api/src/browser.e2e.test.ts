@@ -912,3 +912,41 @@ describe.skipIf(!RUN)('upsell redirecionado para a página de vendas', () => {
     }
   }, 60_000);
 });
+
+describe.skipIf(!RUN)('página upsell modelo Destaque no navegador', () => {
+  it('faixa animada, foto de fundo, título com palavras coloridas, preço grande e botão (celular e computador)', async () => {
+    const now = new Date().toISOString();
+    db.upsell_pages = (db.upsell_pages ?? []).filter((x) => x.slug !== 'destaque');
+    db.upsell_pages.push({ id: '0e000000-0000-4000-8000-000000000009', slug: 'destaque', checkout_id: '00000000-0000-4000-8000-0000000000c1', title: 'Destaque', headline: '**Mentoria te auxiliando** nos bloqueios e campanhas **diretamente comigo!**', subheadline: null, video_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/hd.mp4', video_sd_url: null, poster_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/poster.svg', cta_text: 'Sim, eu aceito essa oferta especial!', bullets: [], guarantee: null, button_delay_seconds: 0, active: true, banner_text: null, pre_headline: null, decline_text: 'Não quero, obrigado', video_ratio: '16:9', accent_color: '#22c55e', design: { template: 'spotlight', bg_url: 'https://fake.supabase.co/storage/v1/object/public/media/offers/bg.svg', logo_url: null, marquee: 'CONDIÇÃO ÚNICA, SOMENTE AGORA E NESSA PÁGINA!', price_note: null }, created_at: now, updated_at: now });
+    const svg = (w: number, h: number, txt: string, a: string, b: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${a}"/><stop offset="1" stop-color="${b}"/></linearGradient></defs><rect width="${w}" height="${h}" fill="url(#g)"/><circle cx="${w * 0.78}" cy="${h * 0.4}" r="${h * 0.28}" fill="#3f3f46"/><text x="${w / 2}" y="${h / 2}" font-family="sans-serif" font-size="48" font-weight="800" fill="#fff" text-anchor="middle">${txt}</text></svg>`;
+    for (const [label, viewport] of [['celular', { width: 390, height: 844 }], ['computador', { width: 1366, height: 860 }]] as const) {
+      const ctx = await browser.newContext({ viewport, locale: 'pt-BR', reducedMotion: 'reduce' });
+      const p = await ctx.newPage();
+      await p.route('https://fake.supabase.co/storage/v1/object/public/media/offers/**', (rt: any) => {
+        const u = rt.request().url();
+        if (u.endsWith('bg.svg')) return rt.fulfill({ contentType: 'image/svg+xml', body: svg(1600, 900, '', '#052e16', '#111827') });
+        if (u.endsWith('.svg')) return rt.fulfill({ contentType: 'image/svg+xml', body: svg(1280, 720, 'Toque e assista', '#14532d', '#000') });
+        return rt.fulfill({ status: 404, body: '' });
+      });
+      try {
+        await p.goto(`${base}/oferta/destaque`);
+        await p.getByRole('heading', { name: /Mentoria te auxiliando nos bloqueios/ }).waitFor();
+        // palavras entre ** na cor de destaque
+        const color = await p.getByText('Mentoria te auxiliando', { exact: true }).evaluate((el) => getComputedStyle(el).color);
+        expect(color).toBe('rgb(34, 197, 94)');
+        expect(await p.getByText('CONDIÇÃO ÚNICA, SOMENTE AGORA E NESSA PÁGINA!').count()).toBeGreaterThan(1); // faixa em loop
+        await p.getByText('R$ 19,99').first().waitFor(); // preço grande
+        await p.getByRole('button', { name: 'Sim, eu aceito essa oferta especial!' }).waitFor();
+        await p.waitForTimeout(400);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/oferta-destaque-${label}.png`, fullPage: true });
+        const wide = await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
+        expect(wide).toBe(false);
+        await p.getByRole('button', { name: 'Sim, eu aceito essa oferta especial!' }).click();
+        await p.getByRole('dialog', { name: 'Pagamento' }).waitFor();
+        ok(`[${label}] página upsell modelo Destaque: faixa animada, fundo, título colorido, preço grande e pagamento`);
+      } finally {
+        await ctx.close();
+      }
+    }
+  }, 90_000);
+});

@@ -41,18 +41,31 @@ export const offerSchema = z.object({
   decline_text: z.string().trim().min(2).max(80).default('Não quero, obrigado'),
   video_ratio: z.enum(['16:9', '9:16', '1:1', '4:5']).default('16:9'),
   accent_color: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/, 'Cor inválida').default('#f97316'),
+  /** modelo da página: "classic" (atual) ou "spotlight" (faixa animada, foto de fundo, logo, preço em destaque) */
+  design: z
+    .object({
+      template: z.enum(['classic', 'spotlight']).default('classic'),
+      bg_url: httpsUrl,
+      logo_url: httpsUrl,
+      marquee: z.string().trim().max(120).nullable().optional().transform((v) => v || null),
+      price_note: z.string().trim().max(140).nullable().optional().transform((v) => v || null),
+    })
+    .prefault({}),
 });
 /** campos da migração 20261121 (visual VSL): sem o SQL, a página segue com o visual básico */
 export const OFFER_NEW_FIELDS = ['banner_text', 'pre_headline', 'decline_text', 'video_ratio', 'accent_color'] as const;
-export const missingOfferColumns = (e: { message?: string } | null) => !!e && /banner_text|pre_headline|decline_text|video_ratio|accent_color|page_id|schema cache|column/i.test(e.message ?? '');
+export const missingOfferColumns = (e: { message?: string } | null) => !!e && /banner_text|pre_headline|decline_text|video_ratio|accent_color|design|page_id|schema cache|column/i.test(e.message ?? '');
 export type OfferInput = z.infer<typeof offerSchema>;
 
 export const OFFER_SELECT_BASE = 'id, slug, checkout_id, title, headline, subheadline, video_url, video_sd_url, poster_url, cta_text, bullets, guarantee, button_delay_seconds, active, created_at, updated_at, checkout:checkouts(slug, name)';
-export const OFFER_SELECT = `${OFFER_SELECT_BASE.replace(', checkout:', ', banner_text, pre_headline, decline_text, video_ratio, accent_color, checkout:')}`;
-/** Consulta com os campos novos; se o SQL novo ainda não rodou, consulta sem eles. */
+export const OFFER_SELECT_VSL = `${OFFER_SELECT_BASE.replace(', checkout:', ', banner_text, pre_headline, decline_text, video_ratio, accent_color, checkout:')}`;
+export const OFFER_SELECT = OFFER_SELECT_VSL.replace(', checkout:', ', design, checkout:');
+/** Consulta com os campos novos; se algum SQL novo ainda não rodou, consulta sem eles (a página nunca sai do ar). */
 export async function selectOffers<T>(run: (select: string) => PromiseLike<{ data: T; error: any }>) {
-  const r = await run(OFFER_SELECT);
-  return r.error && missingOfferColumns(r.error) ? run(OFFER_SELECT_BASE) : r;
+  let r = await run(OFFER_SELECT);
+  if (r.error && missingOfferColumns(r.error)) r = await run(OFFER_SELECT_VSL);
+  if (r.error && missingOfferColumns(r.error)) r = await run(OFFER_SELECT_BASE);
+  return r;
 }
 
 /** Página ativa pelo endereço (com o checkout que cobra). */
@@ -81,6 +94,7 @@ export function publicOffer(p: any) {
     decline_text: p.decline_text || 'Não quero, obrigado',
     video_ratio: p.video_ratio || '16:9',
     accent_color: p.accent_color || '#f97316',
+    design: { template: p.design?.template === 'spotlight' ? 'spotlight' : 'classic', bg_url: p.design?.bg_url ?? null, logo_url: p.design?.logo_url ?? null, marquee: p.design?.marquee ?? null, price_note: p.design?.price_note ?? null },
   };
 }
 

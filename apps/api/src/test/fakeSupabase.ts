@@ -55,7 +55,7 @@ function withDefaults(t: string, r: Row): Row {
   if (t === 'wa_links') row.clicks ??= 0;
   if (t === 'wa_contacts') (row.status ??= 'pending'), (row.list_name ??= 'Importados');
   if (t === 'wa_audios') row.active ??= true;
-  if (t === 'upsell_pages') (row.active ??= true), (row.bullets ??= []), (row.cta_text ??= 'Quero entrar agora'), (row.button_delay_seconds ??= 0);
+  if (t === 'upsell_pages') (row.design ??= {}), (row.active ??= true), (row.bullets ??= []), (row.cta_text ??= 'Quero entrar agora'), (row.button_delay_seconds ??= 0);
   // marketplace: imita o trigger do banco que preenche org_id pelo "pai" (produto, checkout, pedido)
   if (TENANT.has(t) && row.org_id == null && (db.organizations ?? []).length) {
     const find = (tb: string, id: unknown) => (db[tb] ?? []).find((x) => x.id === id)?.org_id;

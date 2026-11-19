@@ -20,7 +20,7 @@ import { runJobs } from '../services/jobs.js';
 import { clearCheckoutCache, dispatchTracking, resendDelivery, syncOrderWithProvider } from '../services/orders.js';
 import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
-import { OFFER_NEW_FIELDS, OFFER_SELECT, OFFER_SELECT_BASE, missingOfferColumns, offerSchema, offerStats, selectOffers } from '../services/offers.js';
+import { OFFER_NEW_FIELDS, OFFER_SELECT, OFFER_SELECT_BASE, OFFER_SELECT_VSL, missingOfferColumns, offerSchema, offerStats, selectOffers } from '../services/offers.js';
 import { importContacts, importSchema, contactsSummary, deleteContactList } from '../services/waContacts.js';
 import { backfillStatus, clearContactsPause, contactsPauseInfo, evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
 import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, phoneVariants, saveWhatsAppConfig, sendWhatsAppAudio, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
@@ -1385,6 +1385,7 @@ adminRouter.get('/upsell-pages', async (_req, res) => {
     sql_hint: pages.error ? (offerMissing(pages.error) ? OFFER_SQL_MSG : pages.error.message) : null,
     // SQL do visual novo ainda não rodou: o editor avisa (os campos novos não são salvos)
     vsl_ready: !pages.error && (!list.length || 'accent_color' in list[0]),
+    design_ready: !pages.error && (!list.length || 'design' in list[0]), // SQL dos modelos (20261124)
     pages: list.map((p) => ({ ...p, stats: stats.get(p.slug), url: `${env.PUBLIC_URL}/oferta/${p.slug}` })),
     checkouts: ((checkouts.data ?? []) as any[]).filter((c) => c.active !== false).map((c) => ({ id: c.id, slug: c.slug, name: c.name, product: c.product?.name ?? null, club: Boolean(c.product?.club) })),
   });
@@ -1394,9 +1395,15 @@ const saveOffer = async (id: string | null, body: unknown) => {
   const row: Record<string, unknown> = { ...v, updated_at: new Date().toISOString() };
   const run = (r: Record<string, unknown>, sel: string) => (id ? supabase.from('upsell_pages').update(r).eq('id', id) : supabase.from('upsell_pages').insert(r)).select(sel).maybeSingle();
   let { data, error } = await run(row, OFFER_SELECT);
+  if (error && /design/i.test(error.message ?? '') && !offerMissing(error)) {
+    // SQL dos modelos ainda não rodou: salva o resto (a página segue no modelo clássico)
+    delete row.design;
+    ({ data, error } = await run(row, OFFER_SELECT_VSL));
+  }
   if (error && missingOfferColumns(error) && !offerMissing(error)) {
     // SQL do visual novo ainda não rodou: salva o resto
     for (const k of OFFER_NEW_FIELDS) delete row[k];
+    delete row.design;
     ({ data, error } = await run(row, OFFER_SELECT_BASE));
   }
   if (error) {

@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Check, Copy, ExternalLink, Film, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Card, cn, EmptyState, Field, Input, Modal, PageLoader, Select, Switch, Textarea, useToast } from '@/components/ui';
+import { ImageUpload } from '@/components/ImageUpload';
 import { adminApi, ApiError } from '@/lib/api';
-import { brl } from '@/lib/format';
+import { brl, contrastText } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
 import { PageHeader } from './AdminApp';
 
@@ -31,13 +32,17 @@ interface Page {
   decline_text: string;
   video_ratio: '16:9' | '9:16' | '1:1' | '4:5';
   accent_color: string;
+  /** modelo da página: "classic" (atual) ou "spotlight" (Destaque) */
+  design?: Design | null;
   url: string;
   checkout: { slug: string; name: string } | null;
   stats?: { views: number; clicks: number; orders: number; paid: number; revenue_cents: number };
 }
+interface Design { template: 'classic' | 'spotlight'; bg_url: string | null; logo_url: string | null; marquee: string | null; price_note: string | null }
+const DESIGN0: Design = { template: 'classic', bg_url: null, logo_url: null, marquee: '', price_note: '' };
 interface CheckoutOpt { id: string; slug: string; name: string; product: string | null; club: boolean }
-interface Data { ready: boolean; vsl_ready?: boolean; sql_hint: string | null; pages: Page[]; checkouts: CheckoutOpt[] }
-type Form = Omit<Page, 'id' | 'url' | 'checkout' | 'stats'>;
+interface Data { ready: boolean; vsl_ready?: boolean; design_ready?: boolean; sql_hint: string | null; pages: Page[]; checkouts: CheckoutOpt[] }
+type Form = Omit<Page, 'id' | 'url' | 'checkout' | 'stats' | 'design'> & { design: Design };
 
 const empty = (checkoutId = ''): Form => ({
   slug: '',
@@ -58,6 +63,7 @@ const empty = (checkoutId = ''): Form => ({
   decline_text: 'Não quero, obrigado',
   video_ratio: '16:9',
   accent_color: '#f97316',
+  design: DESIGN0,
 });
 const ACCENTS = ['#f97316', '#ef4444', '#22c55e', '#2563eb', '#a855f7', '#eab308'];
 const slugify = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
@@ -102,6 +108,11 @@ export default function UpsellPagesPage() {
         subtitle="Página de vendas curta: vídeo da oferta + botão, e o Pix na própria página. Depois de pagar, a pessoa já entra na área de membros."
         action={<Button disabled={!data.ready} onClick={() => setEditing({ id: null, form: empty(club?.id ?? '') })}><Plus className="h-4 w-4" /> Nova página</Button>}
       />
+      {data.ready && data.design_ready === false && (
+        <Card className="mb-4 border-amber-300 bg-amber-50">
+          <p className="text-sm font-medium text-amber-800">Rode no Supabase o SQL dos modelos de página (supabase/migrations/20261124000000_upsell_page_design.sql). Até lá, o modelo Destaque não é salvo.</p>
+        </Card>
+      )}
       {data.ready && data.vsl_ready === false && (
         <Card className="mb-4 border-amber-300 bg-amber-50">
           <p className="text-sm font-medium text-amber-800">Rode no Supabase o SQL do visual novo (supabase/migrations/20261121000000_upsell_redirect.sql). Até lá, a faixa do topo, a cor e o formato do vídeo não são salvos.</p>
@@ -187,6 +198,7 @@ const formOf = (p: Page): Form => ({
   decline_text: p.decline_text || 'Não quero, obrigado',
   video_ratio: p.video_ratio || '16:9',
   accent_color: p.accent_color || '#f97316',
+  design: { ...DESIGN0, ...(p.design ?? {}), marquee: p.design?.marquee ?? '', price_note: p.design?.price_note ?? '' },
 });
 
 // ------------------------------------------------------------------ editor
@@ -206,6 +218,20 @@ function Editor({ initial, id, checkouts, onClose, onSaved }: { initial: Form; i
     <Modal open onClose={onClose} title={id ? 'Editar página upsell' : 'Nova página upsell'} wide>
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="space-y-4">
+          <div>
+            <p className="mb-1.5 text-sm font-medium text-gray-700">Modelo da página</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {([
+                ['classic', 'Clássico', 'Faixa no topo, título em caixa alta, vídeo e botão grande.'],
+                ['spotlight', 'Destaque', 'Faixa animada, sua foto de fundo, logo, título com palavras coloridas e preço grande.'],
+              ] as const).map(([k, t, d]) => (
+                <button key={k} type="button" onClick={() => set({ design: { ...f.design, template: k } })} className={cn('rounded-xl border p-3 text-left transition', f.design.template === k ? 'border-blue-600 ring-2 ring-blue-600/25' : 'border-zinc-200 hover:border-zinc-300')}>
+                  <span className="block text-sm font-semibold text-zinc-900">{t}</span>
+                  <span className="mt-0.5 block text-xs text-zinc-500">{d}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           <Field label="Produto (checkout que cobra)" hint="O preço e o Pix vêm deste checkout. Para o Clube, escolha o checkout do Clube (Pix Automático).">
             <Select value={f.checkout_id} onChange={(e) => set({ checkout_id: e.target.value })}>
               <option value="">Escolha…</option>
@@ -222,9 +248,21 @@ function Editor({ initial, id, checkouts, onClose, onSaved }: { initial: Form; i
               <Input value={f.slug} onChange={(e) => (setSlugTouched(true), set({ slug: slugify(e.target.value) }))} placeholder="clube" />
             </Field>
           </div>
-          <Field label="Faixa do topo (opcional)"><Input value={f.banner_text ?? ''} onChange={(e) => set({ banner_text: e.target.value })} placeholder="🎁 PRESENTE DESBLOQUEADO!" maxLength={80} /></Field>
+          {f.design.template === 'spotlight' ? (
+            <div className="space-y-4 rounded-xl border border-zinc-200 p-4">
+              <p className="text-sm font-semibold text-zinc-900">Modelo Destaque</p>
+              <Field label="Faixa animada (texto que passa no topo)"><Input value={f.design.marquee ?? ''} onChange={(e) => set({ design: { ...f.design, marquee: e.target.value } })} placeholder="CONDIÇÃO ÚNICA, SOMENTE AGORA E NESSA PÁGINA!" maxLength={120} /></Field>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <ImageUpload kind="banner" label="Foto de fundo (ex.: sua foto)" value={f.design.bg_url} onChange={(url) => set({ design: { ...f.design, bg_url: url || null } })} />
+                <ImageUpload kind="logo" label="Logo (PNG sem fundo, opcional)" value={f.design.logo_url} onChange={(url) => set({ design: { ...f.design, logo_url: url || null } })} />
+              </div>
+              <Field label="Linha abaixo do preço (opcional)" hint="Vazio = “Cancele quando quiser · acesso imediato”"><Input value={f.design.price_note ?? ''} onChange={(e) => set({ design: { ...f.design, price_note: e.target.value } })} maxLength={140} /></Field>
+            </div>
+          ) : (
+            <Field label="Faixa do topo (opcional)"><Input value={f.banner_text ?? ''} onChange={(e) => set({ banner_text: e.target.value })} placeholder="🎁 PRESENTE DESBLOQUEADO!" maxLength={80} /></Field>
+          )}
           <Field label="Texto pequeno acima do título (opcional)"><Input value={f.pre_headline ?? ''} onChange={(e) => set({ pre_headline: e.target.value })} placeholder="Assista à sua primeira aula até o final" maxLength={120} /></Field>
-          <Field label="Título grande"><Input value={f.headline} onChange={(e) => set({ headline: e.target.value })} placeholder="Atividades prontas toda semana para a sua turma" maxLength={200} /></Field>
+          <Field label="Título grande" hint="Coloque palavras entre **asteriscos** para destacar na cor (ex.: **Mentoria te auxiliando** nos bloqueios)."><Input value={f.headline} onChange={(e) => set({ headline: e.target.value })} placeholder="Atividades prontas toda semana para a sua turma" maxLength={200} /></Field>
           <Field label="Subtítulo (opcional)"><Textarea rows={2} value={f.subheadline ?? ''} onChange={(e) => set({ subheadline: e.target.value })} maxLength={400} /></Field>
 
           <VideoUpload value={f} onChange={(v) => set(v)} />
@@ -283,7 +321,34 @@ function Editor({ initial, id, checkouts, onClose, onSaved }: { initial: Form; i
 }
 
 /** Prévia em formato de celular. */
+function PreviewHighlight({ text, accent }: { text: string; accent: string }) {
+  return <>{text.split(/(\*\*[^*]+\*\*)/g).map((t, i) => (t.startsWith('**') && t.endsWith('**') ? <span key={i} style={{ color: accent }}>{t.slice(2, -2)}</span> : <span key={i}>{t}</span>))}</>;
+}
 function Preview({ f }: { f: Form }) {
+  if (f.design.template === 'spotlight') {
+    const marquee = f.design.marquee || f.banner_text;
+    return (
+      <div className="hidden lg:block">
+        <p className="mb-2 text-xs font-medium text-zinc-500">Prévia (celular) · Destaque</p>
+        <div className="sticky top-4 overflow-hidden rounded-[28px] border-[6px] border-zinc-800 bg-black text-center text-white">
+          {marquee && <div className="truncate py-1.5 text-[8px] font-extrabold uppercase" style={{ background: f.accent_color, color: contrastText(f.accent_color) }}>{marquee} • {marquee}</div>}
+          <div className="relative isolate px-3 pb-6 pt-3">
+            {f.design.bg_url && <img src={f.design.bg_url} alt="" className="absolute inset-0 -z-20 h-full w-full object-cover opacity-60" />}
+            <div className="absolute inset-0 -z-10 bg-gradient-to-b from-black/70 via-black/80 to-black" />
+            {f.design.logo_url && <img src={f.design.logo_url} alt="" className="mx-auto mb-1.5 h-7 w-auto object-contain" />}
+            <p className="text-[13px] font-extrabold leading-tight"><PreviewHighlight text={f.headline || 'Título grande'} accent={f.accent_color} /></p>
+            <div className="relative mx-auto mt-3 overflow-hidden rounded-lg bg-zinc-900" style={{ aspectRatio: f.video_ratio.replace(':', ' / '), width: f.video_ratio === '9:16' ? '62%' : f.video_ratio === '16:9' ? '100%' : '80%' }}>
+              {f.poster_url ? <img src={f.poster_url} alt="" className="h-full w-full object-cover" /> : <Film className="absolute inset-0 m-auto h-6 w-6 text-zinc-600" />}
+            </div>
+            <p className="mt-3 text-[22px] font-black leading-none" style={{ color: f.accent_color }}>R$ 9,90<span className="text-[11px] text-white">/mês</span></p>
+            <p className="mt-1 text-[8px] text-white/70">{f.design.price_note || 'Cancele quando quiser · acesso imediato'}</p>
+            <div className="mt-2.5 rounded-md px-3 py-2 text-[10px] font-bold" style={{ background: f.accent_color, color: contrastText(f.accent_color) }}>{f.cta_text || 'Botão'}</div>
+            {f.decline_text && <p className="mt-2 text-[8px] text-white/45 underline">{f.decline_text}</p>}
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="hidden lg:block">
       <p className="mb-2 text-xs font-medium text-zinc-500">Prévia (celular)</p>
@@ -291,7 +356,7 @@ function Preview({ f }: { f: Form }) {
         {f.banner_text && <div className="py-1.5 text-[9px] font-extrabold uppercase" style={{ background: f.accent_color }}>{f.banner_text}</div>}
         <div className="px-3 pt-3">
           {f.pre_headline && <p className="text-[9px] font-semibold text-white/90">{f.pre_headline}</p>}
-          <p className="mt-1 text-[14px] font-black uppercase leading-tight">{f.headline || 'Título grande'}</p>
+          <p className="mt-1 text-[14px] font-black uppercase leading-tight"><PreviewHighlight text={f.headline || 'Título grande'} accent={f.accent_color} /></p>
           {f.subheadline && <p className="mt-1.5 text-[10px] text-white/70">{f.subheadline}</p>}
           <div className="relative mx-auto mt-3 overflow-hidden rounded-xl bg-zinc-900" style={{ aspectRatio: f.video_ratio.replace(':', ' / '), width: f.video_ratio === '9:16' ? '62%' : f.video_ratio === '16:9' ? '100%' : '80%' }}>
             {f.poster_url ? <img src={f.poster_url} alt="" className="h-full w-full object-cover" /> : <Film className="absolute inset-0 m-auto h-6 w-6 text-zinc-600" />}

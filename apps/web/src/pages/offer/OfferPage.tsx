@@ -3,7 +3,7 @@ import { Check, Copy, ExternalLink, Lock, Play, QrCode, Repeat, ShieldCheck, Vol
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { ApiError, publicApi } from '@/lib/api';
-import { brl, digits, isValidCpf, maskDocument, maskPhone, nationalPhone } from '@/lib/format';
+import { brl, contrastText, digits, isValidCpf, maskDocument, maskPhone, nationalPhone } from '@/lib/format';
 import { collectTracking, initMetaPixel, pixel, setPixelUser, track, visitorExternalId } from '@/lib/tracking';
 
 /**
@@ -28,6 +28,8 @@ interface Offer {
   decline_text: string;
   video_ratio: '16:9' | '9:16' | '1:1' | '4:5';
   accent_color: string;
+  /** modelo: "classic" (atual) ou "spotlight" (faixa animada, foto de fundo, logo, preço em destaque) */
+  design?: { template: 'classic' | 'spotlight'; bg_url: string | null; logo_url: string | null; marquee: string | null; price_note: string | null };
   checkout: {
     slug: string;
     price_cents: number;
@@ -136,9 +138,64 @@ export default function OfferPage() {
     pixel('InitiateCheckout', { value: price / 100, currency: 'BRL', content_name: offer.checkout.product.name, content_type: 'product', num_items: 1 });
   };
   const style = { '--accent': offer.accent_color } as CSSProperties;
+  const decline = from.o && /^[a-f0-9]{48}$/.test(from.o) ? `/pedido/${from.o}?upsell=nao` : null;
+  const parts: Parts = { offer, price, normal, discount, club, showButton, openSheet, unlock, decline };
 
   return (
     <div className="min-h-screen bg-black text-white" style={style}>
+      {offer.design?.template === 'spotlight' ? <Spotlight {...parts} /> : <Classic {...parts} />}
+      {open && <PaySheet offer={offer} price={price} normal={normal} discounted={Boolean(discount)} from={from} prefill={prefill.data?.customer ?? null} onClose={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+type Parts = {
+  offer: Offer;
+  price: number;
+  normal: number;
+  discount: Discount | null;
+  club: Offer['checkout']['club'];
+  showButton: boolean;
+  openSheet: () => void;
+  unlock: () => void;
+  decline: string | null;
+};
+
+/** Título com destaque: o que estiver entre **asteriscos** sai na cor de destaque. */
+function Highlight({ text, accent }: { text: string; accent: string }) {
+  return (
+    <>
+      {text.split(/(\*\*[^*]+\*\*)/g).map((t, i) =>
+        t.startsWith('**') && t.endsWith('**') ? <span key={i} style={{ color: accent }}>{t.slice(2, -2)}</span> : <span key={i}>{t}</span>,
+      )}
+    </>
+  );
+}
+const until = (d: Discount) => new Date(d.until).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às');
+
+/** Benefícios, garantia e loja (iguais nos dois modelos). */
+function Extras({ offer }: { offer: Offer }) {
+  return (
+    <>
+      {offer.bullets.length > 0 && (
+        <ul className="mt-9 grid w-full max-w-[540px] gap-2.5 text-left">
+          {offer.bullets.map((b, i) => (
+            <li key={i} className="flex items-start gap-3 rounded-xl bg-white/[.05] px-4 py-3 text-[15px] ring-1 ring-white/[.07] backdrop-blur-sm">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full" style={{ background: offer.accent_color }}><Check className="h-3 w-3" style={{ color: contrastText(offer.accent_color) }} strokeWidth={4} /></span> {b}
+            </li>
+          ))}
+        </ul>
+      )}
+      {offer.guarantee && <p className="mt-6 flex max-w-[540px] items-center gap-2.5 text-left text-sm text-white/65"><ShieldCheck className="h-6 w-6 shrink-0" style={{ color: offer.accent_color }} /> {offer.guarantee}</p>}
+      {offer.checkout.store.name && <p className="mt-10 text-xs text-white/30">{offer.checkout.store.name}{offer.checkout.store.document ? ` · ${offer.checkout.store.document}` : ''}</p>}
+    </>
+  );
+}
+
+/** Modelo clássico (o atual): faixa no topo, título em caixa alta, vídeo e botão "respirando". */
+function Classic({ offer, price, normal, discount, club, showButton, openSheet, unlock, decline }: Parts) {
+  return (
+    <>
       {offer.banner_text && (
         <div className="offer-shine relative overflow-hidden py-2.5 text-center text-[13px] font-extrabold uppercase tracking-wide sm:text-sm" style={{ background: offer.accent_color }}>
           {offer.banner_text}
@@ -146,7 +203,7 @@ export default function OfferPage() {
       )}
       <main className="mx-auto flex max-w-[820px] flex-col items-center px-4 pb-16 pt-7 text-center sm:pt-10">
         {offer.pre_headline && <p className="text-[14px] font-semibold text-white/90 sm:text-base">{offer.pre_headline}</p>}
-        <h1 className="mt-2 text-balance text-[25px] font-black uppercase leading-[1.12] tracking-tight sm:text-[38px]">{offer.headline}</h1>
+        <h1 className="mt-2 text-balance text-[25px] font-black uppercase leading-[1.12] tracking-tight sm:text-[38px]"><Highlight text={offer.headline} accent={offer.accent_color} /></h1>
         {offer.subheadline && <p className="mt-3 max-w-[620px] text-balance text-[15px] text-white/70 sm:text-lg">{offer.subheadline}</p>}
 
         {offer.video && <Vsl offer={offer} onReach={offer.button_delay_seconds ? unlock : undefined} />}
@@ -166,30 +223,87 @@ export default function OfferPage() {
                 </>
               ) : club ? <><b className="text-white">{brl(price)}/mês</b>{club.plan ? ` · Plano ${club.plan}` : ''} · cancele quando quiser</> : <>Por apenas <b className="text-white">{brl(price)}</b></>}
             </p>
-            {discount && <p className="mt-2 inline-block rounded-full px-3 py-1 text-xs font-bold text-white" style={{ background: offer.accent_color }}>Condição válida até {new Date(discount.until).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às')}</p>}
+            {discount && <p className="mt-2 inline-block rounded-full px-3 py-1 text-xs font-bold text-white" style={{ background: offer.accent_color }}>Condição válida até {until(discount)}</p>}
             <p className="mt-1.5 flex items-center justify-center gap-1.5 text-xs text-white/50"><Lock className="h-3.5 w-3.5" /> Pagamento seguro via Pix · acesso imediato</p>
           </div>
         ) : (
           <p className="mt-6 animate-pulse text-sm font-medium text-white/60">Assista ao vídeo: o botão para entrar aparece logo abaixo.</p>
         )}
-        {from.o && /^[a-f0-9]{48}$/.test(from.o) && (
-          <a href={`/pedido/${from.o}?upsell=nao`} className="mt-5 text-sm text-white/45 underline underline-offset-4 transition hover:text-white/80">{offer.decline_text}</a>
-        )}
-
-        {offer.bullets.length > 0 && (
-          <ul className="mt-9 grid w-full max-w-[540px] gap-2.5 text-left">
-            {offer.bullets.map((b, i) => (
-              <li key={i} className="flex items-start gap-3 rounded-xl bg-white/[.05] px-4 py-3 text-[15px] ring-1 ring-white/[.07]">
-                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full" style={{ background: offer.accent_color }}><Check className="h-3 w-3 text-white" strokeWidth={4} /></span> {b}
-              </li>
-            ))}
-          </ul>
-        )}
-        {offer.guarantee && <p className="mt-6 flex max-w-[540px] items-center gap-2.5 text-left text-sm text-white/65"><ShieldCheck className="h-6 w-6 shrink-0" style={{ color: offer.accent_color }} /> {offer.guarantee}</p>}
-        {offer.checkout.store.name && <p className="mt-10 text-xs text-white/30">{offer.checkout.store.name}{offer.checkout.store.document ? ` · ${offer.checkout.store.document}` : ''}</p>}
+        {decline && <a href={decline} className="mt-5 text-sm text-white/45 underline underline-offset-4 transition hover:text-white/80">{offer.decline_text}</a>}
+        <Extras offer={offer} />
       </main>
-      {open && <PaySheet offer={offer} price={price} normal={normal} discounted={Boolean(discount)} from={from} prefill={prefill.data?.customer ?? null} onClose={() => setOpen(false)} />}
-    </div>
+    </>
+  );
+}
+
+/**
+ * Modelo "Destaque": faixa com o texto passando, foto de fundo escurecida com linhas finas na cor de destaque,
+ * logo, título com palavras coloridas, vídeo, preço GRANDE e botão retangular.
+ */
+function Spotlight({ offer, price, normal, discount, club, showButton, openSheet, unlock, decline }: Parts) {
+  const d = offer.design!;
+  const accent = offer.accent_color;
+  const onAccent = contrastText(accent);
+  const marquee = d.marquee || offer.banner_text;
+  const note = d.price_note || (discount ? `depois ${brl(normal)}${club ? '/mês · cancele quando quiser' : ''}` : club ? 'Cancele quando quiser · acesso imediato' : 'Pagamento único no Pix · acesso imediato');
+  return (
+    <>
+      {marquee && (
+        <div className="overflow-hidden whitespace-nowrap py-3 text-[13px] font-extrabold uppercase tracking-wide sm:py-3.5 sm:text-[15px]" style={{ background: accent, color: onAccent }} aria-label={marquee}>
+          <div className="animate-offer-marquee inline-flex" aria-hidden>
+            {Array.from({ length: 12 }, (_, i) => (
+              <span key={i} className="flex items-center px-4">{marquee}<span className="ml-8 opacity-70">•</span></span>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="relative isolate overflow-hidden">
+        {d.bg_url && <img src={d.bg_url} alt="" className="absolute inset-0 -z-20 h-full w-full object-cover object-[75%_20%] opacity-70 sm:object-[85%_20%]" fetchPriority="high" />}
+        <div className="absolute inset-0 -z-10 bg-gradient-to-b from-black/75 via-black/80 to-black sm:bg-[linear-gradient(90deg,rgba(0,0,0,.55),rgba(0,0,0,.88)_30%,rgba(0,0,0,.88)_70%,rgba(0,0,0,.35)),linear-gradient(180deg,transparent_60%,#000)]" />
+        {/* linhas finas decorativas (só em telas grandes) */}
+        <span className="pointer-events-none absolute left-[5%] top-10 hidden h-[52%] w-[16%] border-l-2 border-t-2 lg:block" style={{ borderColor: accent }}>
+          <span className="absolute -right-1.5 -top-1.5 h-3 w-3 rounded-full" style={{ background: accent }} />
+          <span className="absolute -bottom-1.5 -left-1.5 h-3 w-3 rounded-full" style={{ background: accent }} />
+        </span>
+        <span className="pointer-events-none absolute right-[5%] top-[40%] hidden h-[50%] border-l-2 lg:block" style={{ borderColor: accent }}>
+          <span className="absolute -left-[7px] -top-1.5 h-3 w-3 rounded-full" style={{ background: accent }} />
+        </span>
+
+        <main className="mx-auto flex max-w-[880px] flex-col items-center px-4 pb-16 pt-8 text-center sm:pt-12">
+          {d.logo_url && <img src={d.logo_url} alt="" className="mb-4 h-14 w-auto max-w-[80%] object-contain sm:h-20" />}
+          {offer.pre_headline && <p className="text-[14px] font-semibold text-white/85 sm:text-base">{offer.pre_headline}</p>}
+          <h1 className="mt-2 max-w-[760px] text-balance text-[26px] font-extrabold leading-[1.18] tracking-tight sm:text-[40px]"><Highlight text={offer.headline} accent={accent} /></h1>
+          {offer.subheadline && <p className="mt-3 max-w-[620px] text-balance text-[15px] text-white/75 sm:text-lg">{offer.subheadline}</p>}
+
+          {offer.video && <Vsl offer={offer} onReach={offer.button_delay_seconds ? unlock : undefined} />}
+          {!offer.video && offer.poster && <img src={offer.poster} alt="" className="mt-6 w-full max-w-[640px] rounded-xl shadow-2xl" fetchPriority="high" />}
+
+          <div className="mt-8">
+            {discount && <p className="text-base font-semibold text-white/50 line-through">{brl(normal)}{club ? '/mês' : ''}</p>}
+            <p className="font-black leading-none tracking-tight">
+              {discount && <span className="mr-2 text-[28px] text-white sm:text-[40px]">1º mês</span>}
+              <span className="text-[52px] sm:text-[76px]" style={{ color: accent }}>{brl(discount ? discount.first_cents : price)}</span>
+              {!discount && club && <span className="text-[26px] text-white sm:text-[36px]">/mês</span>}
+            </p>
+            <p className="mt-2 text-[15px] text-white/80 sm:text-base">{note}</p>
+            {discount && <p className="mt-2 text-xs font-semibold uppercase tracking-wide" style={{ color: accent }}>Condição válida até {until(discount)}</p>}
+          </div>
+
+          {showButton ? (
+            <div className="animate-fade-in mt-6 w-full max-w-[460px]">
+              <button type="button" onClick={openSheet} className="w-full rounded-md px-6 py-4 text-[17px] font-bold shadow-[0_0_40px_-8px_var(--accent)] transition hover:brightness-110 active:scale-[.98] sm:text-lg" style={{ background: accent, color: onAccent }}>
+                {offer.cta_text}
+              </button>
+              <p className="mt-2.5 flex items-center justify-center gap-1.5 text-xs text-white/55"><Lock className="h-3.5 w-3.5" /> Pagamento seguro via Pix · acesso imediato</p>
+            </div>
+          ) : (
+            <p className="mt-6 animate-pulse text-sm font-medium text-white/60">Assista ao vídeo: o botão para entrar aparece logo abaixo.</p>
+          )}
+          {decline && <a href={decline} className="mt-5 text-sm text-white/45 underline underline-offset-4 transition hover:text-white/80">{offer.decline_text}</a>}
+          <Extras offer={offer} />
+        </main>
+      </div>
+    </>
   );
 }
 
@@ -267,18 +381,18 @@ function Vsl({ offer, onReach }: { offer: Offer; onReach?: () => void }) {
       />
       {!withSound && (
         <button type="button" aria-label="Clique para ouvir" onClick={listen} className="absolute inset-0 flex items-center justify-center bg-black/10">
-          <span className="animate-offer-ring flex flex-col items-center gap-1.5 rounded-2xl px-6 py-4 shadow-2xl" style={{ background: offer.accent_color }}>
-            <span className="text-[11px] font-bold uppercase tracking-wide text-white/90">Seu vídeo já começou</span>
-            <span className="flex h-16 w-16 items-center justify-center rounded-full border-[5px] border-white">
-              <Play className="ml-1 h-8 w-8 fill-white text-white" />
+          <span className="animate-offer-ring flex flex-col items-center gap-1.5 rounded-2xl px-6 py-4 shadow-2xl" style={{ background: offer.accent_color, color: contrastText(offer.accent_color) }}>
+            <span className="text-[11px] font-bold uppercase tracking-wide opacity-90">Seu vídeo já começou</span>
+            <span className="flex h-16 w-16 items-center justify-center rounded-full border-[5px]" style={{ borderColor: 'currentColor' }}>
+              <Play className="ml-1 h-8 w-8" style={{ fill: 'currentColor' }} />
             </span>
-            <span className="flex items-center gap-1 text-sm font-extrabold text-white"><Volume2 className="h-4 w-4" /> Clique para ouvir</span>
+            <span className="flex items-center gap-1 text-sm font-extrabold"><Volume2 className="h-4 w-4" /> Clique para ouvir</span>
           </span>
         </button>
       )}
       {withSound && paused && (
         <button type="button" aria-label="Continuar o vídeo" onClick={toggle} className="absolute inset-0 flex items-center justify-center bg-black/35">
-          <span className="flex h-20 w-20 items-center justify-center rounded-full shadow-2xl" style={{ background: offer.accent_color }}><Play className="ml-1 h-9 w-9 fill-white text-white" /></span>
+          <span className="flex h-20 w-20 items-center justify-center rounded-full shadow-2xl" style={{ background: offer.accent_color, color: contrastText(offer.accent_color) }}><Play className="ml-1 h-9 w-9" style={{ fill: 'currentColor' }} /></span>
         </button>
       )}
       {withSound && (

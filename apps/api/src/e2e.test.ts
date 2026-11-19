@@ -1783,6 +1783,13 @@ describe('marketplace multiusuário', () => {
       expect(db.upsells.find((u) => u.product_id === P1)!.page_id).toBeNull();
     }
 
+    // modelo "Destaque": salva e a página pública recebe os dados do modelo; endereço que não é https é recusado
+    const sp = await as('owner', 'PUT', `/api/admin/upsell-pages/${created.body.id}`, { ...created.body, checkout: undefined, design: { template: 'spotlight', bg_url: 'https://fake.supabase.co/storage/v1/object/public/media/bg.webp#w=1600&h=900', logo_url: null, marquee: 'CONDIÇÃO ÚNICA, SOMENTE AGORA!', price_note: '' } });
+    expect(sp.status).toBe(200);
+    expect((await api('GET', '/api/public/offers/clube')).body.design).toMatchObject({ template: 'spotlight', marquee: 'CONDIÇÃO ÚNICA, SOMENTE AGORA!', bg_url: expect.stringContaining('bg.webp'), price_note: null });
+    expect((await as('owner', 'PUT', `/api/admin/upsell-pages/${created.body.id}`, { ...created.body, checkout: undefined, design: { template: 'spotlight', bg_url: 'http://inseguro.com/x.jpg' } })).status).toBe(400);
+    expect((await as('owner', 'GET', '/api/admin/upsell-pages')).body.design_ready).toBe(true);
+
     // página pausada sai do ar
     await as('owner', 'PUT', `/api/admin/upsell-pages/${created.body.id}`, { ...created.body, checkout: undefined, active: false });
     expect((await api('GET', '/api/public/offers/clube')).status).toBe(404);

@@ -256,3 +256,8 @@ html.members-dark body {
 @keyframes offer-shine { from { transform: translateX(-120%); } to { transform: translateX(220%); } }
 .offer-shine::after { content: ''; position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent); animation: offer-shine 2.8s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .animate-offer-cta, .animate-offer-ring, .offer-shine::after { animation: none; } }
+
+/* Página upsell modelo "Destaque": faixa com o texto passando em loop */
+@keyframes offer-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+.animate-offer-marquee { animation: offer-marquee 28s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .animate-offer-marquee { animation: none; } }
