@@ -1036,6 +1036,13 @@ adminRouter.put('/gateways/pix-auto', async (req, res) => {
   clearCheckoutCache();
   res.json({ ok: true, message: b.enabled ? 'Pix Automático ligado: os order bumps marcados como assinatura passam a cobrar todo mês.' : 'Pix Automático desligado: os order bumps de assinatura voltam a ser compra única.' });
 });
+/** Testa o Pix Automático na Efí (só consultas) e mostra o último motivo de recusa registrado numa venda. */
+adminRouter.post('/integrations/efi/pix-auto-check', async (_req, res) => {
+  if (!efi.isConfigured()) throw new HttpError(400, 'Configure a Efí primeiro (Client ID, Client Secret, Chave Pix e certificado)');
+  const steps = await efi.diagnoseAuto();
+  const { data: last } = await supabase.from('events').select('data, created_at').eq('type', 'pix_auto_error').order('created_at', { ascending: false }).limit(1);
+  res.json({ steps, lastError: (last?.[0] as any) ? { error: String((last![0] as any).data?.error ?? ''), at: (last![0] as any).created_at } : null });
+});
 adminRouter.post('/integrations/efi/register-auto-webhooks', async (_req, res) => {
   if (!efi.isConfigured()) throw new HttpError(400, 'Configure a Efí primeiro (Client ID, Client Secret, Chave Pix e certificado)');
   let secret = efiConfig().webhookSecret;

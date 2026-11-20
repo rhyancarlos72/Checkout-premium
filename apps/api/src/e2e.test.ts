@@ -1373,6 +1373,14 @@ describe('marketplace multiusuário', () => {
       const fo = db.orders.find((x) => x.public_token === fb.body.token)!;
       expect(fb.body.order.pix_code).toBe(`000201COB${fo.provider_charge_id}`);
       expect(db.subscriptions.find((x) => x.origin_order_id === fo.id)).toMatchObject({ rec_id: null, status: 'pending' });
+      // o motivo da recusa fica registrado (Integrações → Testar Pix Automático mostra a última)
+      expect(db.events.filter((e) => e.type === 'pix_auto_error' && e.order_id === fo.id).map((e) => e.data.error)).toEqual(['Efí respondeu 403: escopo locrec não liberado']);
+      // teste do Pix Automático: 6 verificações, todas só de consulta (nada é criado na Efí)
+      const before = calls.length;
+      const diag = await (efi as any).diagnoseAuto();
+      expect(diag).toHaveLength(6);
+      expect(calls.slice(before).every((c) => c.method === 'GET')).toBe(true);
+      expect(calls.slice(before).map((c) => c.path.split('?')[0])).toEqual(['/v2/cob', '/v2/locrec', '/v2/rec', '/v2/cobr', '/v2/webhookrec']);
 
       // Pix Automático desligado: o mesmo bump vira compra única (sem CPF, sem assinatura)
       g.value = { ...g.value, pixAuto: { enabled: false } };

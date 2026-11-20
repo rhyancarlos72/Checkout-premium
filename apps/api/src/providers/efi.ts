@@ -250,6 +250,32 @@ export class EfiProvider implements PixProvider {
     }
   }
 
+  /**
+   * Diagnóstico do Pix Automático (painel → Integrações): só CONSULTAS, nada é criado na conta.
+   * Cada passo mostra se a aplicação da Efí tem a permissão daquele recurso (escopos do Pix Automático).
+   */
+  async diagnoseAuto() {
+    const fim = new Date();
+    const inicio = new Date(fim.getTime() - 7 * 86_400_000);
+    const q = `inicio=${encodeURIComponent(inicio.toISOString())}&fim=${encodeURIComponent(fim.toISOString())}`;
+    const steps: { step: string; ok: boolean; error?: string }[] = [];
+    const run = async (step: string, fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+        steps.push({ step, ok: true });
+      } catch (e: any) {
+        steps.push({ step, ok: false, error: String(e?.message ?? e).slice(0, 300) });
+      }
+    };
+    await run('Login na Efí (credenciais e certificado)', () => this.accessToken());
+    await run('Cobrança Pix imediata (cob)', () => this.authed('GET', `/v2/cob?${q}`));
+    await run('Locations de recorrência (locrec)', () => this.authed('GET', `/v2/locrec?${q}`));
+    await run('Recorrências / autorizações (rec)', () => this.authed('GET', `/v2/rec?${q}`));
+    await run('Cobranças mensais (cobr)', () => this.authed('GET', `/v2/cobr?${q}`));
+    await run('Aviso de autorizações (webhookrec)', () => this.authed('GET', '/v2/webhookrec'));
+    return steps;
+  }
+
   /** Recorrência (autorização do cliente): CRIADA, APROVADA, REJEITADA, EXPIRADA ou CANCELADA. */
   async getRec(idRec: string) {
     return this.authed<{ idRec: string; status: string; valor?: { valorRec?: string } }>('GET', `/v2/rec/${encodeURIComponent(idRec)}`);

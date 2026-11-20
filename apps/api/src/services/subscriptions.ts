@@ -75,7 +75,7 @@ export async function issueAutoCharge(p: {
   items: { name: string }[];
   firstDue: Date;
 }): Promise<CreatedCharge & { recId: string | null; recError?: string }> {
-  return efi.createAutoCharge({
+  const charge = await efi.createAutoCharge({
     orderId: p.orderId,
     amountCents: p.totalCents,
     description: p.description,
@@ -90,6 +90,17 @@ export async function issueAutoCharge(p: {
       firstDue: spDate(p.firstDue),
     },
   });
+  // a Efí recusou a autorização mensal (o pedido seguiu com Pix normal): guarda o motivo para o diagnóstico
+  if (charge.recError) {
+    await supabase
+      .from('events')
+      .insert({ order_id: p.orderId, type: 'pix_auto_error', data: { error: charge.recError } })
+      .then(
+        () => {},
+        () => {},
+      );
+  }
+  return charge;
 }
 
 /** Cria a assinatura (pendente) do pedido e liga os dois. Sem a tabela (SQL não rodado): não faz nada. */

@@ -102,6 +102,11 @@ function PixAutoCard({ data, toast, onSaved }: { data: NonNullable<Gateways['pix
     onSuccess: (r) => (toast.ok(r.message), onSaved()),
     onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
   });
+  // teste do Pix Automático na Efí: só consultas (nada é criado na conta)
+  const check = useMutation({
+    mutationFn: () => adminApi.post<{ steps: { step: string; ok: boolean; error?: string }[]; lastError: { error: string; at: string } | null }>('/integrations/efi/pix-auto-check'),
+    onError: (e) => toast.err(e instanceof ApiError ? e.message : 'Erro'),
+  });
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-5 lg:col-span-2">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -128,6 +133,30 @@ function PixAutoCard({ data, toast, onSaved }: { data: NonNullable<Gateways['pix
           <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} className="h-4 w-4 accent-blue-600" /> Ligar assinaturas por Pix Automático
         </label>
         <Button className="sm:ml-auto" loading={save.isPending} onClick={() => save.mutate()}>Salvar</Button>
+      </div>
+      <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-4">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-zinc-600">Confere na Efí se a sua conta está liberada para o Pix Automático (só consulta, não cria nada).</p>
+          <Button variant="secondary" size="sm" loading={check.isPending} onClick={() => check.mutate()} disabled={!data.efiReady}>Testar Pix Automático</Button>
+        </div>
+        {check.data && (
+          <ul className="mt-3 space-y-1.5 text-sm">
+            {check.data.steps.map((s) => (
+              <li key={s.step} className="flex items-start gap-2">
+                {s.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />}
+                <span className="min-w-0">
+                  <span className="font-medium text-zinc-800">{s.step}</span>
+                  {s.error && <span className="block break-words text-xs text-red-700">{s.error}</span>}
+                </span>
+              </li>
+            ))}
+            {check.data.lastError && (
+              <li className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                Última recusa numa venda ({dateTime(check.data.lastError.at)}): <span className="break-words font-mono">{check.data.lastError.error}</span>
+              </li>
+            )}
+          </ul>
+        )}
       </div>
       <p className="mt-3 text-xs text-zinc-500">Antes de ligar: o Pix Automático exige conta Efí Empresas com o recurso liberado e os escopos de Pix Automático (rec, cobr, locrec, webhookrec, webhookcobr) ativos na sua aplicação Efí. Se a Efí recusar a autorização, a venda sai normal e o cliente renova pelo link.</p>
     </div>
