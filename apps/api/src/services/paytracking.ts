@@ -187,6 +187,9 @@ async function transmit(target: Target, payload: Record<string, unknown>, extraH
   return { ok: status >= 200 && status < 300, status, json, error };
 }
 
+/** Texto legível do erro devolvido (às vezes vem como objeto: sem isso o log mostrava "[object Object]"). */
+const txt = (v: unknown): string => (v == null ? '' : typeof v === 'string' ? v : (() => { try { return JSON.stringify(v).slice(0, 300); } catch { return String(v); } })());
+
 /** Envia o evento da venda para todos os webhooks ativos inscritos nele (PayTracking e outros). */
 export async function sendPayTracking(order: OrderForTracking, event: PayTrackingEvent, opts: { onlyWebhookId?: string; attempt?: number } = {}): Promise<boolean> {
   try {
@@ -200,7 +203,7 @@ export async function sendPayTracking(order: OrderForTracking, event: PayTrackin
           ? r.json?.duplicate
             ? 'duplicado (já recebido)'
             : String(r.json?.status ?? 'processado')
-          : `${r.error} ${r.json?.error ?? ''} ${r.json?.reason ? `(${r.json.reason})` : ''}`.trim() || `HTTP ${r.status}`;
+          : `${r.error} ${txt(r.json?.error)} ${r.json?.reason ? `(${txt(r.json.reason)})` : ''}`.trim() || `HTTP ${r.status}`;
         await supabase.from('integration_logs').insert({
           integration: `webhook:${w.id}`,
           order_id: order.id,
