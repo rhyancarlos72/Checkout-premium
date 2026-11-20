@@ -255,8 +255,47 @@ const allModules = (c: Course) => c.sections.flatMap((s) => s.modules);
 /** Próximo módulo a assistir: o primeiro com aula pendente (ou o primeiro de todos). */
 const nextModuleOf = (c: Course) => allModules(c).find((m) => m.completed < m.lessons) ?? allModules(c)[0];
 
+/** Chave da aba no endereço (?aba=alfabetizacao). */
+const tabKey = (title: string) => title.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+/** Abas de todos os cursos liberados, na ordem salva no painel (nomes iguais viram uma aba só). */
+function tabList(courses: Course[]) {
+  const out: { key: string; title: string }[] = [];
+  for (const c of courses) for (const t of c.tabs ?? []) {
+    const key = tabKey(t.title);
+    if (key && !out.some((x) => x.key === key)) out.push({ key, title: t.title });
+  }
+  return out;
+}
+
+/** Barra de abas estilo Netflix ("Tudo · Alfabetização · Matemática"); arrasta para o lado no celular. */
+function TabBar({ tabs, current, onPick }: { tabs: { key: string; title: string }[]; current: string | null; onPick: (key: string | null) => void }) {
+  const items = [{ key: null as string | null, title: 'Tudo' }, ...tabs];
+  return (
+    <nav aria-label="Abas" className="members-row mb-8 flex gap-2 overflow-x-auto px-4 pb-1 sm:px-10">
+      {items.map((t) => {
+        const on = t.key === current;
+        return (
+          <button
+            key={t.key ?? 'tudo'}
+            type="button"
+            onClick={() => onPick(t.key)}
+            aria-pressed={on}
+            className={cn(
+              'shrink-0 whitespace-nowrap rounded-full px-4 py-2 text-[14px] font-semibold transition',
+              on ? 'bg-white text-black shadow-[0_6px_20px_-6px_rgba(255,255,255,.5)]' : 'bg-white/[.08] text-white/80 ring-1 ring-white/15 hover:bg-white/15 hover:text-white',
+            )}
+          >
+            {t.title}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
 function HomePage() {
   const { data, isLoading, error } = useHome();
+  const [params, setParams] = useSearchParams();
   if (error instanceof ApiError && error.status === 401) return <Navigate to="/membros/login" replace />;
   if (isLoading || !data) return <Loader />;
   const first = (data.customer?.name ?? '').trim().split(/\s+/)[0];
@@ -264,6 +303,17 @@ function HomePage() {
   const featured = data.courses.find((c) => c.progress.completed > 0 && c.progress.completed < c.progress.total) ?? data.courses[0];
   const watching = data.courses.flatMap((c) => allModules(c).filter((m) => m.completed > 0 && m.completed < m.lessons));
   const paused = data.extras.some((x) => x.badge === 'Renovar assinatura'); // assinatura vencida: o conteúdo volta ao renovar
+  // abas (ex.: "Alfabetização"): abas com o mesmo nome em cursos diferentes viram uma só; abre sempre em "Tudo"
+  const tabs = tabList(data.courses);
+  const current = tabs.find((t) => t.key === params.get('aba'))?.key ?? null;
+  const pick = (key: string | null) => {
+    const next = new URLSearchParams(params);
+    if (key) next.set('aba', key);
+    else next.delete('aba');
+    setParams(next, { replace: true });
+  };
+  const inTab = (c: Course, s: Course['sections'][number]) => !current || (s.tab_id ? tabKey(c.tabs?.find((t) => t.id === s.tab_id)?.title ?? '') === current : false);
+  const shown = data.courses.map((c) => ({ ...c, sections: c.sections.filter((s) => inTab(c, s)) })).filter((c) => c.sections.length);
   return (
     <>
       <TopBar store={data.store} overlay />
@@ -280,14 +330,15 @@ function HomePage() {
         </div>
       )}
       <main id="conteudo" className={cn('relative z-10 mx-auto max-w-[1600px] pb-24', featured && '-mt-16 sm:-mt-28')}>
-        {watching.length > 0 && (
+        {tabs.length > 0 && <TabBar tabs={tabs} current={current} onPick={pick} />}
+        {!current && watching.length > 0 && (
           <Row title="Continue assistindo" accent="bg-red-500">
             {watching.map((m) => <PosterCard key={m.id} module={m} />)}
           </Row>
         )}
-        {data.courses.map((c) => (
+        {shown.map((c) => (
           <div key={c.id}>
-            {data.courses.length > 1 && <p className="mt-12 px-4 text-[13px] font-bold uppercase tracking-[.25em] text-white/45 sm:px-10">{c.name}</p>}
+            {shown.length > 1 && <p className="mt-12 px-4 text-[13px] font-bold uppercase tracking-[.25em] text-white/45 sm:px-10">{c.name}</p>}
             {c.sections.map((s) => (
               <Row key={s.id} title={s.title} count={`${s.modules.length} ${s.modules.length === 1 ? 'módulo' : 'módulos'}`}>
                 {s.modules.map((m) => <PosterCard key={m.id} module={m} />)}
@@ -295,7 +346,7 @@ function HomePage() {
             ))}
           </div>
         ))}
-        {data.extras.length > 0 && <ExtrasRow extras={data.extras} title={data.offers?.title} subtitle={data.offers?.subtitle} />}
+        {!current && data.extras.length > 0 && <ExtrasRow extras={data.extras} title={data.offers?.title} subtitle={data.offers?.subtitle} />}
       </main>
     </>
   );

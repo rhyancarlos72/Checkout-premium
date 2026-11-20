@@ -52,6 +52,15 @@ export async function ownedProductIds(customerId: string) {
 /** Link que entra direto na área de membros a partir do pedido (entrega, página do Pix, WhatsApp). */
 export const membersLink = (publicToken: string) => `${env.PUBLIC_URL}/membros/entrar?o=${publicToken}`;
 
+/** Abas guardadas no produto (products.members_tabs): só as válidas, na ordem salva. */
+export function memberTabs(v: unknown): { id: string; title: string }[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter((t) => t && typeof t.id === 'string' && /^[a-z0-9]{4,24}$/.test(t.id) && typeof t.title === 'string' && t.title.trim())
+    .map((t) => ({ id: t.id as string, title: (t.title as string).trim().slice(0, 40) }))
+    .slice(0, 20);
+}
+
 type ModuleRow = { id: string; product_id: string; section_id: string; title: string; subtitle: string | null; cover_url: string | null; sort: number };
 
 /** Monta a área do aluno: cursos liberados (seções → módulos) e cursos adicionais bloqueados. */
@@ -64,7 +73,8 @@ export async function memberHome(customerId: string) {
   const all = ((products ?? []) as any[]).filter((p) => owned.has(p.id) || p.active);
   const ids = all.length ? all.map((p) => p.id) : ['00000000-0000-0000-0000-000000000000'];
   const [{ data: sections }, { data: modules }, { data: lessons }, { data: progress }, { data: checkouts }] = await Promise.all([
-    supabase.from('member_sections').select('id, product_id, title, sort').in('product_id', ids).order('sort', { ascending: true }),
+    // '*' traz a aba da seção (tab_id) quando o SQL das abas já rodou; sem ele, segue sem abas
+    supabase.from('member_sections').select('*').in('product_id', ids).order('sort', { ascending: true }),
     supabase.from('member_modules').select('id, product_id, section_id, title, subtitle, cover_url, sort').in('product_id', ids).order('sort', { ascending: true }),
     supabase.from('member_lessons').select('id, module_id, product_id').in('product_id', ids),
     supabase.from('member_progress').select('lesson_id').eq('customer_id', customerId),
@@ -95,8 +105,14 @@ export async function memberHome(customerId: string) {
         image_url: p.image_url,
         banner_url: p.members_banner_url ?? null,
         progress: { total, completed },
-        sections: secs.map((s) => ({ id: s.id, title: s.title, modules: mods.filter((m) => m.section_id === s.id).sort(sort).map(moduleView) })).filter((s) => s.modules.length),
+        sections: secs.map((s) => ({ id: s.id, title: s.title, tab_id: (s.tab_id ?? null) as string | null, modules: mods.filter((m) => m.section_id === s.id).sort(sort).map(moduleView) })).filter((s) => s.modules.length),
       };
+    })
+    .map((c) => {
+      // abas do curso (ex.: "Alfabetização"): só as que têm alguma fileira com módulo; seção com aba apagada vai para "sem aba"
+      const tabs = memberTabs(all.find((p) => p.id === c.id)?.members_tabs).filter((t) => c.sections.some((s) => s.tab_id === t.id));
+      const known = new Set(tabs.map((t) => t.id));
+      return { ...c, tabs, sections: c.sections.map((s) => ({ ...s, tab_id: s.tab_id && known.has(s.tab_id) ? s.tab_id : null })) };
     });
   // vitrine escolhida no painel (Área de membros → Produtos adicionais); sem escolha: automática
   // cursos que a pessoa ainda não tem: aparecem bloqueados, com o link do checkout para liberar

@@ -779,3 +779,11 @@ notify pgrst, 'reload schema';
 -- design = { template: 'classic' | 'spotlight', bg_url, logo_url, marquee, price_note }. Vazio = modelo clássico (o atual).
 alter table public.upsell_pages add column if not exists design jsonb not null default '{}'::jsonb;
 notify pgrst, 'reload schema';
+
+-- 20261125000000_member_tabs.sql
+-- Abas da área de membros (ex.: "Atividades de alfabetização"): cada aba agrupa várias seções (fileiras estilo Netflix).
+-- As abas ficam no próprio produto, em ordem: [{ "id": "a1b2c3", "title": "Alfabetização" }]. Idempotente.
+alter table public.products add column if not exists members_tabs jsonb not null default '[]'::jsonb;
+-- aba de cada seção (vazio = sem aba: aparece só em "Tudo"); apagar a aba não apaga a seção
+alter table public.member_sections add column if not exists tab_id text;
+notify pgrst, 'reload schema';

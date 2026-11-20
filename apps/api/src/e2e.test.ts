@@ -632,6 +632,22 @@ describe('área de membros', () => {
       const main = home.body.courses.find((c: any) => c.id === P1);
       expect(main.sections[0].modules.map((m: any) => m.title)).toEqual(['Comece aqui', 'Facebook Ads']);
       expect(main.progress).toEqual({ total: 2, completed: 0 });
+
+      // abas (ex.: "Alfabetização"): o aluno recebe só as abas que têm fileira; aba apagada → seção sem aba
+      expect(main.tabs).toEqual([]); // sem abas: igual a antes
+      const p1 = db.products.find((x) => x.id === P1)!;
+      p1.members_tabs = [{ id: 'alfa01', title: 'Alfabetização' }, { id: 'mate01', title: 'Matemática' }];
+      db.member_sections[0].tab_id = 'alfa01';
+      const withTabs = (await mem('GET', '/me', s)).body.courses.find((c: any) => c.id === P1);
+      expect(withTabs.tabs).toEqual([{ id: 'alfa01', title: 'Alfabetização' }]); // "Matemática" sem fileira não aparece
+      expect(withTabs.sections[0].tab_id).toBe('alfa01');
+      p1.members_tabs = [{ id: 'mate01', title: 'Matemática' }];
+      const afterDel = (await mem('GET', '/me', s)).body.courses.find((c: any) => c.id === P1);
+      expect(afterDel.tabs).toEqual([]);
+      expect(afterDel.sections[0]).toMatchObject({ tab_id: null });
+      expect(afterDel.sections[0].modules).toHaveLength(2);
+      delete p1.members_tabs;
+      delete db.member_sections[0].tab_id;
       expect(home.body.extras).toHaveLength(0); // sem escolha no painel: vitrine vazia (nada automático)
 
       // vitrine escolhida no painel: só nas áreas marcadas; ordem, título, selo e preço próprios; quem já tem o produto não vê
@@ -714,6 +730,33 @@ describe('marketplace multiusuário', () => {
     clearOrgCache();
     const { clearAuthCache } = await import('./middleware/auth.js');
     clearAuthCache();
+  });
+
+  it('área de membros: abas no painel (criar, colocar a seção, apagar sem perder a seção)', async () => {
+    const P1 = '00000000-0000-4000-8000-000000000001';
+    const now = new Date().toISOString();
+    const SEC = '00000000-0000-4000-8000-00000000e0a1';
+    db.member_sections.push({ id: SEC, product_id: P1, org_id: OWNER_ORG, title: 'Romance', sort: 9, created_at: now });
+    try {
+      const saved = await as('owner', 'PUT', `/api/admin/members/products/${P1}/tabs`, { tabs: [{ title: 'Alfabetização' }, { title: 'Matemática' }] });
+      expect(saved.status).toBe(200);
+      const [alfa, mat] = saved.body.tabs;
+      expect(alfa.id).toMatch(/^[a-z0-9]{10}$/);
+      expect((await as('owner', 'PUT', `/api/admin/members/sections/${SEC}/tab`, { tab_id: 'naoexiste' })).status).toBe(400);
+      expect((await as('owner', 'PUT', `/api/admin/members/sections/${SEC}/tab`, { tab_id: alfa.id })).status).toBe(200);
+      const det = await as('owner', 'GET', `/api/admin/members/products/${P1}`);
+      expect(det.body.tabs_ready).toBe(true);
+      expect(det.body.tabs.map((t: any) => t.title)).toEqual(['Alfabetização', 'Matemática']);
+      expect(det.body.sections.find((x: any) => x.id === SEC).tab_id).toBe(alfa.id);
+      // outro produtor não mexe nas abas da Prime
+      expect((await as('b', 'PUT', `/api/admin/members/products/${P1}/tabs`, { tabs: [] })).status).not.toBe(200);
+      // apagar a aba: a seção continua, sem aba
+      expect((await as('owner', 'PUT', `/api/admin/members/products/${P1}/tabs`, { tabs: [mat] })).status).toBe(200);
+      expect(db.member_sections.find((x) => x.id === SEC)!.tab_id).toBeNull();
+    } finally {
+      db.member_sections = db.member_sections.filter((x) => x.id !== SEC);
+      delete db.products.find((x) => x.id === P1)!.members_tabs;
+    }
   });
 
   it('produtor cria o próprio produto e não enxerga nada da Prime', async () => {

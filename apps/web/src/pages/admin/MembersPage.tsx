@@ -10,8 +10,9 @@ import { PageHeader } from './AdminApp';
 interface ProductRow { id: string; code: string | null; name: string; image_url: string | null; active: boolean; members_enabled: boolean; modules: number; lessons: number }
 interface Lesson { id: string; module_id: string; title: string; description: string | null; video_url: string | null; duration: string | null; attachments: { name: string; url: string }[]; sort: number }
 interface Module { id: string; section_id: string; title: string; subtitle: string | null; cover_url: string | null; sort: number; lessons: Lesson[] }
-interface Section { id: string; title: string; sort: number; modules: Module[] }
-interface Detail { id: string; code: string | null; name: string; image_url: string | null; members_enabled: boolean; members_banner_url: string | null; sections: Section[] }
+interface Section { id: string; title: string; sort: number; tab_id: string | null; modules: Module[] }
+interface Tab { id?: string; title: string }
+interface Detail { id: string; code: string | null; name: string; image_url: string | null; members_enabled: boolean; members_banner_url: string | null; tabs: Tab[]; tabs_ready: boolean; sections: Section[] }
 
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : 'Não foi possível salvar');
 
@@ -134,10 +135,14 @@ function CourseEditor({ productId, onBack }: { productId: string; onBack: () => 
         </div>
       </Card>
 
+      <TabsCard tabs={d.tabs} ready={d.tabs_ready} sections={d.sections} onSave={(tabs) => run.mutate(() => adminApi.put(`/members/products/${productId}/tabs`, { tabs }))} />
+
       {d.sections.map((s, si) => (
         <Card key={s.id}>
           <SectionHeader
             section={s}
+            tabs={d.tabs}
+            onTab={(tab_id) => run.mutate(() => adminApi.put(`/members/sections/${s.id}/tab`, { tab_id }))}
             onRename={(title) => run.mutate(() => adminApi.put(`/members/sections/${s.id}`, { title }))}
             onDelete={() => confirm(`Excluir a seção “${s.title}” com todos os módulos e aulas?`) && run.mutate(() => adminApi.del(`/members/sections/${s.id}`))}
             onUp={() => move('sections', d.sections.map((x) => x.id), si, -1)}
@@ -207,7 +212,68 @@ function IconBtn({ label, onClick, children, danger }: { label: string; onClick:
   );
 }
 
-function SectionHeader({ section, onRename, onDelete, onUp, onDown }: { section: Section; onRename: (t: string) => void; onDelete: () => void; onUp: () => void; onDown: () => void }) {
+// ------------------------------------------------------------------ abas (ex.: "Atividades de alfabetização")
+/** Abas que aparecem no topo da área do aluno; cada seção (fileira) escolhe a sua aba. */
+function TabsCard({ tabs, ready, sections, onSave }: { tabs: Tab[]; ready: boolean; sections: Section[]; onSave: (tabs: Tab[]) => void }) {
+  const [name, setName] = useState('');
+  const [editing, setEditing] = useState<number | null>(null);
+  const [title, setTitle] = useState('');
+  const count = (id?: string) => sections.filter((s) => s.tab_id === id).length;
+  const swap = (i: number, j: number) => {
+    if (j < 0 || j >= tabs.length) return;
+    const next = [...tabs];
+    [next[i], next[j]] = [next[j], next[i]];
+    onSave(next);
+  };
+  return (
+    <Card>
+      <p className="font-semibold">Abas</p>
+      <p className="mt-1 text-sm text-zinc-500">
+        Separe o conteúdo em abas no topo da área do aluno (ex.: “Atividades de alfabetização”, “Matemática”). Cada seção abaixo escolhe a sua aba. O aluno sempre começa em “Tudo”, que mostra todas as seções.
+      </p>
+      {!ready && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">Falta rodar o SQL das abas no Supabase (20261125000000_member_tabs.sql).</p>}
+      {tabs.length > 0 && (
+        <ul className="mt-4 divide-y divide-zinc-100 rounded-xl border border-zinc-200">
+          {tabs.map((t, i) => (
+            <li key={t.id ?? i} className="flex items-center gap-2 px-3 py-2">
+              {editing === i ? (
+                <form className="flex flex-1 gap-2" onSubmit={(e) => (e.preventDefault(), title.trim() && onSave(tabs.map((x, k) => (k === i ? { ...x, title: title.trim() } : x))), setEditing(null))}>
+                  <Input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={40} autoFocus aria-label="Nome da aba" />
+                  <Button type="submit" size="sm">Salvar</Button>
+                </form>
+              ) : (
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold">{t.title}</p>
+                  <p className="text-xs text-zinc-500">{count(t.id)} {count(t.id) === 1 ? 'seção' : 'seções'}</p>
+                </div>
+              )}
+              <div className="flex shrink-0">
+                <IconBtn label="Subir aba" onClick={() => swap(i, i - 1)}><ArrowUp className="h-4 w-4" /></IconBtn>
+                <IconBtn label="Descer aba" onClick={() => swap(i, i + 1)}><ArrowDown className="h-4 w-4" /></IconBtn>
+                <IconBtn label="Renomear aba" onClick={() => (setEditing(i), setTitle(t.title))}><Pencil className="h-4 w-4" /></IconBtn>
+                <IconBtn label="Excluir aba" danger onClick={() => confirm(`Excluir a aba “${t.title}”? As seções dela não são apagadas: continuam aparecendo em “Tudo”.`) && onSave(tabs.filter((_, k) => k !== i))}><Trash2 className="h-4 w-4" /></IconBtn>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="mt-4 flex flex-col gap-3 sm:flex-row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!name.trim()) return;
+          onSave([...tabs, { title: name.trim() }]);
+          setName('');
+        }}
+      >
+        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={40} placeholder="Ex.: Atividades de alfabetização" aria-label="Nome da nova aba" disabled={!ready} />
+        <Button type="submit" className="shrink-0" disabled={!ready}><Plus className="h-4 w-4" /> Nova aba</Button>
+      </form>
+    </Card>
+  );
+}
+
+function SectionHeader({ section, tabs, onTab, onRename, onDelete, onUp, onDown }: { section: Section; tabs: Tab[]; onTab: (id: string | null) => void; onRename: (t: string) => void; onDelete: () => void; onUp: () => void; onDown: () => void }) {
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(section.title);
   useEffect(() => setTitle(section.title), [section.title]);
@@ -224,6 +290,17 @@ function SectionHeader({ section, onRename, onDelete, onUp, onDown }: { section:
           <p className="truncate font-display text-lg font-bold">{section.title}</p>
           <p className="text-xs text-zinc-500">{section.modules.length} {section.modules.length === 1 ? 'módulo' : 'módulos'}</p>
         </div>
+      )}
+ {tabs.length > 0 && (
+        <select
+          value={section.tab_id ?? ''}
+          onChange={(e) => onTab(e.target.value || null)}
+          aria-label={`Aba da seção ${section.title}`}
+          className="h-9 max-w-[45%] shrink rounded-lg border border-zinc-300 bg-white px-2 text-sm text-zinc-700"
+        >
+          <option value="">Sem aba (só em “Tudo”)</option>
+          {tabs.map((t) => <option key={t.id} value={t.id}>Aba: {t.title}</option>)}
+        </select>
       )}
       <div className="flex shrink-0">
         <IconBtn label="Subir seção" onClick={onUp}><ArrowUp className="h-4 w-4" /></IconBtn>

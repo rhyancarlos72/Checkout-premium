@@ -336,6 +336,47 @@ describe.skipIf(!RUN)('área de membros no navegador', () => {
       await ctx.close();
     }, 90_000);
   }
+
+  for (const [label, viewport] of [['computador', { width: 1440, height: 900 }], ['celular', { width: 390, height: 844 }]] as const) {
+    it(`abas estilo Netflix: "Tudo" primeiro e cada aba mostra só as suas fileiras (${label})`, async () => {
+      const p1 = db.products.find((x) => x.id === P1)!;
+      p1.members_tabs = [{ id: 'alfa01', title: 'Atividades de alfabetização' }, { id: 'mate01', title: 'Matemática' }];
+      db.member_sections.find((x) => x.title === 'Sessão 1')!.tab_id = 'alfa01';
+      db.member_sections.find((x) => x.title === 'Sessão 2')!.tab_id = 'mate01';
+      const ctx = await browser.newContext({ viewport, locale: 'pt-BR' });
+      const p = await ctx.newPage();
+      const errors: string[] = [];
+      p.on('pageerror', (e: Error) => errors.push(e.message));
+      await p.route('https://img.test/**', (route: any) => route.fulfill({ contentType: 'image/svg+xml', body: poster(1, 'CAPA') }));
+      try {
+        await p.goto(`${base}/membros/entrar?o=${orderToken}`);
+        const bar = p.getByRole('navigation', { name: 'Abas' });
+        await bar.waitFor({ timeout: 15_000 });
+        expect(await bar.getByRole('button', { name: 'Tudo' }).getAttribute('aria-pressed')).toBe('true'); // abre em "Tudo"
+        await p.getByRole('heading', { name: 'Sessão 2' }).waitFor();
+        await p.getByRole('heading', { name: 'Sessão 1' }).waitFor();
+        await bar.getByRole('button', { name: 'Atividades de alfabetização' }).click();
+        await p.waitForURL(/aba=atividades-de-alfabetizacao/);
+        await p.getByRole('heading', { name: 'Sessão 1' }).waitFor();
+        expect(await p.getByRole('heading', { name: 'Sessão 2' }).count()).toBe(0);
+        expect(await p.getByRole('heading', { name: 'Bônus' }).count()).toBe(0); // fileira sem aba fica só em "Tudo"
+        ok(`[${label}] aba "Atividades de alfabetização" mostra só a fileira dela`);
+        await p.getByRole('navigation', { name: 'Abas' }).scrollIntoViewIfNeeded();
+        await p.waitForTimeout(300);
+        if (process.env.SHOT_DIR) await p.screenshot({ path: `${process.env.SHOT_DIR}/membros-abas-${label}.png` });
+        // link direto da aba funciona
+        await p.goto(`${base}/membros?aba=matematica`);
+        await p.getByRole('heading', { name: 'Sessão 2' }).waitFor();
+        expect(await p.getByRole('heading', { name: 'Sessão 1' }).count()).toBe(0);
+        expect(await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)).toBe(false);
+        expect(errors).toEqual([]);
+      } finally {
+        delete p1.members_tabs;
+        for (const x of db.member_sections) delete x.tab_id;
+        await ctx.close();
+      }
+    }, 60_000);
+  }
 });
 
 describe.skipIf(!RUN)('painel: aba Área de membros', () => {

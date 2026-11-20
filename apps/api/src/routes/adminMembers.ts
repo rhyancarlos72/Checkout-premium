@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { HttpError, must, productCode } from '../lib/core.js';
 // filtro por organização (o roteador é montado dentro do /admin, que já define o produtor logado)
 import { tenantDb as supabase } from '../lib/tenant.js';
-import { getMembersConfig, saveMembersConfig } from '../services/members.js';
+import { getMembersConfig, memberTabs, saveMembersConfig } from '../services/members.js';
+import crypto from 'node:crypto';
 
 /** Painel → Área de membros: seções, módulos e aulas de cada produto. (montado em /api/admin/members) */
 export const adminMembersRouter = Router();
@@ -22,18 +23,31 @@ adminMembersRouter.get('/products', async (_req, res) => {
 
 adminMembersRouter.get('/products/:id', async (req, res) => {
   const id = uuid.parse(req.params.id);
-  const { data: p } = await supabase.from('products').select('id, number, name, image_url, members_enabled, members_banner_url').eq('id', id).maybeSingle();
+  // '*' traz as abas (members_tabs) quando o SQL das abas já rodou
+  const { data: p } = await supabase.from('products').select('*').eq('id', id).maybeSingle();
   if (!p) throw new HttpError(404, 'Produto não encontrado');
   const [{ data: sections }, { data: modules }, { data: lessons }] = await Promise.all([
-    supabase.from('member_sections').select('id, title, sort').eq('product_id', id).order('sort', { ascending: true }),
+    supabase.from('member_sections').select('*').eq('product_id', id).order('sort', { ascending: true }),
     supabase.from('member_modules').select('id, section_id, title, subtitle, cover_url, sort').eq('product_id', id).order('sort', { ascending: true }),
     supabase.from('member_lessons').select('id, module_id, title, description, video_url, duration, attachments, sort').eq('product_id', id).order('sort', { ascending: true }),
   ]);
+  const x = p as any;
+  const tabs = memberTabs(x.members_tabs);
   res.json({
-    ...(p as any),
-    code: productCode((p as any).number),
+    id: x.id,
+    number: x.number,
+    name: x.name,
+    image_url: x.image_url,
+    members_enabled: x.members_enabled,
+    members_banner_url: x.members_banner_url ?? null,
+    code: productCode(x.number),
+    tabs,
+    tabs_ready: 'members_tabs' in x, // false = falta rodar o SQL das abas
     sections: ((sections ?? []) as any[]).map((s) => ({
-      ...s,
+      id: s.id,
+      title: s.title,
+      sort: s.sort,
+      tab_id: tabs.some((t) => t.id === s.tab_id) ? s.tab_id : null,
       modules: ((modules ?? []) as any[]).filter((m) => m.section_id === s.id).map((m) => ({ ...m, lessons: ((lessons ?? []) as any[]).filter((l) => l.module_id === m.id) })),
     })),
   });
@@ -73,6 +87,43 @@ adminMembersRouter.put('/sections/:id', async (req, res) => {
 adminMembersRouter.delete('/sections/:id', async (req, res) => {
   await supabase.from('member_sections').delete().eq('id', uuid.parse(req.params.id));
   res.status(204).end();
+});
+
+// ---------------------------------------------------------------- abas (ex.: "Atividades de alfabetização")
+const tabsMissing = (e: { message?: string } | null) => !!e && /members_tabs|tab_id|schema cache|column/i.test(e.message ?? '');
+const SQL_TABS = 'Rode o SQL das abas (20261125000000_member_tabs.sql) no Supabase para usar as abas';
+/** Salva a lista de abas na ordem enviada (criar, renomear, apagar e ordenar usam esta mesma rota). */
+adminMembersRouter.put('/products/:id/tabs', async (req, res) => {
+  const id = uuid.parse(req.params.id);
+  const b = z
+    .object({ tabs: z.array(z.object({ id: z.string().regex(/^[a-z0-9]{4,24}$/).optional(), title: z.string().trim().min(1, 'Dê um nome à aba').max(40) })).max(20) })
+    .parse(req.body);
+  // aba nova ganha um id curto
+  const tabs = b.tabs.map((t) => ({ id: t.id ?? crypto.randomBytes(5).toString('hex'), title: t.title }));
+  const r = await supabase.from('products').update({ members_tabs: tabs }).eq('id', id).select('id').single();
+  if (tabsMissing(r.error)) throw new HttpError(400, SQL_TABS);
+  must(r);
+  // seções de abas apagadas voltam para "sem aba" (continuam aparecendo em "Tudo")
+  const { data: secs } = await supabase.from('member_sections').select('*').eq('product_id', id);
+  const keep = new Set(tabs.map((t) => t.id));
+  const orphans = ((secs ?? []) as any[]).filter((s) => s.tab_id && !keep.has(s.tab_id)).map((s) => s.id);
+  if (orphans.length) await supabase.from('member_sections').update({ tab_id: null }).in('id', orphans);
+  res.json({ tabs });
+});
+/** Coloca a seção numa aba (null = sem aba). */
+adminMembersRouter.put('/sections/:id/tab', async (req, res) => {
+  const sid = uuid.parse(req.params.id);
+  const tabId = z.string().regex(/^[a-z0-9]{4,24}$/).nullable().parse(req.body?.tab_id ?? null);
+  const { data: s } = await supabase.from('member_sections').select('product_id').eq('id', sid).maybeSingle();
+  if (!s) throw new HttpError(404, 'Seção não encontrada');
+  if (tabId) {
+    const { data: p } = await supabase.from('products').select('*').eq('id', (s as any).product_id).maybeSingle();
+    if (!memberTabs((p as any)?.members_tabs).some((t) => t.id === tabId)) throw new HttpError(400, 'Aba não encontrada');
+  }
+  const r = await supabase.from('member_sections').update({ tab_id: tabId }).eq('id', sid).select('id').single();
+  if (tabsMissing(r.error)) throw new HttpError(400, SQL_TABS);
+  must(r);
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------- módulos

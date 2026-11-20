@@ -59,7 +59,9 @@ export interface Course {
   image_url: string | null;
   banner_url: string | null;
   progress: { total: number; completed: number };
-  sections: { id: string; title: string; modules: ModuleCard[] }[];
+  /** abas do curso (ex.: "Atividades de alfabetização"); vazio = sem abas */
+  tabs?: { id: string; title: string }[];
+  sections: { id: string; title: string; tab_id?: string | null; modules: ModuleCard[] }[];
 }
 export interface Extra {
   id: string;
