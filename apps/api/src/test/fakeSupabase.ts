@@ -279,7 +279,7 @@ export function createFakeClient() {
       }
       return { data: null, error: { message: `rpc ${fn} não simulada` } };
     },
-    storage: { from: () => ({ createSignedUrl: async (p: string) => ({ data: { signedUrl: `https://storage.test/${p}?sig=1` } }) }) },
+    storage: { from: (bucket: string) => ({ createSignedUrl: async (p: string) => ({ data: { signedUrl: `https://storage.test/${p}?sig=1` } }), upload: async (p: string, body: any, o: any) => (table('storage_uploads').push({ bucket, path: p, size: body?.length ?? 0, contentType: o?.contentType }), { data: { path: p }, error: null }) }) },
     auth: { getUser: async () => ({ data: { user: null }, error: { message: 'sem auth no teste' } }), admin: {} },
   };
 }

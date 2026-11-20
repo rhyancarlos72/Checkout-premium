@@ -32,6 +32,12 @@ const fake = http.createServer((req, res) => {
   req.on('end', () => {
     const body = b ? JSON.parse(b) : null;
     const json = (s: number, v: unknown) => res.writeHead(s, { 'Content-Type': 'application/json' }).end(JSON.stringify(v));
+    // Google Drive simulado: arquivo compartilhado devolve o PDF; arquivo privado devolve a página de login (HTML)
+    if (req.url!.startsWith('/drive/download')) {
+      const id = new URL(req.url!, 'http://x').searchParams.get('id');
+      if (id === 'ArquivoPublico123') return res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="Apostila.pdf"; filename*=UTF-8''Apostila%20Vogais.pdf` }).end(Buffer.from('%PDF-1.7\nconteudo de teste\n%%EOF'));
+      return res.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>Fazer login</html>');
+    }
     if (req.method === 'POST' && req.url === '/woovi/api/v1/charge') {
       charges.set(body.correlationID, { status: 'ACTIVE', value: body.value, body });
       // cartão (type CREDIT_CARD): a Woovi não devolve brCode
@@ -661,8 +667,17 @@ describe('área de membros', () => {
       expect((await mem('GET', '/me', s)).body.extras).toHaveLength(0);
       db.settings = db.settings.filter((x) => x.key !== 'members');
 
+      // PDF guardado no sistema: o aluno recebe um link temporário (o caminho interno não vai para o aluno)
+      const l1 = db.member_lessons.find((x) => x.id === '00000000-0000-4000-8000-00000000a001')!;
+      const savedAtt = l1.attachments;
+      l1.attachments = [...savedAtt, { name: 'Apostila Vogais', url: 'https://drive.google.com/file/d/ArquivoPublico123/view', file: 'members/2026-11/11111111-2222-4333-8444-555555555555.pdf' }];
       const mod = await mem('GET', '/modules/00000000-0000-4000-8000-00000000f001', s);
       expect(mod.body.lessons.map((l: any) => l.title)).toEqual(['Boas-vindas', 'Primeiros passos']);
+      expect(mod.body.lessons[0].attachments).toEqual([
+        { name: 'PDF', url: 'https://x/a.pdf' },
+        { name: 'Apostila Vogais', url: 'https://storage.test/members/2026-11/11111111-2222-4333-8444-555555555555.pdf?sig=1', pdf: true },
+      ]);
+      l1.attachments = savedAtt;
       expect(mod.body.next_module.title).toBe('Facebook Ads');
       // curso não comprado: bloqueado
       expect((await mem('GET', '/modules/00000000-0000-4000-8000-00000000f004', s)).status).toBe(403);
@@ -756,6 +771,47 @@ describe('marketplace multiusuário', () => {
     } finally {
       db.member_sections = db.member_sections.filter((x) => x.id !== SEC);
       delete db.products.find((x) => x.id === P1)!.members_tabs;
+    }
+  });
+
+  it('área de membros: PDF da aula (link do Drive vira cópia guardada; cada produtor só usa os próprios arquivos)', async () => {
+    const { driveCfg } = await import('./services/memberFiles.js');
+    driveCfg.base = `${ext}/drive`;
+    db.storage_uploads = [];
+    const ok = await as('owner', 'POST', '/api/admin/members/drive-pdf', { url: 'https://drive.google.com/file/d/ArquivoPublico123/view?usp=sharing' });
+    expect(ok.status).toBe(200);
+    expect(ok.body.name).toBe('Apostila Vogais');
+    expect(ok.body.file).toMatch(/^members\/\d{4}-\d{2}\/[0-9a-f-]{36}\.pdf$/); // Prime: pasta sem prefixo
+    expect(db.storage_uploads).toMatchObject([{ bucket: 'deliverables', path: ok.body.file, contentType: 'application/pdf' }]); // área privada
+    // arquivo não compartilhado no Drive: aviso claro e nada é guardado
+    const priv = await as('owner', 'POST', '/api/admin/members/drive-pdf', { url: 'https://drive.google.com/open?id=ArquivoPrivado456' });
+    expect(priv.status).toBe(400);
+    expect(priv.body.error).toMatch(/Qualquer pessoa com o link/);
+    // só Google Drive (o servidor nunca baixa de um endereço qualquer)
+    expect((await as('owner', 'POST', '/api/admin/members/drive-pdf', { url: 'http://169.254.169.254/latest' })).status).toBe(400);
+    expect((await as('owner', 'POST', '/api/admin/members/drive-pdf', { url: 'https://drive.google.com.evil.com/file/d/ArquivoPublico123/view' })).status).toBe(400);
+    expect(db.storage_uploads).toHaveLength(1);
+    // produtor B: o PDF vai para a pasta dele
+    const b = await as('b', 'POST', '/api/admin/members/drive-pdf', { url: 'https://drive.google.com/file/d/ArquivoPublico123/view' });
+    expect(b.body.file.startsWith(`${B_ORG}/members/`)).toBe(true);
+
+    // salvar a aula: PDF guardado aceito; arquivo de outra conta recusado
+    const P1 = '00000000-0000-4000-8000-000000000001';
+    const now = new Date().toISOString();
+    db.member_sections.push({ id: '00000000-0000-4000-8000-00000000e0b1', product_id: P1, org_id: OWNER_ORG, title: 'PDFs', sort: 9, created_at: now });
+    db.member_modules.push({ id: '00000000-0000-4000-8000-00000000f0b1', product_id: P1, org_id: OWNER_ORG, section_id: '00000000-0000-4000-8000-00000000e0b1', title: 'Vogais', sort: 0, created_at: now });
+    try {
+      const lesson = (att: unknown[]) => as('owner', 'POST', '/api/admin/members/modules/00000000-0000-4000-8000-00000000f0b1/lessons', { title: 'Aula PDF', attachments: att });
+      const saved = await lesson([{ name: 'Apostila', url: 'https://drive.google.com/file/d/ArquivoPublico123/view', file: ok.body.file }, { name: 'Só PDF', url: '', file: ok.body.file }]);
+      expect(saved.status).toBe(201);
+      expect(saved.body.attachments[1]).toEqual({ name: 'Só PDF', url: null, file: ok.body.file });
+      expect((await lesson([{ name: 'Outro', file: b.body.file }])).status).toBe(400); // arquivo do produtor B
+      expect((await lesson([{ name: 'Inválido', file: '../segredo.pdf' }])).status).toBe(400);
+      expect((await lesson([{ name: 'Vazio', url: '' }])).status).toBe(400);
+    } finally {
+      db.member_lessons = db.member_lessons.filter((x) => x.module_id !== '00000000-0000-4000-8000-00000000f0b1');
+      db.member_modules = db.member_modules.filter((x) => x.id !== '00000000-0000-4000-8000-00000000f0b1');
+      db.member_sections = db.member_sections.filter((x) => x.id !== '00000000-0000-4000-8000-00000000e0b1');
     }
   });
 

@@ -1,14 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ArrowDown, ArrowLeft, ArrowUp, ExternalLink, Lock, Sparkles, FileText, GraduationCap, Link2, Pencil, Plus, PlayCircle, Trash2, Video, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ArrowDown, ArrowLeft, ArrowUp, CheckCircle2, Upload, ExternalLink, Lock, Sparkles, FileText, GraduationCap, Link2, Pencil, Plus, PlayCircle, Trash2, Video, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { ImageUpload } from '@/components/ImageUpload';
 import { Badge, Button, Card, cn, EmptyState, Field, Input, Modal, PageLoader, Textarea, useToast } from '@/components/ui';
 import { adminApi, ApiError } from '@/lib/api';
+import { useMe } from '@/lib/me';
+import { supabase } from '@/lib/supabase';
 import { videoSource } from '@/lib/video';
 import { PageHeader } from './AdminApp';
 
 interface ProductRow { id: string; code: string | null; name: string; image_url: string | null; active: boolean; members_enabled: boolean; modules: number; lessons: number }
-interface Lesson { id: string; module_id: string; title: string; description: string | null; video_url: string | null; duration: string | null; attachments: { name: string; url: string }[]; sort: number }
+interface Lesson { id: string; module_id: string; title: string; description: string | null; video_url: string | null; duration: string | null; attachments: Attachment[]; sort: number }
+/** material da aula: link comum e/ou PDF guardado no sistema (file) */
+interface Attachment { name: string; url: string | null; file?: string | null }
 interface Module { id: string; section_id: string; title: string; subtitle: string | null; cover_url: string | null; sort: number; lessons: Lesson[] }
 interface Section { id: string; title: string; sort: number; tab_id: string | null; modules: Module[] }
 interface Tab { id?: string; title: string }
@@ -395,11 +399,60 @@ function LessonModal({ moduleId, lesson, onClose, onSaved }: { moduleId: string;
     video_url: lesson?.video_url ?? '',
     duration: lesson?.duration ?? '',
     description: lesson?.description ?? '',
-    attachments: lesson?.attachments ?? ([] as { name: string; url: string }[]),
+    attachments: lesson?.attachments ?? ([] as Attachment[]),
   });
+  const me = useMe().data;
+  const pdfInput = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState<number | 'upload' | null>(null); // material sendo guardado
+  const setAt = (i: number, patch: Partial<Attachment>) => setF((cur) => ({ ...cur, attachments: cur.attachments.map((x, j) => (j === i ? { ...x, ...patch } : x)) }));
+  // PDF do computador/celular: vai direto para a área privada (só a área de membros usa)
+  async function uploadPdf(file: File) {
+    if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) return toast.err('Escolha um arquivo PDF');
+    if (file.size > 50 * 1024 * 1024) return toast.err('PDF acima de 50 MB');
+    setBusy('upload');
+    const orgDir = me?.org && !me.org.owner ? `${me.org.id}/` : '';
+    const path = `${orgDir}members/${new Date().toISOString().slice(0, 7)}/${crypto.randomUUID()}.pdf`;
+    const { error } = await supabase.storage.from('deliverables').upload(path, file, { contentType: 'application/pdf', upsert: false });
+    setBusy(null);
+    if (error) return toast.err(`Não foi possível enviar: ${error.message}`);
+    const name = file.name.replace(/\.pdf$/i, '').slice(0, 120) || 'Material em PDF';
+    setF((cur) => ({ ...cur, attachments: [...cur.attachments, { name, url: null, file: path }] }));
+  }
+  // colou um link do Google Drive: o sistema baixa o PDF e guarda uma cópia (cada link é copiado uma vez só)
+  const copies = useRef(new Map<string, Promise<{ file: string; name: string | null } | null>>());
+  const isDrive = (u: string | null | undefined) => /^https:\/\/(drive|docs)\.google\.com\//.test((u ?? '').trim());
+  function copyDrive(url: string) {
+    const key = url.trim();
+    if (!copies.current.has(key)) {
+      copies.current.set(
+        key,
+        adminApi.post<{ file: string; name: string | null }>('/members/drive-pdf', { url: key }).catch((e) => {
+          copies.current.delete(key); // permite tentar de novo depois de liberar no Drive
+          toast.err(errMsg(e));
+          return null;
+        }),
+      );
+    }
+    return copies.current.get(key)!;
+  }
+  async function fromDrive(i: number, url: string) {
+    if (!isDrive(url)) return;
+    setBusy(i);
+    const r = await copyDrive(url);
+    setBusy(null);
+    if (r) setF((cur) => ({ ...cur, attachments: cur.attachments.map((x, j) => (j === i && (x.url ?? '').trim() === url.trim() ? { ...x, file: r.file, name: x.name.trim() || r.name || 'Material em PDF' } : x)) }));
+  }
   const save = useMutation({
-    mutationFn: () => {
-      const body = { ...f, attachments: f.attachments.filter((a) => a.name.trim() && a.url.trim()) };
+    mutationFn: async () => {
+      // link do Drive que ainda não virou cópia (ex.: colou e já clicou em salvar): copia agora; se falhar, fica o link
+      const attachments = await Promise.all(
+        f.attachments.map(async (a) => {
+          if (a.file || !isDrive(a.url)) return a;
+          const r = await copyDrive(a.url!);
+          return r ? { ...a, file: r.file, name: a.name.trim() || r.name || 'Material em PDF' } : a;
+        }),
+      );
+      const body = { ...f, attachments: attachments.filter((a) => a.name.trim() && (a.url?.trim() || a.file)) };
       return lesson ? adminApi.put(`/members/lessons/${lesson.id}`, body) : adminApi.post(`/members/modules/${moduleId}/lessons`, body);
     },
     onSuccess: onSaved,
@@ -427,13 +480,34 @@ function LessonModal({ moduleId, lesson, onClose, onSaved }: { moduleId: string;
         <div>
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium">Materiais para baixar (opcional)</p>
-            <Button type="button" size="sm" variant="secondary" onClick={() => setF({ ...f, attachments: [...f.attachments, { name: '', url: '' }] })}><Link2 className="h-3.5 w-3.5" /> Adicionar link</Button>
+            <div className="flex gap-2">
+              <Button type="button" size="sm" variant="secondary" loading={busy === 'upload'} onClick={() => pdfInput.current?.click()}><Upload className="h-3.5 w-3.5" /> Enviar PDF</Button>
+              <Button type="button" size="sm" variant="secondary" onClick={() => setF({ ...f, attachments: [...f.attachments, { name: '', url: '' }] })}><Link2 className="h-3.5 w-3.5" /> Adicionar link</Button>
+            </div>
+            <input ref={pdfInput} type="file" accept="application/pdf,.pdf" hidden aria-label="Arquivo PDF" onChange={(e) => (e.target.files?.[0] && uploadPdf(e.target.files[0]), (e.target.value = ''))} />
           </div>
+          <p className="mb-2 text-xs text-zinc-500">Envie o PDF ou cole o link do Google Drive: o sistema guarda uma cópia e só quem comprou consegue abrir.</p>
           <div className="space-y-2">
             {f.attachments.map((a, i) => (
-              <div key={i} className="flex gap-2">
-                <Input value={a.name} onChange={(e) => setF({ ...f, attachments: f.attachments.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} placeholder="Nome (ex.: Apostila PDF)" aria-label="Nome do material" />
-                <Input value={a.url} onChange={(e) => setF({ ...f, attachments: f.attachments.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)) })} placeholder="https://drive.google.com/…" aria-label="Link do material" />
+              <div key={i} className="flex flex-col gap-2 sm:flex-row">
+                <Input value={a.name} onChange={(e) => setAt(i, { name: e.target.value })} placeholder="Nome (ex.: Apostila PDF)" aria-label="Nome do material" />
+                {a.file ? (
+                  <span className="flex h-10 w-full items-center gap-2 rounded-lg bg-emerald-50 px-3 text-sm font-medium text-emerald-700 ring-1 ring-emerald-200">
+                    <CheckCircle2 className="h-4 w-4 shrink-0" /> <span className="truncate">PDF guardado no sistema{a.url ? ' (copiado do Drive)' : ''}</span>
+                  </span>
+                ) : (
+                  <Input
+                    value={a.url ?? ''}
+                    onChange={(e) => setAt(i, { url: e.target.value })}
+                    onPaste={(e) => {
+                      const v = e.clipboardData.getData('text');
+                      setTimeout(() => fromDrive(i, v), 0);
+                    }}
+                    disabled={busy === i}
+                    placeholder={busy === i ? 'Copiando o PDF do Drive…' : 'https://drive.google.com/…'}
+                    aria-label="Link do material"
+                  />
+                )}
                 <IconBtn label="Remover material" danger onClick={() => setF({ ...f, attachments: f.attachments.filter((_, j) => j !== i) })}><X className="h-4 w-4" /></IconBtn>
               </div>
             ))}

@@ -2,13 +2,16 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError, must, productCode } from '../lib/core.js';
 // filtro por organização (o roteador é montado dentro do /admin, que já define o produtor logado)
-import { tenantDb as supabase } from '../lib/tenant.js';
+import { currentOrgId, isOwnerOrg, tenantDb as supabase } from '../lib/tenant.js';
+import { importDrivePdf } from '../services/memberFiles.js';
 import { getMembersConfig, memberTabs, saveMembersConfig } from '../services/members.js';
 import crypto from 'node:crypto';
 
 /** Painel → Área de membros: seções, módulos e aulas de cada produto. (montado em /api/admin/members) */
 export const adminMembersRouter = Router();
 const uuid = z.string().uuid();
+/** caminho de PDF guardado pelo painel: [org/]members/AAAA-MM/uuid.pdf */
+const PDF_PATH = /^(?:[0-9a-f-]{36}\/)?members\/\d{4}-\d{2}\/[0-9a-f-]{36}\.pdf$/;
 const urlOrNull = z.string().trim().url().max(1000).or(z.literal('')).nullable().optional().transform((v) => v || null);
 
 adminMembersRouter.get('/products', async (_req, res) => {
@@ -126,6 +129,15 @@ adminMembersRouter.put('/sections/:id/tab', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------------------------------------------------------------- PDF das aulas
+/** Link do Google Drive → baixa o PDF e guarda uma cópia na área privada (só a área de membros usa). */
+adminMembersRouter.post('/drive-pdf', async (req, res) => {
+  const url = z.string().trim().max(1000).parse(req.body?.url);
+  const org = currentOrgId();
+  const owner = !org || (await isOwnerOrg(org));
+  res.json(await importDrivePdf(url, owner ? '' : `${org}/`));
+});
+
 // ---------------------------------------------------------------- módulos
 const moduleSchema = z.object({
   title: z.string().trim().min(1, 'Informe o nome do módulo').max(80),
@@ -154,17 +166,40 @@ const lessonSchema = z.object({
   description: z.string().trim().max(5000).nullable().optional().transform((v) => v || null),
   video_url: urlOrNull,
   duration: z.string().trim().max(20).nullable().optional().transform((v) => v || null),
-  attachments: z.array(z.object({ name: z.string().trim().min(1).max(120), url: z.string().trim().url().max(1000) })).max(20).default([]),
+  // material: link comum (url) e/ou PDF guardado no sistema (file = caminho na área privada; url = link original do Drive, se houver)
+  attachments: z
+    .array(
+      z
+        .object({
+          name: z.string().trim().min(1).max(120),
+          url: z.string().trim().url().max(1000).or(z.literal('')).nullable().optional().transform((v) => v || null),
+          file: z.string().regex(PDF_PATH, 'Arquivo inválido').nullable().optional().transform((v) => v || null),
+        })
+        .refine((a) => a.url || a.file, 'Informe o link ou envie o PDF'),
+    )
+    .max(20)
+    .default([]),
 });
+/** PDFs da aula: só arquivos da pasta do próprio produtor (a Prime usa a pasta sem prefixo). */
+async function checkFiles(b: { attachments: { file: string | null }[] }) {
+  const org = currentOrgId();
+  const owner = !org || (await isOwnerOrg(org));
+  for (const a of b.attachments) {
+    if (!a.file) continue;
+    const prefix = a.file.includes('/members/') ? a.file.split('/')[0] : null;
+    if (owner ? prefix && prefix !== org : prefix !== org) throw new HttpError(400, 'Arquivo de outra conta');
+  }
+  return b;
+}
 adminMembersRouter.post('/modules/:id/lessons', async (req, res) => {
   const module_id = uuid.parse(req.params.id);
   const { data: m } = await supabase.from('member_modules').select('product_id').eq('id', module_id).maybeSingle();
   if (!m) throw new HttpError(404, 'Módulo não encontrado');
-  const b = lessonSchema.parse(req.body);
+  const b = await checkFiles(lessonSchema.parse(req.body));
   res.status(201).json(must(await supabase.from('member_lessons').insert({ ...b, module_id, product_id: (m as any).product_id, sort: await nextSort('member_lessons', 'module_id', module_id) }).select('*').single()));
 });
 adminMembersRouter.put('/lessons/:id', async (req, res) => {
-  const b = lessonSchema.parse(req.body);
+  const b = await checkFiles(lessonSchema.parse(req.body));
   res.json(must(await supabase.from('member_lessons').update(b).eq('id', uuid.parse(req.params.id)).select('*').single()));
 });
 adminMembersRouter.delete('/lessons/:id', async (req, res) => {

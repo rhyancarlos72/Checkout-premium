@@ -218,6 +218,23 @@ async function manualExtras(owned: Set<string>, cfg: MembersConfig) {
     });
 }
 
+/**
+ * Materiais da aula para o aluno: PDF guardado no sistema (área privada) vira um link temporário (6 h);
+ * links comuns seguem como estão. O caminho interno do arquivo nunca vai para o aluno.
+ */
+async function attachmentLinks(list: unknown) {
+  if (!Array.isArray(list)) return [];
+  return Promise.all(
+    list.map(async (a: any) => {
+      if (a?.file) {
+        const { data } = await supabase.storage.from('deliverables').createSignedUrl(a.file, 6 * 3600).catch(() => ({ data: null }) as any);
+        return { name: a.name, url: data?.signedUrl ?? a.url ?? null, pdf: true };
+      }
+      return { name: a?.name, url: a?.url ?? null };
+    }),
+  ).then((r) => r.filter((a) => a.name && a.url));
+}
+
 /** Módulo com as aulas (só para quem tem o produto). */
 export async function memberModule(customerId: string, moduleId: string) {
   const { data: m } = await supabase.from('member_modules').select('id, product_id, section_id, title, subtitle, cover_url, sort').eq('id', moduleId).maybeSingle();
@@ -245,7 +262,7 @@ export async function memberModule(customerId: string, moduleId: string) {
     cover_url: mod.cover_url,
     course: (product as any)?.name ?? '',
     next_module: next ? { id: next.id, title: next.title } : null,
-    lessons: ((lessons ?? []) as any[]).map((l) => ({ ...l, attachments: Array.isArray(l.attachments) ? l.attachments : [], completed: done.has(l.id) })),
+    lessons: await Promise.all(((lessons ?? []) as any[]).map(async (l) => ({ ...l, attachments: await attachmentLinks(l.attachments), completed: done.has(l.id) }))),
   };
 }
 
