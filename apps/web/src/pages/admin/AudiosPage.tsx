@@ -38,6 +38,7 @@ interface Config {
   backfill: { enabled: boolean; daysBack: number; intervalMinutes: number; perInterval: number };
   upsell2: { enabled: boolean; delayHours: number; firstMonthCents: number; validityHours: number; audio: string; opener: string; linkText: string };
   contacts: { enabled: boolean; opener: string };
+  safety: { replyGate: boolean; recoveryGateFirst: boolean; waitHours: number; dailyCapPerNumber: number };
 }
 interface QueueRow { id: string; kind: Kind; attempt?: number | null; contact_id?: string | null; step: number; status: string; phone: string; run_at: string; error: string | null; created_at: string }
 interface Data {
@@ -53,6 +54,8 @@ interface Data {
   pages: { slug: string; title: string; active: boolean }[];
   backfill: { sent: number; last_at: string | null; remaining: number; next_at: string | null } | null;
   attempt_ready?: boolean;
+  cold_today?: { instance: string; used: number }[];
+  paused?: { paused_reason?: string; paused_at?: string } | null;
 }
 interface ListInfo { name: string; total: number; pending: number; queued: number; sent: number; skipped: number }
 interface Contacts {
@@ -236,7 +239,8 @@ function OverviewTab({ data, c, setC, contacts, go }: TabProps & { contacts: Con
   if (c.upsell2.enabled && !c.upsell.page_slug) warnings.push({ text: 'A última chamada precisa da página de vendas escolhida no Upsell.', tab: 'upsell' });
   if (upAudios > 1 && (!c.upsell.audio || (c.upsell2.enabled && !c.upsell2.audio))) warnings.push({ text: 'Escolha o áudio da apresentação e o da última chamada (para nunca ir o áudio de uma etapa na outra).', tab: 'upsell' });
   if (recAudios > 1 && (!c.recovery.audioFirst || !c.recovery.audioLast)) warnings.push({ text: 'Escolha o áudio do 1º e do último lembrete da recuperação.', tab: 'recuperacao' });
-  if (contacts?.paused?.paused_reason) warnings.push({ text: `Envio para contatos importados pausado sozinho: ${contacts.paused.paused_reason}.`, tab: 'contatos' });
+  const pause = data.paused ?? contacts?.paused;
+  if (pause?.paused_reason && !c.backfill.enabled && !c.contacts.enabled) warnings.push({ text: `Envios para quem já comprou pausados sozinhos para proteger os números: ${pause.paused_reason}.`, tab: 'upsell' });
   const flows: { label: string; on: boolean; detail: string; tab: Tab }[] = [
     { label: 'Recuperação por áudio', on: c.recovery.enabled, detail: `${c.recovery.attempts.map((n) => `${n}º`).join(' e ') || 'nenhum'} lembrete(s)`, tab: 'recuperacao' },
     { label: 'Upsell (apresentação)', on: c.upsell.enabled, detail: `${Math.round(c.upsell.delayMinutes / 60 * 10) / 10} h depois da compra`, tab: 'upsell' },
@@ -272,6 +276,7 @@ function OverviewTab({ data, c, setC, contacts, go }: TabProps & { contacts: Con
             ))}
           </ul>
         </Card>
+        <div className="min-w-0 space-y-4">
         <Section title="Geral" desc="Vale para todos os envios por áudio.">
           <Switch checked={c.enabled} onChange={(v) => setC({ ...c, enabled: v })} label={c.enabled ? 'Áudios ligados' : 'Áudios desligados'} />
           <div className="grid grid-cols-2 gap-3">
@@ -280,8 +285,49 @@ function OverviewTab({ data, c, setC, contacts, go }: TabProps & { contacts: Con
           </div>
           <p className="text-xs text-zinc-500">Horário de Brasília. Fora dele, os envios esperam a próxima abertura (a recuperação vai em texto na hora).</p>
         </Section>
+        <Safety data={data} c={c} setC={setC} />
+        </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Proteção dos números (anti-bloqueio): pergunta primeiro e só segue se a pessoa responder, limite de conversas
+ * novas por número por dia e o uso de hoje de cada número.
+ */
+function Safety({ data, c, setC }: { data: Data; c: Config; setC: (c: Config) => void }) {
+  const sf = (p: Partial<Config['safety']>) => setC({ ...c, safety: { ...c.safety, ...p } });
+  const used = new Map((data.cold_today ?? []).map((x) => [x.instance, x.used]));
+  const wa = useQuery({ queryKey: ['whatsapp-config'], queryFn: () => adminApi.get<{ instances: { name: string; active: boolean }[] }>('/whatsapp') });
+  const names = (wa.data?.instances ?? []).filter((i) => i.active).map((i) => i.name);
+  return (
+    <Section title="Proteção dos números" desc="Evita bloqueio: mensagens sem resposta e muitas conversas novas no mesmo número são o que o WhatsApp lê como spam.">
+      <Switch checked={c.safety.replyGate} onChange={(v) => sf({ replyGate: v })} label="Upsell: pergunta primeiro, áudio e link só se a pessoa responder" />
+      <Switch checked={c.safety.recoveryGateFirst} onChange={(v) => sf({ recoveryGateFirst: v })} label="Recuperação: o 1º lembrete com áudio também pergunta primeiro" />
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Esperar resposta por (h)" hint="Sem resposta: para"><Input type="number" min={1} max={72} value={c.safety.waitHours} onChange={(e) => sf({ waitHours: Math.max(1, num(e.target.value)) })} /></Field>
+        <Field label="Conversas novas por número/dia" hint="Aquecendo: 15 · depois: 30"><Input type="number" min={1} max={500} value={c.safety.dailyCapPerNumber} onChange={(e) => sf({ dailyCapPerNumber: Math.max(1, num(e.target.value)) })} /></Field>
+      </div>
+      {names.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-xs font-semibold text-zinc-700">Conversas de upsell iniciadas hoje</p>
+          <ul className="space-y-1.5">
+            {names.map((n) => {
+              const u = used.get(n) ?? 0;
+              const pct = Math.min(100, Math.round((u / Math.max(1, c.safety.dailyCapPerNumber)) * 100));
+              return (
+                <li key={n} className="text-xs">
+                  <div className="flex justify-between text-zinc-600"><span>{n}</span><span className="tabular-nums">{u} / {c.safety.dailyCapPerNumber}</span></div>
+                  <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-zinc-100"><div className={cn('h-full rounded-full', pct >= 100 ? 'bg-amber-500' : 'bg-emerald-500')} style={{ width: `${pct}%` }} /></div>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-1.5 text-[11px] text-zinc-500">Bateu o limite, as próximas ficam para amanhã. Recuperação e mensagens de entrega não contam.</p>
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -620,7 +666,7 @@ function ContactsTab({ c, setC, fail, refresh, contacts, contactsError }: TabPro
     <div className="space-y-4">
       {toast.node}
       {notReady && <Alert tone="warn">{notReady}</Alert>}
-      {contacts?.paused?.paused_reason && !c.contacts.enabled && (
+      {contacts?.paused?.paused_reason && !c.contacts.enabled && !c.backfill.enabled && (
         <Alert tone="warn">
           Pausado sozinho para proteger os números: {contacts.paused.paused_reason}. Confira a fila e os descadastros antes de religar.
         </Alert>

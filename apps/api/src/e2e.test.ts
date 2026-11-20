@@ -1485,7 +1485,7 @@ describe('marketplace multiusuário', () => {
     // sem produto marcado: nem recuperação por áudio nem upsell
     expect((await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config).toMatchObject({ recovery: { product_ids: [] }, upsell: { product_ids: [] } });
     expect((await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.products.map((p: any) => p.id)).toEqual(expect.arrayContaining([P1, P2, CLUBE]));
-    const put = await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { windowStart: 0, windowEnd: 24, recovery: { enabled: true, product_ids: [P1] }, upsell: { enabled: true, checkout_slug: '8931499', product_ids: [P2, P1] } });
+    const put = await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { windowStart: 0, windowEnd: 24, safety: { replyGate: false, recoveryGateFirst: false, waitHours: 24, dailyCapPerNumber: 500 }, recovery: { enabled: true, product_ids: [P1] }, upsell: { enabled: true, checkout_slug: '8931499', product_ids: [P2, P1] } });
     expect(put.status).toBe(200);
     expect(put.body.upsell).toMatchObject({ delayMinutes: 120, validityHours: 48, opener: 'Oi {nome}, tudo bem? Posso falar com você um segundo?' });
     const buy = (name: string, email: string, phone: string, slug = '8931442', tracking: Record<string, string> = {}) =>
@@ -1916,7 +1916,7 @@ describe('marketplace multiusuário', () => {
     o.status = 'paid';
     o.paid_at = new Date(Date.now() - 9 * 3600_000).toISOString();
     db.wa_queue = (db.wa_queue ?? []).filter((q) => q.order_id !== o.id);
-    db.wa_queue.push({ id: crypto.randomUUID(), kind: 'upsell', attempt: null, status: 'done', step: 2, customer_id: o.customer_id, order_id: o.id, phone: '5511945670001', audio_id: UPS, run_at: now, attempts: 3, created_at: new Date(Date.now() - 7 * 3600_000).toISOString(), updated_at: new Date(Date.now() - 7 * 3600_000).toISOString() });
+    db.wa_queue.push({ id: crypto.randomUUID(), kind: 'upsell', attempt: null, status: 'done', step: 2, error: 'respondeu', customer_id: o.customer_id, order_id: o.id, phone: '5511945670001', audio_id: UPS, run_at: now, attempts: 3, created_at: new Date(Date.now() - 7 * 3600_000).toISOString(), updated_at: new Date(Date.now() - 7 * 3600_000).toISOString() });
     // um 1º upsell de só 2 h atrás ainda não ganha a última chamada
     const r2 = await fetch(`${base}/api/public/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '187.77.3.2' }, body: JSON.stringify({ checkout_slug: '8931442', customer: { name: 'Vitor Recente', email: 'vitor.recente@x.com', phone: '11945670002' }, bump_ids: [], tracking: {} }) }).then((x) => x.json());
     const o2 = db.orders.find((x) => x.public_token === r2.token)!;
@@ -2103,6 +2103,87 @@ describe('marketplace multiusuário', () => {
     expect(db.wa_contacts.some((c) => c.id === c6.id)).toBe(true);
     expect(db.wa_contacts.every((c) => ['sent', 'queued'].includes(c.status))).toBe(true);
     db.wa_queue = db.wa_queue.filter((x) => !(x.status === 'failed' && x.contact_id && !db.wa_contacts.some((c) => c.id === x.contact_id)));
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
+  }, 30_000);
+  it('proteção dos números: pergunta primeiro (áudio e link só se responder), limite por número/dia, última chamada só p/ quem respondeu e pausa automática', async () => {
+    const wa = await import('./services/waAudio.js');
+    const now = new Date().toISOString();
+    const UPS = '0c000000-0000-4000-8000-0000000000a2';
+    const cfg = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', {
+      ...cfg, windowStart: 0, windowEnd: 24,
+      upsell: { ...cfg.upsell, enabled: true, page_slug: 'ultima', audio: UPS },
+      upsell2: { ...cfg.upsell2, enabled: true },
+      safety: { replyGate: true, recoveryGateFirst: true, waitHours: 24, dailyCapPerNumber: 500 },
+    });
+    db.integration_logs = (db.integration_logs ?? []).filter((l) => !['upsell_texto', 'upsell2_texto'].includes(l.event)); // começa o dia do zero
+    const mkRow = (n: number) => {
+      const id = crypto.randomUUID();
+      const oid = crypto.randomUUID();
+      db.orders.push({ id: oid, status: 'paid', created_at: now, paid_at: now, public_token: crypto.randomBytes(24).toString('hex') });
+      const row = { id, kind: 'upsell', attempt: null, status: 'pending', step: 0, customer_id: null, order_id: oid, phone: `55119870000${n}`, audio_id: null, run_at: new Date(Date.now() - 1000).toISOString(), attempts: 0, error: null, created_at: now, updated_at: now };
+      db.wa_queue.push(row);
+      return row;
+    };
+    const texts = (n: number) => waSent.filter((w) => String(w.body?.number ?? '').includes(`9870000${n}`));
+    const audios = (n: number) => waAudioSent.filter((w) => String(w.body?.number ?? '').includes(`9870000${n}`));
+    const a = mkRow(1);
+    const b = mkRow(2);
+    await wa.processWaQueue();
+    // só a 1ª mensagem; áudio e link esperam a resposta (até 24 h)
+    expect(texts(1)).toHaveLength(1);
+    expect(audios(1)).toHaveLength(0);
+    expect(a).toMatchObject({ status: 'pending', step: 1, error: 'aguardando resposta' });
+    expect(new Date(a.run_at).getTime() - Date.now()).toBeGreaterThan(23 * 3600_000);
+    // a pessoa respondeu "oi": em segundos vão o áudio e o link
+    await wa.handleEvolutionEvent({ event: 'messages.upsert', data: { key: { remoteJid: '551198700001@s.whatsapp.net', fromMe: false }, message: { conversation: 'oi, pode falar' } } });
+    expect(a).toMatchObject({ error: 'respondeu' });
+    for (let i = 0; i < 2; i++) {
+      a.run_at = new Date(Date.now() - 1000).toISOString();
+      await wa.processWaQueue();
+    }
+    expect(audios(1)).toHaveLength(1);
+    expect(a).toMatchObject({ status: 'done', error: 'respondeu' });
+    // quem não respondeu em 24 h: para, sem áudio e sem link
+    b.run_at = new Date(Date.now() - 1000).toISOString();
+    await wa.processWaQueue();
+    expect(b).toMatchObject({ status: 'skipped', error: 'não respondeu em 24 h' });
+    expect(audios(2)).toHaveLength(0);
+    expect(texts(2)).toHaveLength(1);
+    // a última chamada só vai para quem respondeu (ou clicou)
+    for (const r of [a, b]) r.updated_at = new Date(Date.now() - 7 * 3600_000).toISOString();
+    b.status = 'done'; // mesmo um "done" antigo sem resposta nem clique fica de fora
+    b.error = null;
+    expect(await wa.scheduleUpsell2()).toBe(1);
+    expect(db.wa_queue.some((q) => q.order_id === a.order_id && q.attempt === 2)).toBe(true);
+    expect(db.wa_queue.some((q) => q.order_id === b.order_id && q.attempt === 2)).toBe(false);
+    db.wa_queue = db.wa_queue.filter((q) => !(q.attempt === 2 && q.order_id === a.order_id));
+
+    // limite por número/dia: com 1 conversa por número (2 números), a 3ª fica para amanhã
+    const c2 = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body.config;
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...c2, safety: { ...c2.safety, dailyCapPerNumber: 1 } });
+    db.integration_logs = db.integration_logs.filter((l) => !['upsell_texto', 'upsell2_texto'].includes(l.event));
+    const r3 = mkRow(3), r4 = mkRow(4), r5 = mkRow(5);
+    await wa.processWaQueue();
+    const sentTo = [r3, r4, r5].filter((r) => r.step === 1);
+    expect(sentTo).toHaveLength(2);
+    expect(new Set(waSent.filter((w) => /98700003|98700004|98700005/.test(String(w.body?.number))).map((w) => w.instance)).size).toBe(2); // um em cada número
+    const held = [r3, r4, r5].find((r) => r.step === 0)!;
+    expect(held.status).toBe('pending');
+    expect(new Date(held.run_at).getTime()).toBeGreaterThan(Date.now() + 60_000); // amanhã, na abertura do horário
+    const panel = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body;
+    expect(panel.cold_today.reduce((n: number, x: any) => n + x.used, 0)).toBe(2);
+
+    // pausa automática também para os compradores antigos: muitos SAIR → desliga compradores antigos e importados
+    await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', { ...c2, safety: { ...c2.safety, dailyCapPerNumber: 500 }, backfill: { ...c2.backfill, enabled: true }, contacts: { ...c2.contacts, enabled: true } });
+    for (let i = 0; i < 20; i++) db.wa_queue.push({ id: crypto.randomUUID(), kind: 'upsell', attempt: null, status: 'done', step: 2, phone: `55119860000${String(i).padStart(2, '0')}`, run_at: now, attempts: 3, created_at: now, updated_at: now });
+    db.wa_optouts.push({ phone: '551198600000', word: 'SAIR', created_at: now }, { phone: '551198600001', word: 'SAIR', created_at: now });
+    for (let i = 0; i < 20; i++) db.wa_optouts.push({ phone: `55119860000${String(i).padStart(2, '0')}`, word: 'SAIR', created_at: now });
+    expect(await wa.runUpsellBackfill()).toBeNull();
+    const after = (await as('owner', 'GET', '/api/admin/whatsapp/audio')).body;
+    expect(after.config.backfill.enabled).toBe(false);
+    expect(after.config.contacts.enabled).toBe(false);
+    expect(after.paused.paused_reason).toMatch(/pediram para sair/);
     await as('owner', 'PUT', '/api/admin/whatsapp/audio/config', cfg);
   }, 30_000);
 });

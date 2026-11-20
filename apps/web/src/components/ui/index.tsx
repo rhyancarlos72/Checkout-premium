@@ -83,8 +83,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
 
 export function Switch({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label?: string }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex items-center gap-3 text-sm text-gray-700">
-      <span className={cn('relative h-6 w-11 rounded-full transition', checked ? 'bg-emerald-600' : 'bg-gray-300')}>
+    <button type="button" role="switch" aria-checked={checked} onClick={() => onChange(!checked)} className="inline-flex items-center gap-3 text-left text-sm text-gray-700">
+      <span className={cn('relative h-6 w-11 shrink-0 rounded-full transition', checked ? 'bg-emerald-600' : 'bg-gray-300')}>
         <span className={cn('absolute top-0.5 h-5 w-5 rounded-full bg-[#fff] shadow transition', checked ? 'left-[22px]' : 'left-0.5')} />
       </span>
       {label}

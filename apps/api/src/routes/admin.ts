@@ -22,7 +22,7 @@ import { testPayTracking, testWebhook } from '../services/paytracking.js';
 import { lastJobRunAt } from '../services/jobs.js';
 import { OFFER_NEW_FIELDS, OFFER_SELECT, OFFER_SELECT_BASE, OFFER_SELECT_VSL, missingOfferColumns, offerSchema, offerStats, selectOffers } from '../services/offers.js';
 import { importContacts, importSchema, contactsSummary, deleteContactList } from '../services/waContacts.js';
-import { backfillStatus, clearContactsPause, contactsPauseInfo, evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
+import { backfillStatus, clearContactsPause, coldUsageToday, contactsPauseInfo, evolutionWebhookUrl, getWaAudioConfig, registerOptOutWebhook, saveWaAudioConfig, waAudioReport, waAudioSchema } from '../services/waAudio.js';
 import { buildApprovedMessage, buildRecoveryMessage, diagnoseWhatsApp, evolutionConnectStatus, evolutionCreateInstance, evolutionReconnect, fetchEvolutionInstances, getWhatsAppConfig, instancesStatus, normalizePhoneBR, phoneVariants, saveWhatsAppConfig, sendWhatsAppAudio, sendWhatsAppRecoveryNow, sendWhatsAppText, whatsappSchema } from '../services/whatsapp.js';
 import { allWebhooks, listWebhooks, mask, newWebhookId, saveWebhooks, WEBHOOK_EVENTS, type Webhook } from '../services/webhooks.js';
 import { getSettings, saveSettings } from '../services/settings.js';
@@ -1461,13 +1461,16 @@ adminRouter.get('/whatsapp/audio', async (_req, res) => {
     products: (products.data ?? []).map((p: any) => ({ id: p.id, name: p.name, active: p.active !== false })),
     pages: ((offerPages.data ?? []) as any[]).map((p) => ({ slug: p.slug, title: p.title, active: p.active !== false })),
     backfill: await backfillStatus().catch(() => null),
+    // proteção dos números: conversas de upsell iniciadas hoje por número, a pausa automática e o limite
+    cold_today: await coldUsageToday().then((m) => [...m.entries()].map(([instance, used]) => ({ instance, used }))).catch(() => []),
+    paused: await contactsPauseInfo().catch(() => null),
     // recuperação por áudio em mais de um lembrete precisa do SQL 20261122000000_wa_queue_attempt.sql
     attempt_ready: !(await supabase.from('wa_queue').select('attempt').limit(1)).error,
   });
 });
 adminRouter.put('/whatsapp/audio/config', async (req, res) => {
   const value = waAudioSchema.parse(req.body ?? {});
-  if (value.contacts.enabled) await clearContactsPause(); // religou: tira o aviso da pausa automática
+  if (value.contacts.enabled || value.backfill.enabled) await clearContactsPause(); // religou: tira o aviso da pausa automática
   if (value.windowEnd <= value.windowStart) throw new HttpError(400, 'O horário final precisa ser depois do inicial');
   await saveWaAudioConfig(value);
   res.json(value);

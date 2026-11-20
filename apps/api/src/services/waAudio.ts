@@ -19,6 +19,7 @@ import {
   sendWhatsAppAudio,
   sendWhatsAppText,
   tokenFor,
+  type SendResult,
   type WhatsAppConfig,
 } from './whatsapp.js';
 
@@ -116,8 +117,23 @@ export const waAudioSchema = z.object({
     .object({
       enabled: z.boolean().default(false),
       daysBack: z.number().int().min(1).max(730).default(90),
-      intervalMinutes: z.number().int().min(10).max(1440).default(30),
-      perInterval: z.number().int().min(1).max(10).default(3),
+      intervalMinutes: z.number().int().min(10).max(1440).default(20),
+      perInterval: z.number().int().min(1).max(10).default(1),
+    })
+    .prefault({}),
+  /**
+   * Proteção dos números (anti-bloqueio):
+   *  - replyGate: no upsell e na última chamada vai SÓ a 1ª mensagem; áudio e link só se a pessoa responder
+   *  - recoveryGateFirst: o mesmo no 1º lembrete com áudio da recuperação (o último lembrete vai direto)
+   *  - waitHours: sem resposta nesse tempo, para (não manda mais nada)
+   *  - dailyCapPerNumber: cada número inicia no máximo N conversas de upsell por dia (o resto fica para amanhã)
+   */
+  safety: z
+    .object({
+      replyGate: z.boolean().default(true),
+      recoveryGateFirst: z.boolean().default(true),
+      waitHours: z.number().int().min(1).max(72).default(24),
+      dailyCapPerNumber: z.number().int().min(1).max(500).default(15),
     })
     .prefault({}),
   /** contatos importados (CSV do checkout antigo): a mesma sequência do upsell, com a 1ª mensagem própria */
@@ -296,6 +312,68 @@ export async function resolveWaTracking(tracking: Record<string, string>) {
   return link;
 }
 
+// ------------------------------------------------------------------ "pergunta primeiro": só segue se a pessoa responder
+/** Linha da fila esperando a pessoa responder a 1ª mensagem (fica no campo de erro: aparece na fila do painel). */
+export const AWAIT = 'aguardando resposta';
+/** A pessoa respondeu: o áudio e o link já podem ir (e ela conta como "engajada" para a última chamada). */
+export const REPLIED = 'respondeu';
+
+/** Mensagem recebida de alguém: libera na hora o áudio e o link das conversas que esperavam a resposta dela. */
+export async function markReplied(phoneRaw: string) {
+  const n = normalizePhoneBR(phoneRaw);
+  if (!n) return 0;
+  const { data } = await supabase
+    .from('wa_queue')
+    .update({ run_at: new Date(Date.now() + 8_000).toISOString(), error: REPLIED, updated_at: new Date().toISOString() })
+    .in('phone', phoneVariants(n))
+    .eq('status', 'pending')
+    .eq('error', AWAIT)
+    .select('id');
+  return data?.length ?? 0;
+}
+
+/** Início do dia de hoje em Brasília (para o limite diário por número). */
+const todayStartSp = (t = Date.now()) => {
+  const d = new Date(t - SP_OFFSET);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) + SP_OFFSET;
+};
+/** Quantas conversas de upsell cada número já iniciou hoje. */
+export async function coldUsageToday(now = Date.now()) {
+  const { data } = await supabase
+    .from('integration_logs')
+    .select('message')
+    .eq('integration', 'whatsapp')
+    .eq('ok', true)
+    .in('event', ['upsell_texto', 'upsell2_texto'])
+    .gte('created_at', new Date(todayStartSp(now)).toISOString())
+    .limit(5000);
+  const used = new Map<string, number>();
+  for (const l of (data ?? []) as any[]) {
+    const name = /enviado \((.+)\)/.exec(String(l.message ?? ''))?.[1];
+    if (name) used.set(name, (used.get(name) ?? 0) + 1);
+  }
+  return used;
+}
+/**
+ * 1ª mensagem de um upsell, respeitando o limite diário de cada número: vai pelo número menos usado hoje que ainda
+ * tem vaga. Todos no limite → { capped: true } (a linha fica para amanhã).
+ */
+async function sendColdOpener(phone: string, text: string, cfg: WaAudioConfig, wa: WhatsAppConfig): Promise<SendResult & { capped?: boolean }> {
+  const used = await coldUsageToday();
+  const names = wa.instances
+    .filter((i) => i.active && i.name)
+    .map((i) => i.name)
+    .filter((n) => (used.get(n) ?? 0) < cfg.safety.dailyCapPerNumber)
+    .sort((a, b) => (used.get(a) ?? 0) - (used.get(b) ?? 0));
+  if (!names.length) return { ok: false, capped: true, error: 'limite diário dos números atingido' };
+  let last: SendResult = { ok: false, error: 'não enviado' };
+  for (const name of names) {
+    last = await sendWhatsAppText(phone, text, wa, { instance: name });
+    if (last.ok || /não tem WhatsApp|inválido/i.test(last.error ?? '')) return last;
+  }
+  return last;
+}
+
 // ------------------------------------------------------------------ quem pode receber o upsell
 async function targetCheckout(slug: string) {
   if (!slug) return null;
@@ -376,6 +454,10 @@ export async function queueRecoveryAudio(o: any, attempt = 3): Promise<boolean> 
   const last = attempt === Math.max(...cfg.recovery.attempts) && attempt > 1;
   const audio = await recoveryAudio(cfg, last); // o áudio desta etapa; pausado/sem áudio → o lembrete vai em texto
   if (!audio) return false;
+  if (last) {
+    // o último lembrete substitui o 1º que ainda esperava resposta (nunca dois áudios na mesma conversa)
+    await supabase.from('wa_queue').update({ status: 'canceled', error: 'substituído pelo último lembrete', updated_at: new Date().toISOString() }).eq('order_id', o.id).eq('kind', 'recovery').eq('status', 'pending').eq('error', AWAIT);
+  }
   const { error } = await supabase.from('wa_queue').insert({ kind: 'recovery', attempt, status: 'pending', step: 0, customer_id: o.customer_id, order_id: o.id, phone, audio_id: audio.id, run_at: new Date().toISOString() });
   if (error && /attempt/i.test(error.message)) logger.warn('Rode no Supabase o SQL 20261122000000_wa_queue_attempt.sql (recuperação por áudio em mais de um lembrete)');
   return !error;
@@ -422,18 +504,23 @@ async function upsellStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): Pro
     if (!audio) return { status: 'skipped', error: second ? 'áudio da última chamada pausado ou não escolhido' : 'áudio do upsell pausado ou não escolhido' };
     // 1ª mensagem: a da última chamada, a dos contatos importados ("você já comprou … com a gente") ou a do upsell
     const opener = second ? cfg.upsell2.opener : contact ? cfg.contacts.opener : cfg.upsell.opener;
-    const r = await sendWhatsAppText(row.phone, fillText(opener, { nome, produto, produto_comprado: contact?.last_product ?? '' }), wa);
+    const r = await sendColdOpener(row.phone, fillText(opener, { nome, produto, produto_comprado: contact?.last_product ?? '' }), cfg, wa);
+    // todos os números já iniciaram o máximo de conversas hoje: fica para amanhã (não força o número)
+    if (r.capped) return { status: 'pending', step: 0, run_at: nextWindowStart(cfg, Date.now() + 60_000) };
     await logWa(row.order_id, `${tag}_texto`, r);
     if (!r.ok) return { status: 'failed', error: r.error ?? 'falhou' };
+    // pergunta primeiro: o áudio e o link só vão se a pessoa responder (até X horas); sem resposta, para
+    if (cfg.safety.replyGate) return { status: 'pending', step: 1, run_at: Date.now() + cfg.safety.waitHours * 3600_000, audio_id: audio.id, instance: r.instance ?? null, error: AWAIT };
     return { status: 'pending', step: 1, run_at: Date.now() + cfg.upsell.gapSeconds * 1000, audio_id: audio.id, instance: r.instance ?? null };
   }
   if (row.step === 1) {
+    if ((row as any).error === AWAIT) return { status: 'skipped', error: `não respondeu em ${cfg.safety.waitHours} h` };
     const audio = await audioById(row.audio_id);
     let r = audio ? await sendWhatsAppAudio(row.phone, audio.file_url, wa, { instance: row.instance ?? undefined }) : { ok: false, error: 'áudio apagado' };
     if (!r.ok && audio && row.instance) r = await sendWhatsAppAudio(row.phone, audio.file_url, wa); // o número da conversa caiu
     await logWa(row.order_id, `${tag}_audio`, r);
-    // mesmo se o áudio falhar, manda o link (a pessoa já recebeu o "posso falar com você?")
-    return { status: 'pending', step: 2, run_at: Date.now() + 15_000, instance: r.ok ? (r.instance ?? row.instance) : row.instance, error: r.ok ? null : `áudio: ${r.error}`, ...(r.ok ? {} : { audio_id: null }) };
+    // mesmo se o áudio falhar, manda o link (a pessoa já recebeu o "posso falar com você?"); mantém o "respondeu"
+    return { status: 'pending', step: 2, run_at: Date.now() + 15_000, instance: r.ok ? (r.instance ?? row.instance) : row.instance, error: r.ok ? ((row as any).error ?? null) : `áudio: ${r.error}`, ...(r.ok ? {} : { audio_id: null }) };
   }
   const expires = Date.now() + (second ? cfg.upsell2.validityHours : cfg.upsell.validityHours) * 3600_000;
   const link = await createLink({ kind: 'upsell', audioId: row.audio_id, customerId: row.customer_id, orderId: null, target: second ? `${target.path}?u=2` : target.path, expiresAt: expires, contactId: row.contact_id ?? null });
@@ -475,9 +562,12 @@ async function recoveryStep(row: Row, cfg: WaAudioConfig, wa: WhatsAppConfig): P
       if (!t.ok) await recoveryEmailFallback(o.id, o.customer_id, attempt);
       return { status: t.ok ? 'done' : 'failed', error: `texto: ${r.error}${t.ok ? ' (foi o lembrete em texto)' : ''}`, audio_id: null };
     }
+    // 1º lembrete com áudio: pergunta primeiro; o áudio e o link + Pix só se a pessoa responder (o último lembrete vai direto)
+    if (!last && cfg.safety.recoveryGateFirst) return { status: 'pending', step: 1, run_at: Date.now() + cfg.safety.waitHours * 3600_000, instance: r.instance ?? null, error: AWAIT };
     return { status: 'pending', step: 1, run_at: Date.now() + cfg.recovery.gapSeconds * 1000, instance: r.instance ?? null };
   }
   if (row.step === 1) {
+    if ((row as any).error === AWAIT) return { status: 'skipped', error: `não respondeu em ${cfg.safety.waitHours} h` };
     const audio = await audioById(row.audio_id); // o escolhido quando entrou na fila (sem trocar por outro)
     let r = audio ? await sendWhatsAppAudio(row.phone, audio.file_url, wa, { instance: row.instance ?? undefined }) : { ok: false, error: 'nenhum áudio de recuperação ativo' };
     if (!r.ok && audio && row.instance) r = await sendWhatsAppAudio(row.phone, audio.file_url, wa); // o número da conversa caiu
@@ -576,7 +666,12 @@ export async function handleEvolutionEvent(body: any) {
     if (!jid.endsWith('@s.whatsapp.net')) continue; // grupos e listas: ignora
     const text = m.message?.conversation ?? m.message?.extendedTextMessage?.text ?? '';
     const word = optOutWord(text);
-    if (word && (await registerOptOut(jid.split('@')[0], word))) n++;
+    if (word) {
+      if (await registerOptOut(jid.split('@')[0], word)) n++;
+    } else if (m.message) {
+      // qualquer outra resposta (texto, áudio, figurinha…): libera o áudio e o link de quem esperava a resposta
+      await markReplied(jid.split('@')[0]).catch(() => 0);
+    }
   }
   return n;
 }
@@ -708,6 +803,8 @@ export const backfillSlotMs = (cfg: WaAudioConfig) => (cfg.backfill.intervalMinu
 export async function runUpsellBackfill(now = Date.now()) {
   const [cfg, wa] = await Promise.all([getWaAudioConfig(), getWhatsAppConfig()]);
   if (!cfg.enabled || !cfg.upsell.enabled || (!cfg.backfill.enabled && !cfg.contacts.enabled) || !wa.enabled) return null;
+  // proteção: muitos SAIR ou falhas seguidas nas conversas de upsell → pausa compradores antigos e importados
+  if (await contactsAutoPause(cfg, now)) return null;
   if (!inWindow(cfg, now)) return null;
   const st = await backfillState();
   if (st.last_at && now - new Date(st.last_at).getTime() < backfillSlotMs(cfg)) return null;
@@ -730,7 +827,6 @@ export async function runUpsellBackfill(now = Date.now()) {
   }
   // 2) contatos importados
   if (!cfg.contacts.enabled) return null;
-  if (await contactsAutoPause(cfg, now)) return null;
   const c = await nextContact(target.ck);
   if (!c) return null;
   const { error } = await supabase.from('wa_queue').insert({ kind: 'upsell', status: 'pending', step: 0, contact_id: c.id, customer_id: null, order_id: null, phone: c.phone, run_at: new Date(now).toISOString() });
@@ -771,15 +867,20 @@ export async function scheduleUpsell2(now = Date.now()) {
     .gte('updated_at', new Date(now - 7 * 24 * 3600_000).toISOString())
     .limit(500);
   if (error || !data?.length) return 0;
-  const ids = (data as any[]).map((r) => r.order_id).filter(Boolean);
-  const cids = (data as any[]).map((r) => r.contact_id).filter(Boolean);
+  // só quem mostrou interesse no 1º upsell (respondeu a mensagem ou clicou no link) recebe a última chamada
+  const tokens = (data as any[]).map((r) => r.link_token).filter(Boolean);
+  const { data: lk } = tokens.length ? await supabase.from('wa_links').select('token, clicks').in('token', tokens) : { data: [] as any[] };
+  const clicked = new Set(((lk ?? []) as any[]).filter((l) => (l.clicks ?? 0) > 0).map((l) => l.token));
+  const engaged = (data as any[]).filter((r) => r.error === REPLIED || clicked.has(r.link_token));
+  const ids = engaged.map((r) => r.order_id).filter(Boolean);
+  const cids = engaged.map((r) => r.contact_id).filter(Boolean);
   const [had, hadC] = await Promise.all([
     ids.length ? supabase.from('wa_queue').select('order_id').eq('kind', 'upsell').eq('attempt', 2).in('order_id', ids) : Promise.resolve({ data: [] as any[] }),
     cids.length ? supabase.from('wa_queue').select('contact_id').eq('kind', 'upsell').eq('attempt', 2).in('contact_id', cids) : Promise.resolve({ data: [] as any[] }),
   ]);
   const done = new Set([...((had.data ?? []) as any[]).map((r) => r.order_id), ...((hadC.data ?? []) as any[]).map((r) => r.contact_id)]);
   let n = 0;
-  for (const r of data as any[]) {
+  for (const r of engaged) {
     const key = r.order_id ?? r.contact_id;
     if (!key || done.has(key)) continue; // pedido daqui ou contato importado
     const { error: e } = await supabase.from('wa_queue').insert({ kind: 'upsell', attempt: 2, status: 'pending', step: 0, customer_id: r.customer_id, order_id: r.order_id ?? null, ...(r.contact_id ? { contact_id: r.contact_id } : {}), phone: r.phone, run_at: new Date(now).toISOString() });
@@ -878,25 +979,26 @@ async function nextContact(ck: any): Promise<Contact | null> {
 
 const CONTACTS_STATE = 'wa_contacts_state';
 /**
- * Proteção dos números: se muita gente pedir para sair (mais de 8% dos envios a importados nas últimas 24 h, com pelo
- * menos 20 envios) ou se os últimos 5 envios falharem, o envio para importados PAUSA sozinho e o painel avisa.
+ * Proteção dos números: olhando TODAS as conversas de upsell das últimas 24 h, se muita gente pedir para sair
+ * (mais de 8% de quem recebeu, com pelo menos 20 conversas) ou se os últimos 5 envios falharem (fora "número sem
+ * WhatsApp"), os envios para quem já comprou (compradores antigos e importados) PAUSAM sozinhos e o painel avisa.
  */
 export async function contactsAutoPause(cfg: WaAudioConfig, now = Date.now()) {
   const since = new Date(now - 24 * 3600_000).toISOString();
   const [{ data: rows }, { data: outs }] = await Promise.all([
-    supabase.from('wa_queue').select('*').eq('kind', 'upsell').is('attempt', null).not('contact_id', 'is', null).gte('updated_at', since).order('updated_at', { ascending: false }).limit(500),
+    supabase.from('wa_queue').select('*').eq('kind', 'upsell').gte('updated_at', since).order('updated_at', { ascending: false }).limit(1000),
     supabase.from('wa_optouts').select('phone').gte('created_at', since).limit(2000),
   ]);
   const list = (rows ?? []) as any[];
-  const done = list.filter((r) => r.status === 'done');
-  const phones = new Set(list.map((r) => r.phone));
+  const reached = list.filter((r) => r.status === 'done' || r.step > 0 || r.error === AWAIT); // receberam ao menos a 1ª mensagem
+  const phones = new Set(reached.map((r) => r.phone));
   const optedOutN = ((outs ?? []) as any[]).filter((o) => phones.has(o.phone)).length;
-  const last5 = list.filter((r) => ['done', 'failed'].includes(r.status)).slice(0, 5);
+  const last5 = list.filter((r) => r.status === 'done' || (r.status === 'failed' && !/não tem WhatsApp|inválido/i.test(r.error ?? ''))).slice(0, 5);
   let reason: string | null = null;
-  if (done.length >= 20 && optedOutN / done.length > 0.08) reason = `${optedOutN} de ${done.length} contatos importados pediram para sair nas últimas 24 h`;
-  else if (last5.length === 5 && last5.every((r) => r.status === 'failed')) reason = 'os últimos 5 envios para contatos importados falharam (número desconectado ou bloqueado?)';
+  if (reached.length >= 20 && optedOutN / reached.length > 0.08) reason = `${optedOutN} de ${reached.length} pessoas que receberam o upsell pediram para sair nas últimas 24 h`;
+  else if (last5.length === 5 && last5.every((r) => r.status === 'failed')) reason = 'os últimos 5 envios de upsell falharam (número desconectado ou bloqueado?)';
   if (!reason) return false;
-  await saveWaAudioConfig({ ...cfg, contacts: { ...cfg.contacts, enabled: false } });
+  await saveWaAudioConfig({ ...cfg, backfill: { ...cfg.backfill, enabled: false }, contacts: { ...cfg.contacts, enabled: false } });
   await supabase.from('settings').upsert({ key: CONTACTS_STATE, value: { paused_reason: reason, paused_at: new Date(now).toISOString() }, updated_at: new Date().toISOString() });
   logger.warn({ reason }, 'Envio para contatos importados pausado sozinho');
   return true;
