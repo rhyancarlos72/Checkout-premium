@@ -868,7 +868,7 @@ adminRouter.get('/dashboard', async (req, res) => {
   const [ordersRes, productsRes] = await Promise.all([
     supabase
       .from('orders')
-      .select('id, status, total_cents, provider, created_at, paid_at, recovery_sent_at, checkout_id, items:order_items(kind, product_id, name, price_cents, product:products(number))')
+      .select('id, status, total_cents, provider, created_at, paid_at, recovery_sent_at, checkout_id, tracking, items:order_items(kind, product_id, name, price_cents, product:products(number))')
       .gte('created_at', from.toISOString())
       .lt('created_at', to.toISOString())
       .limit(50000),
@@ -888,6 +888,9 @@ adminRouter.get('/dashboard', async (req, res) => {
     return count ?? 0;
   };
   const [pageViews, initiatedCount] = await Promise.all([countEvents('page_view'), countEvents('initiate_checkout')]);
+  // upsell aceito na oferta logo após a compra (1 clique): o pedido novo fica marcado no evento upsell_accepted
+  const { data: acceptedRows } = await supabase.from('events').select('order_id').eq('type', 'upsell_accepted').gte('created_at', from.toISOString()).lt('created_at', to.toISOString()).limit(50000);
+  const acceptedIds = new Set(((acceptedRows ?? []) as any[]).map((r) => r.order_id).filter(Boolean));
 
   const paid = orders.filter((o) => o.status === 'paid');
   const pending = orders.filter((o) => o.status === 'pending');
@@ -923,8 +926,35 @@ adminRouter.get('/dashboard', async (req, res) => {
     top.set(k, t);
   }
 
+  // upsell: de onde veio cada pedido (WhatsApp tem prioridade: o link do áudio também abre a página de vendas)
+  const UPSELL_SOURCES = [
+    { key: 'whatsapp', label: 'Áudio no WhatsApp' },
+    { key: 'page', label: 'Página de vendas' },
+    { key: 'oneclick', label: 'Oferta pós-compra' },
+  ] as const;
+  const upsellSource = (o: any): (typeof UPSELL_SOURCES)[number]['key'] | null => {
+    const t = o.tracking ?? {};
+    if (/^whatsapp_audio_(upsell|importados)$/.test(String(t.content_category ?? '')) || (t.utm_source === 'whatsapp' && /^upsell/.test(String(t.utm_campaign ?? '')))) return 'whatsapp';
+    if (t.offer) return 'page';
+    if (acceptedIds.has(o.id)) return 'oneclick';
+    return null;
+  };
+  const upsellOrders = orders.filter((o) => upsellSource(o));
+  const upsellPaid = upsellOrders.filter((o) => o.status === 'paid');
+  const upsell = {
+    paid_count: upsellPaid.length,
+    paid_cents: sum(upsellPaid),
+    orders_count: upsellOrders.length,
+    sources: UPSELL_SOURCES.map((s) => {
+      const all = upsellOrders.filter((o) => upsellSource(o) === s.key);
+      const ok = all.filter((o) => o.status === 'paid');
+      return { key: s.key, label: s.label, orders: all.length, paid: ok.length, revenue_cents: sum(ok) };
+    }),
+  };
+
   res.json({
     period: { from, to },
+    upsell,
     products: products.map((p) => ({ id: p.id, name: p.name, number: p.number ?? null })),
     kpis: {
       paid_cents: sum(paid),

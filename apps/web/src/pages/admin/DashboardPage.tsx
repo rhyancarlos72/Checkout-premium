@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { ArrowRight, BadgeCheck, CalendarDays, Check, ChevronDown, Layers, Package, RotateCcw, ShoppingBag, Timer, TrendingUp, Trophy } from 'lucide-react';
+import { ArrowRight, BadgeCheck, Rocket, CalendarDays, Check, ChevronDown, Layers, Package, RotateCcw, ShoppingBag, Timer, TrendingUp, Trophy } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -26,6 +26,8 @@ interface Dashboard {
     recovered_count: number;
     avg_ticket_cents: number;
   };
+  /** vendas de upsell: oferta pós-compra, página de vendas e áudio no WhatsApp */
+  upsell?: { paid_count: number; paid_cents: number; orders_count: number; sources: { key: string; label: string; orders: number; paid: number; revenue_cents: number }[] };
   hourly: { hour: number; paid: number; revenue_cents: number }[];
   methods: { method: string; label: string; count: number; revenue_cents: number }[];
   top_products: { name: string; kind: string; number?: number | null; count: number; revenue_cents: number }[];
@@ -111,6 +113,35 @@ function Tile({ label, value, sub, icon, tone, bar }: { label: string; value: st
 }
 
 const pct = (v: number) => `${(v * 100).toFixed(v > 0 && v < 0.1 ? 1 : 0).replace('.', ',')}%`;
+
+/** Vendas de upsell no período, separadas por origem. */
+function UpsellCard({ u, totalCents }: { u: NonNullable<Dashboard['upsell']>; totalCents: number }) {
+  const colors: Record<string, string> = { whatsapp: 'bg-emerald-500', page: 'bg-orange-500', oneclick: 'bg-violet-500' };
+  return (
+    <section className="mt-5 rounded-2xl border border-zinc-200 bg-white p-5 sm:p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-sm font-medium text-zinc-600"><span className="flex h-7 w-7 items-center justify-center rounded-lg bg-orange-100 text-orange-600"><Rocket className="h-4 w-4" /></span> Upsell</p>
+          <p className="pv mt-3 font-display text-[30px] font-bold leading-none tracking-tight text-zinc-900 tabular-nums">{brl(u.paid_cents)}</p>
+          <p className="mt-2 text-[13px] text-zinc-600">
+            <span className="pv font-semibold text-zinc-900">{u.paid_count} {u.paid_count === 1 ? 'pago' : 'pagos'}</span> de {u.orders_count} {u.orders_count === 1 ? 'Pix gerado' : 'Pix gerados'}
+            {u.orders_count ? <> · {pct(u.paid_count / u.orders_count)} pagos</> : null}
+            {totalCents ? <> · {pct(u.paid_cents / totalCents)} do faturamento</> : null}
+          </p>
+        </div>
+      </div>
+      <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {u.sources.map((s) => (
+          <div key={s.key} className="min-w-0 rounded-xl border border-zinc-100 bg-zinc-50/60 p-4">
+            <p className="flex items-center gap-2 text-[13px] font-medium text-zinc-600"><span className={cn('h-2.5 w-2.5 rounded-full', colors[s.key] ?? 'bg-zinc-400')} /> {s.label}</p>
+            <p className="pv mt-2 text-xl font-bold tabular-nums text-zinc-900">{brl(s.revenue_cents)}</p>
+            <p className="pv mt-0.5 text-xs text-zinc-500">{s.paid} {s.paid === 1 ? 'pago' : 'pagos'} de {s.orders} gerados</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
 
 export default function DashboardPage({ name }: { name?: string }) {
   const [range, setRange] = useState<Range>(() => preset('today'));
@@ -261,6 +292,9 @@ export default function DashboardPage({ name }: { name?: string }) {
         <Tile tone="emerald" label="Valor recuperado" value={brl(k?.recovered_cents ?? 0)} sub={`${k?.recovered_count ?? 0} vendas após a recuperação`} icon={<RotateCcw className="h-5 w-5" />} bar={k?.paid_cents ? (k.recovered_cents ?? 0) / k.paid_cents : 0} />
         <Tile tone="cyan" label="Pedidos gerados" value={(k?.orders_count ?? 0).toLocaleString('pt-BR')} sub={`${(k?.page_views ?? 0).toLocaleString('pt-BR')} visitas ao checkout`} icon={<ShoppingBag className="h-5 w-5" />} bar={k?.orders_count ? (k.paid_count ?? 0) / k.orders_count : 0} />
       </div>
+
+      {/* Upsell */}
+      {data?.upsell && <UpsellCard u={data.upsell} totalCents={k?.paid_cents ?? 0} />}
 
       {/* Gráficos */}
       <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-3">

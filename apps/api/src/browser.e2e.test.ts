@@ -358,6 +358,7 @@ describe.skipIf(!RUN)('área de membros no navegador', () => {
         await bar.getByRole('button', { name: 'Atividades de alfabetização' }).click();
         await p.waitForURL(/aba=atividades-de-alfabetizacao/);
         await p.getByRole('heading', { name: 'Sessão 1' }).waitFor();
+        await p.getByRole('heading', { name: 'Sessão 2' }).waitFor({ state: 'detached' }); // espera a tela filtrar
         expect(await p.getByRole('heading', { name: 'Sessão 2' }).count()).toBe(0);
         expect(await p.getByRole('heading', { name: 'Bônus' }).count()).toBe(0); // fileira sem aba fica só em "Tudo"
         ok(`[${label}] aba "Atividades de alfabetização" mostra só a fileira dela`);
@@ -367,6 +368,7 @@ describe.skipIf(!RUN)('área de membros no navegador', () => {
         // link direto da aba funciona
         await p.goto(`${base}/membros?aba=matematica`);
         await p.getByRole('heading', { name: 'Sessão 2' }).waitFor();
+        await p.getByRole('heading', { name: 'Sessão 1' }).waitFor({ state: 'detached' });
         expect(await p.getByRole('heading', { name: 'Sessão 1' }).count()).toBe(0);
         expect(await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1)).toBe(false);
         expect(errors).toEqual([]);
